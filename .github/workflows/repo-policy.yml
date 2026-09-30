@@ -23,6 +23,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Test policy validator
-        run: python3 -m unittest discover -s tests -p 'test_repo_policy.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_repo_policy.py' -v
+          python3 -m unittest discover -s tests -p 'test_issue_policy.py' -v
       - name: Validate branch and actual PR body
         run: python3 scripts/repo_policy.py --event "$GITHUB_EVENT_PATH"
