@@ -4,3 +4,13 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Python · Node 개발 환경
+.venv/
+node_modules/
+dist/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
