@@ -1,0 +1,46 @@
+name: 작업
+description: 기능 구현, 샘플 앱, 검증 사례 및 초기 설정 작업
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: 관련 구간·역할
+      placeholder: "4-1 구간 15 / 역할 D (공통 작업이면 공통으로 표시)"
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: 목표
+      description: 구현할 범위와 목적을 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: 입력·출력
+      description: 받는 데이터, 만드는 결과물 또는 검증 대상을 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: 할 일
+      description: 실제 작업을 체크리스트로 작성하세요. 완료한 항목은 나중에 체크합니다.
+      placeholder: "- [ ] 구체적인 작업을 작성하세요."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 기준
+      description: 관찰 가능한 결과와 테스트 방법을 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: 선행 작업·참고
+      description: 의존 이슈, 미정 결정, ADR 링크를 적어 주세요. 없으면 없음으로 작성하세요.
+    validations:
+      required: true
