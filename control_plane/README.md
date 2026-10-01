@@ -101,8 +101,21 @@ python -m control_plane.fake_push --before $V1 --after $V2 --added src/worker.js
 python -m control_plane.fake_push --git-dir ../demo-app                                # 실제 HEAD~1..HEAD
 ```
 
-실제 등록(demo-app #4): Payload URL = 터널 주소 + `/api/webhooks/github`, Content type은 `application/json`
-권장(form 형식의 `payload` 필드도 받는다), Secret = `GITHUB_WEBHOOK_SECRET`, 이벤트는 push만.
+## 실제 GitHub push 연결 (demo-app #4)
+
+발표 노트북은 밖에서 부를 주소가 없으므로 Cloudflare 터널로 webhook 주소를 연다.
+
+```sh
+cloudflared tunnel --url http://localhost:8000                    # https://<임의>.trycloudflare.com 발급
+cloudflared tunnel --url http://localhost:8000 --protocol http2   # 대회장 망이 QUIC(UDP)을 막을 때
+```
+
+- 터널로 들어온 요청(`Cf-Ray` 헤더)은 `/api/webhooks/github`만 통과하고 화면·API는 403이다.
+  조종실에는 로그인이 없어서, 공개 주소로 배포·롤백을 누를 수 없게 막는다.
+- demo-app Settings → Webhooks: Payload URL = 터널 주소 + `/api/webhooks/github`,
+  Content type `application/json`(form의 `payload`도 받음), Secret = `GITHUB_WEBHOOK_SECRET`, 이벤트는 push만.
+- Quick Tunnel 주소는 실행할 때마다 바뀐다. 발표 직전에 터널을 띄우고 webhook 주소를 고친다.
+- 터널이 안 되면 `fake_push --git-dir ../demo-app`로 같은 흐름을 시연한다.
 
 ## 테스트
 

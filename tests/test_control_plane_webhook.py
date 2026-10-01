@@ -117,6 +117,17 @@ class WebhookEndpointTest(unittest.TestCase):
                                         {"added": [], "modified": ["README.md"], "removed": []})).encode()
         self.assertEqual(self.post(body, delivery="fp1").json()["changed_files"], ["README.md"])
 
+    def test_tunnel_requests_reach_only_the_webhook(self):
+        tunnel = {"Cf-Ray": "8f00-ICN"}
+        self.assertEqual(self.client.get("/api/projects", headers=tunnel).status_code, 403)
+        self.assertEqual(self.client.post(f"/api/projects/{self.project_id}/deploy", headers=tunnel).status_code, 403)
+        self.assertEqual(self.client.get("/", headers=tunnel).status_code, 403)
+        body = push_body()
+        res = self.client.post("/api/webhooks/github", content=body, headers={
+            **tunnel, "X-GitHub-Event": "push", "X-GitHub-Delivery": "cf1", "X-Hub-Signature-256": sign(body)})
+        self.assertEqual(res.status_code, 202)
+        self.assertEqual(self.client.get("/api/projects").status_code, 200)
+
     def test_malformed_payload_is_400(self):
         self.assertEqual(self.post(b"not json", delivery="m1").status_code, 400)
         self.assertEqual(self.post(json.dumps({"ref": 1}).encode(), delivery="m2").status_code, 400)

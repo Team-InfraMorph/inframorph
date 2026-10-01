@@ -27,6 +27,7 @@ DEFAULT_DB = Path(os.environ.get("INFRAMORPH_HOME", "/tmp/inframorph")) / "contr
 REPO_URL = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(\.git)?/?")
 BRANCH = re.compile(r"[A-Za-z0-9._/-]{1,100}")
 SSE_POLL_S = 0.5
+WEBHOOK_PATH = "/api/webhooks/github"
 WEB_DIST = Path(__file__).resolve().parent / "web" / "dist"
 
 
@@ -129,6 +130,17 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
 
     app = FastAPI(title="InfraMorph Control Plane")
     app.state.store = store
+
+    @app.middleware("http")
+    async def tunnel_only_webhook(request: Request, call_next):
+        """터널(Cloudflare)로 들어온 요청은 서명 검증이 있는 webhook만 허용한다.
+
+        조종실 API·화면에는 로그인이 없으므로, 공개 주소로 배포·롤백을 누를 수 없게 막는다.
+        Cloudflare는 자신을 거친 모든 요청에 Cf-Ray 헤더를 붙인다. 노트북 안(localhost)에서는 그대로 쓴다.
+        """
+        if "cf-ray" in request.headers and request.url.path != WEBHOOK_PATH:
+            return JSONResponse({"detail": "only the GitHub webhook is reachable through the tunnel"}, status_code=403)
+        return await call_next(request)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -244,7 +256,7 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
         return StreamingResponse(generate(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    @app.post("/api/webhooks/github")
+    @app.post(WEBHOOK_PATH)
     async def github_webhook(request: Request, background: BackgroundTasks):
         secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
         if not secret:
