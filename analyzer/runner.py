@@ -14,6 +14,7 @@ from .config import MODEL, Limits, estimated_cost
 from .redaction import Redactor, SECRET_NAME
 from .snapshot import Snapshot, SnapshotError
 from .tools import TOOLS, execute
+from .feedback import AnalysisFeedback, FEEDBACK_INSTRUCTIONS
 
 
 INSTRUCTIONS = """You are InfraMorph's source-code Analyzer for Node 22 / Express / Prisma apps.
@@ -101,7 +102,7 @@ def _validate(text: str, repo_map: RepoMap, snapshot: Snapshot) -> Intent:
 
 
 async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend,
-                  limits: Limits | None = None) -> AnalysisResult:
+                  limits: Limits | None = None, *, feedback: AnalysisFeedback | None = None) -> AnalysisResult:
     """Return validated Intent. Raises AnalysisError with safe metrics on failure.
 
     The caller/Repo Mapper must supply an immutable snapshot of repo_map.commit.
@@ -123,6 +124,18 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
             # Everything in the map, even scripts, is data and is never executed.
             payload = {"repo_map": map_data, "unavailable_file_count": len(snapshot.excluded)}
             history = [{"role": "user", "content": redactor.clean(json.dumps(payload, ensure_ascii=False))}]
+            if feedback is not None:
+                feedback = AnalysisFeedback.model_validate(feedback)
+                if any(revision != mapping.commit for revision in (
+                        feedback.previous_intent.source_revision, feedback.previous_plan.source_revision,
+                        feedback.previous_patch.source_revision)):
+                    raise ValueError("feedback_revision_mismatch")
+                if (feedback.previous_plan.target.value != "local" or
+                        feedback.previous_patch.original_digest != snapshot.digest):
+                    raise ValueError("feedback_snapshot_or_target_mismatch")
+                instructions += "\n" + FEEDBACK_INSTRUCTIONS
+                history.append({"role": "user", "content": redactor.clean(json.dumps(
+                    {"failure_feedback": feedback.payload(redactor)}, ensure_ascii=False))})
 
             for _ in range(limits.max_turns):
                 request = {"instructions": instructions, "input": history, "tools": TOOLS,

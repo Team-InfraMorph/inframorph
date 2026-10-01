@@ -10,7 +10,7 @@ PATTERNS = (
     re.compile(r"\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?)://[^\s\"'`]+", re.I),
 )
 ASSIGNMENT = re.compile(
-    r"(?i)([\"']?[A-Za-z_][A-Za-z0-9_]*(?:[\"']?)\s*[:=]\s*)([\"'])([^\r\n]*?)\2"
+    r"(?i)(?<![A-Za-z0-9_])([\"']?[A-Za-z_][A-Za-z0-9_]*(?:[\"']?)\s*[:=]\s*)([\"'])([^\r\n]*?)\2"
 )
 
 

@@ -26,6 +26,7 @@ from .config import MODEL, Limits
 from .redaction import Redactor
 from .runner import INSTRUCTIONS, _validate
 from .snapshot import Snapshot
+from .feedback import AnalysisFeedback, FEEDBACK_INSTRUCTIONS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,7 +60,7 @@ def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def prepare(case: str):
+def prepare(case: str, *, feedback: AnalysisFeedback | None = None):
     fixture = FIXTURES / case
     mapping = RepoMap.model_validate_json(read_text(fixture / "repo_map.json"))
     snapshot = Snapshot(fixture / "snapshot", mapping.tree, Limits(), Redactor())
@@ -80,6 +81,16 @@ def prepare(case: str):
         "All available source lines are supplied in source_files. Do not use tools.",
     ).replace("Explore actual source before answering.", "Inspect the supplied source before answering.")
     instructions = instructions.replace("source lines actually returned by Read/Grep", "supplied source lines")
+    if feedback is not None:
+        feedback = AnalysisFeedback.model_validate(feedback)
+        if (feedback.previous_plan.target.value != "local" or
+                feedback.previous_patch.original_digest != snapshot.digest or any(revision != mapping.commit for revision in (
+                    feedback.previous_patch.source_revision, feedback.previous_plan.source_revision,
+                    feedback.previous_intent.source_revision))):
+            raise VerificationError("feedback_binding_mismatch")
+        instructions += "\n" + FEEDBACK_INSTRUCTIONS.replace(
+            "Reinspect source with Read/Grep/Glob.", "Reinspect the supplied source lines without tools.")
+        payload["failure_feedback"] = feedback.payload(snapshot.redactor)
     instructions += "\nThis is a development evaluation. Return the Intent directly, without a wrapper.\n"
     prompt = (instructions + "\nIntent JSON schema:\n" + json.dumps(Intent.model_json_schema())
               + "\nUNTRUSTED INPUT DATA:\n"
@@ -263,10 +274,14 @@ def verify_case(case: str, args, directory: Path) -> dict:
               "status": "error", "team_api_called_by_verifier": False,
               "api_billing_usd": None, "semantic_evidence_review": "required"}
     try:
-        mapping, snapshot, prompt = prepare(case)
+        feedback_path = getattr(args, "feedback", None)
+        feedback = AnalysisFeedback.model_validate_json(read_text(feedback_path, Limits().max_request_bytes)) if feedback_path else None
+        mapping, snapshot, prompt = prepare(case, feedback=feedback)
         report.update(source_revision=mapping.commit, snapshot_digest=snapshot.digest,
                       prompt_sha256=digest(prompt), prompt_bytes=len(prompt.encode()),
                       provided_files=sorted(snapshot.files))
+        if feedback:
+            report["failure_feedback_provided"] = True
         if args.action == "run":
             report.update(model_requested=args.model, reasoning_effort="low",
                           production_api_model=MODEL, same_model_as_api=args.model == MODEL)
@@ -317,6 +332,7 @@ def main(argv=None) -> int:
     check.add_argument("--compare", type=Path, help="Optional saved Codex Intent for field comparison")
     for sub in (run, check):
         sub.add_argument("--output-dir", type=Path, help="New directory; existing results are never overwritten")
+        sub.add_argument("--feedback", type=Path, help="Optional bounded AnalysisFeedback JSON for one fixture case")
     args = parser.parse_args(argv)
     if args.action == "run" and (not math.isfinite(args.timeout) or not 0 < args.timeout <= 600):
         parser.error("--timeout must be finite and between 0 and 600 seconds")
