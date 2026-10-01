@@ -69,6 +69,18 @@ class ApprovalAndRollbackTest(unittest.TestCase):
             "X-GitHub-Event": "push", "X-GitHub-Delivery": delivery, "X-Hub-Signature-256": signature})
         return res.json()["redeploys"][0]["deployment_id"]
 
+    def test_first_deploy_caches_analysis_so_text_push_skips_ai(self):
+        self.assertEqual(self.get(self.first)["commit_sha"], V1_SHA)
+        body = json.dumps({"ref": "refs/heads/main", "before": V1_SHA, "after": "c" * 40,
+                           "commits": [{"added": [], "modified": ["README.md"], "removed": []}],
+                           "repository": {"html_url": REPO}}).encode()
+        signature = "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+        res = self.client.post("/api/webhooks/github", content=body, headers={
+            "X-GitHub-Event": "push", "X-GitHub-Delivery": "t1", "X-Hub-Signature-256": signature})
+        item = res.json()["redeploys"][0]
+        self.assertEqual(item["mode"], "rebuild_only")
+        self.assertEqual(self.get(item["deployment_id"])["status"], "LIVE")
+
     def test_worker_added_waits_for_approval_then_deploys(self):
         self.assertEqual(self.get(self.first)["status"], "LIVE")
         pending = self.push_v2()
@@ -83,6 +95,10 @@ class ApprovalAndRollbackTest(unittest.TestCase):
         self.assertEqual(deployment["status"], "LIVE")
         self.assertIsNotNone(deployment["approved_at"])
         self.assertEqual(self.client.post(f"/api/deployments/{pending}/approve").status_code, 409)
+
+    def test_approval_compares_with_last_live_that_has_plans(self):
+        self.test_first_deploy_caches_analysis_so_text_push_skips_ai()  # 사이에 plan 없는 LIVE가 끼어 있다
+        self.assertEqual(self.get(self.push_v2())["status"], "AWAITING_APPROVAL")
 
     def test_push_during_approval_is_queued_and_reject_fails(self):
         pending = self.push_v2()

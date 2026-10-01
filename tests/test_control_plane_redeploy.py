@@ -154,7 +154,7 @@ class PushRedeployEndpointTest(unittest.TestCase):
         self.store.save_analysis(self.project, BEFORE, V1_REPO_MAP, V1_INTENT)
         item = self.only_redeploy(self.send(["package.json"], "d3"))
         self.assertEqual(item["mode"], "reanalyze")
-        self.assertIn("dependency manifest changed: package.json", item["reasons"])
+        self.assertIn("의존성 파일 변경: package.json", item["reasons"])
 
     def test_push_during_running_deploy_is_queued(self):
         with sqlite3.connect(self.db) as conn:

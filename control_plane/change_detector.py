@@ -12,6 +12,7 @@ DEPENDENCY_FILES = frozenset({
     "yarn.lock",
 })
 SOURCE_SUFFIXES = frozenset({".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"})
+HINT_LABELS = {"file_write": "파일 쓰기", "env": "환경변수", "process": "별도 프로세스"}
 ENV_FILES = frozenset({".env.example", ".env.sample", ".env.template"})
 
 
@@ -115,26 +116,26 @@ def detect_changes(changed_files, repo_map, intent=None):
         filename = PurePosixPath(path).name
         if filename in DEPENDENCY_FILES:
             categories.add("dependency")
-            reasons.append(f"dependency manifest changed: {path}")
+            reasons.append(f"의존성 파일 변경: {path}")
         if path.endswith(".prisma") or path.startswith("prisma/"):
             categories.add("schema")
-            reasons.append(f"database schema changed: {path}")
+            reasons.append(f"DB 스키마 변경: {path}")
         for hint_type in hints.get(path, ()):
             category = "environment" if hint_type == "env" else hint_type
             categories.add(category)
-            reasons.append(f"{hint_type} hint changed: {path}")
+            reasons.append(f"{HINT_LABELS.get(hint_type, hint_type)} 단서가 있는 파일 변경: {path}")
         if path in workload_evidence or path in entrypoints:
             categories.add("entrypoint")
-            reasons.append(f"workload entrypoint changed: {path}")
+            reasons.append(f"실행 진입점 변경: {path}")
         if path in state_evidence:
             categories.add("state")
-            reasons.append(f"database or persistent file evidence changed: {path}")
+            reasons.append(f"DB·영구 파일 근거 변경: {path}")
         if filename in ENV_FILES:
             categories.add("environment")
-            reasons.append(f"environment template changed: {path}")
+            reasons.append(f"환경변수 예시 파일 변경: {path}")
         if path not in tree and PurePosixPath(path).suffix.lower() in SOURCE_SUFFIXES:
             categories.add("new_source")
-            reasons.append(f"new source file added: {path}")
+            reasons.append(f"새 소스 파일 추가: {path}")
 
     ordered_categories = tuple(sorted(categories))
     return ChangeDecision(
@@ -167,18 +168,18 @@ class RedeployDecision:
 def plan_redeploy(push, cached):
     """push와 before 커밋의 분석 캐시로 재처리 깊이를 정한다. 확신이 없으면 항상 더 깊은 쪽을 고른다."""
     if cached is None:
-        return RedeployDecision("full_analysis", (), ("no cached analysis for previous commit",))
+        return RedeployDecision("full_analysis", (), ("이전 커밋의 분석 결과가 없음",))
     if push.forced:
-        return RedeployDecision("full_analysis", (), ("force push: changed file list is not reliable",))
+        return RedeployDecision("full_analysis", (), ("force push라 변경 파일 목록을 믿을 수 없음",))
     if push.before == NULL_SHA:
-        return RedeployDecision("full_analysis", (), ("new branch: no previous commit",))
+        return RedeployDecision("full_analysis", (), ("새 브랜치라 이전 커밋이 없음",))
     if push.commit_count == 0 or not push.changed_files:
-        return RedeployDecision("full_analysis", (), ("push payload has no changed file list",))
+        return RedeployDecision("full_analysis", (), ("push에 변경 파일 목록이 없음",))
 
     decision = detect_changes(push.changed_files, cached["repo_map"], cached.get("intent"))
     if decision.requires_analysis:
         return RedeployDecision("reanalyze", decision.categories, decision.reasons)
-    return RedeployDecision("rebuild_only", (), ("no deployment-relevant files changed",))
+    return RedeployDecision("rebuild_only", (), ("배포에 영향 주는 파일 변경 없음",))
 
 
 SERVICE_FIELDS = ("kind", "public", "port", "cpu", "mem")

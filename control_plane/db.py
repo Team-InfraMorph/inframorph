@@ -167,6 +167,10 @@ class Store:
             "latest_deployment_id": latest["id"] if latest else None,
         }
 
+    def list_projects(self):
+        rows = self._conn.execute("SELECT id FROM projects ORDER BY created_at DESC, rowid DESC").fetchall()
+        return [self.get_project(r["id"]) for r in rows]
+
     def find_projects(self, repo_key, branch):
         rows = self._conn.execute(
             "SELECT id FROM projects WHERE repo_key=? AND branch=? ORDER BY created_at", (repo_key, branch)
@@ -290,6 +294,13 @@ class Store:
                 (Status(status).value, url, deployment_id, target),
             )
 
+    def set_commit(self, deployment_id, commit_sha):
+        """수동 배포는 스냅샷 단계에서 커밋이 정해진다. 이미 정해진 커밋은 바꾸지 않는다."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE deployments SET commit_sha=COALESCE(commit_sha, ?) WHERE id=?", (commit_sha, deployment_id)
+            )
+
     def set_status(self, deployment_id, status):
         with self._lock, self._conn:
             self._conn.execute(
@@ -317,11 +328,15 @@ class Store:
         rows = self._conn.execute("SELECT target, plan FROM plans WHERE deployment_id=?", (deployment_id,)).fetchall()
         return {r["target"]: json.loads(r["plan"]) for r in rows}
 
-    def last_live(self, project_id, before_deployment_id):
-        """before_deployment_id보다 먼저 만들어진 배포 중 가장 최근 LIVE. 승인 비교와 롤백 기준점."""
+    def last_live(self, project_id, before_deployment_id, with_plans=False):
+        """before_deployment_id보다 먼저 만들어진 배포 중 가장 최근 LIVE(롤백 기준점).
+
+        with_plans=True면 plan이 있는 것만 본다(승인 비교 기준 = 지금 돌고 있는 구조).
+        """
+        has_plans = " AND EXISTS (SELECT 1 FROM plans p WHERE p.deployment_id=d.id)" if with_plans else ""
         row = self._conn.execute(
             "SELECT d.* FROM deployments d, deployments ref WHERE ref.id=? AND d.project_id=? AND d.status=? "
-            "AND d.rowid < ref.rowid ORDER BY d.rowid DESC LIMIT 1",
+            "AND d.rowid < ref.rowid" + has_plans + " ORDER BY d.rowid DESC LIMIT 1",
             (before_deployment_id, project_id, Status.LIVE.value),
         ).fetchone()
         return self._deployment(row) if row else None

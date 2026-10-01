@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from schemas.common import Target
@@ -25,6 +26,7 @@ DEFAULT_DB = Path(os.environ.get("INFRAMORPH_HOME", "/tmp/inframorph")) / "contr
 REPO_URL = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(\.git)?/?")
 BRANCH = re.compile(r"[A-Za-z0-9._/-]{1,100}")
 SSE_POLL_S = 0.5
+WEB_DIST = Path(__file__).resolve().parent / "web" / "dist"
 
 
 class ProjectIn(BaseModel):
@@ -72,15 +74,25 @@ def fake_deployer_cmd(deployment_id, target):
     return cmd
 
 
-FIXTURE_PLANS = Path(__file__).resolve().parents[1] / "schemas" / "fixtures"
+FIXTURES = Path(__file__).resolve().parents[1] / "schemas" / "fixtures"
 
 
-def fake_planner(deployment):
-    """실제 Planner(B)가 붙기 전까지 쓰는 plan. 커밋이 fixture(v1·v2)와 같으면 그 plan, 커밋이 없으면 v1."""
+def fake_analyzer(deployment):
+    """실제 Repo Mapper·Analyzer·Planner(B·C)가 붙기 전까지 쓰는 분석 결과.
+
+    커밋이 fixture(v1·v2)와 같으면 그 커밋의 repo_map·intent·plan을 돌려준다.
+    커밋이 없는 수동 배포는 v1을 스냅샷한 것으로 본다. 모르는 커밋이면 None(분석 없음).
+    """
     for version in ("v1", "v2"):
-        plans = {t: json.loads((FIXTURE_PLANS / version / f"plan.{t}.json").read_text()) for t in ("local", "aws")}
-        if deployment["commit_sha"] in (None, plans["aws"]["source_revision"]):
-            return {t: plans[t] for t in deployment["targets"]}
+        folder = FIXTURES / version
+        repo_map = json.loads((folder / "repo_map.json").read_text())
+        if deployment["commit_sha"] in (None, repo_map["commit"]):
+            return {
+                "commit_sha": repo_map["commit"],
+                "repo_map": repo_map,
+                "intent": json.loads((folder / "intent.json").read_text()),
+                "plans": {t: json.loads((folder / f"plan.{t}.json").read_text()) for t in deployment["targets"]},
+            }
     return None
 
 
@@ -89,7 +101,7 @@ def _sse(event, data, seq=None):
     return f"{head}event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, planner=fake_planner):
+def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fake_analyzer):
     store = Store(db_path or DEFAULT_DB)
     store.recover_interrupted()
 
@@ -108,13 +120,25 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, planner=fake_planne
                 except ConflictError:
                     return
 
+    def prepare(deployment):
+        """분석·설계 단계(구간 2~7). 결과를 커밋 단위 캐시와 배포 작업에 저장해 다음 push 판정과 승인 비교에 쓴다.
+
+        실제 모듈을 붙일 때 analyzer는 deployment["analysis_mode"]를 보고 rebuild_only면 AI 분석을 건너뛴다.
+        """
+        result = analyzer(deployment)
+        if result is None:
+            return
+        store.set_commit(deployment["id"], result["commit_sha"])
+        store.save_analysis(deployment["project_id"], result["commit_sha"], result["repo_map"], result["intent"])
+        store.save_plans(deployment["id"], result["plans"])
+
     def needs_approval(deployment):
         """직전 LIVE 대비 인프라 구조가 바뀌면 AWAITING_APPROVAL로 멈춘다(기획서 시나리오 B-2)."""
-        plans = store.get_plans(deployment["id"]) or planner(deployment)
+        prepare(deployment)
+        plans = store.get_plans(deployment["id"])
         if not plans:  # 설계도가 없으면 비교할 구조도 없다(가짜 모드의 임의 커밋)
             return False
-        store.save_plans(deployment["id"], plans)
-        base = store.last_live(deployment["project_id"], deployment["id"])
+        base = store.last_live(deployment["project_id"], deployment["id"], with_plans=True)
         changes = plan_diff(store.get_plans(base["id"]) if base else {}, plans)
         if changes:
             store.await_approval(deployment["id"], changes)
@@ -139,6 +163,10 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, planner=fake_planne
     def create_project(body: ProjectIn):
         targets = [t.value for t in body.targets]
         return store.create_project(body.repo_url, body.branch, targets, webhook.normalize_repo_url(body.repo_url))
+
+    @app.get("/api/projects")
+    def list_projects():
+        return store.list_projects()
 
     @app.get("/api/projects/{project_id}")
     def get_project(project_id: str):
@@ -288,6 +316,8 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, planner=fake_planne
             "redeploys": redeploys,
         }, status_code=202)
 
+    if WEB_DIST.is_dir():  # npm run build 결과가 있으면 API와 같은 주소에서 화면을 낸다
+        app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
     return app
 
 

@@ -65,6 +65,11 @@ class ControlPlaneApiTest(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertEqual(self.create(**case).status_code, 422)
 
+    def test_projects_are_listed_newest_first(self):
+        first = self.create().json()["project_id"]
+        second = self.create().json()["project_id"]
+        self.assertEqual([p["project_id"] for p in self.client.get("/api/projects").json()], [second, first])
+
     def test_unknown_project_is_404(self):
         self.assertEqual(self.client.get("/api/projects/p-missing").status_code, 404)
 
