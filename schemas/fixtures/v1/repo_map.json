@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0.0",
+  "commit": "ebad709867cf1f3523075d8038ae41bd69ecae9b",
+  "tree": [
+    ".env.example",
+    ".githooks/pre-commit",
+    ".githooks/pre-push",
+    ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/ISSUE_TEMPLATE/task.yml",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/workflows/issue-policy.yml",
+    ".github/workflows/repo-policy.yml",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "README.md",
+    "package-lock.json",
+    "package.json",
+    "prisma/schema.prisma",
+    "scripts/issue_policy.py",
+    "scripts/repo_policy.py",
+    "scripts/setup-hooks.sh",
+    "src/images.js",
+    "src/server.js",
+    "tests/test_issue_policy.py",
+    "tests/test_repo_policy.py"
+  ],
+  "deps": [
+    "@prisma/client",
+    "dotenv",
+    "express",
+    "prisma"
+  ],
+  "db": {
+    "orm": "prisma",
+    "provider": "sqlite"
+  },
+  "entrypoints": {
+    "start": "node src/server.js"
+  },
+  "routes": [
+    "GET /",
+    "GET /health",
+    "POST /api/notes",
+    "GET /api/notes",
+    "POST /api/images",
+    "GET /api/images/:key"
+  ],
+  "hints": [
+    {
+      "type": "file_write",
+      "at": "src/images.js:10",
+      "name": null
+    },
+    {
+      "type": "env",
+      "at": "prisma/schema.prisma:7",
+      "name": "DATABASE_URL"
+    }
+  ]
+}
