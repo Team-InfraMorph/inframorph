@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0.0",
+  "source_revision": "ebad709867cf1f3523075d8038ae41bd69ecae9b",
+  "app": "demo-app",
+  "runtime": "node22",
+  "workloads": [
+    {
+      "name": "web",
+      "kind": "http",
+      "port": 3000,
+      "public": true,
+      "health": "/health",
+      "command": null,
+      "evidence": [
+        "src/server.js:22",
+        "src/server.js:87"
+      ]
+    }
+  ],
+  "state": [
+    {
+      "kind": "relational_db",
+      "engine": "sqlite",
+      "orm": "prisma",
+      "path": null,
+      "reason": null,
+      "evidence": [
+        "prisma/schema.prisma:6"
+      ]
+    },
+    {
+      "kind": "persistent_files",
+      "engine": null,
+      "orm": null,
+      "path": "uploads/",
+      "reason": "업로드한 사진이 재시작 후에도 남아야 함",
+      "evidence": [
+        "src/images.js:10",
+        "src/images.js:23"
+      ]
+    }
+  ],
+  "secrets": [
+    "DATABASE_URL"
+  ],
+  "config": {},
+  "unknowns": []
+}

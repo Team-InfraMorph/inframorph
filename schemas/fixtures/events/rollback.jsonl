@@ -1,0 +1,3 @@
+{"deployment_id":"fixture-2","ts":"2026-10-01T00:00:00Z","target":"aws","step":"health","status":"fail","detail":"fixture health failure"}
+{"deployment_id":"fixture-2","ts":"2026-10-01T00:00:01Z","target":"aws","step":"rollback","status":"started"}
+{"deployment_id":"fixture-2","ts":"2026-10-01T00:00:02Z","target":"aws","step":"rollback","status":"ok","duration_ms":1000}

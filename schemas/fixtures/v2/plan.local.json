@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0.0",
+  "source_revision": "f67109815d689ae52c2474dcb1bf04209d154a5d",
+  "target": "local",
+  "app": "demo-app",
+  "image_tag": "app:f67109815d689ae52c2474dcb1bf04209d154a5d",
+  "services": [
+    {
+      "name": "web",
+      "kind": "http",
+      "cpu": 256,
+      "mem": 512,
+      "port": 3000,
+      "health": "/health",
+      "public": true,
+      "command": null
+    },
+    {
+      "name": "worker",
+      "kind": "worker",
+      "cpu": 256,
+      "mem": 512,
+      "port": null,
+      "health": null,
+      "public": false,
+      "command": "node src/worker.js"
+    }
+  ],
+  "db": {
+    "type": "postgres_container",
+    "patch": "sqlite_to_postgres"
+  },
+  "storage": {
+    "type": "volume",
+    "patch": "fs_to_storage",
+    "path": "uploads/"
+  },
+  "secrets": [
+    "DATABASE_URL"
+  ],
+  "config": {
+    "STORAGE_DRIVER": "fs"
+  },
+  "logs": "docker",
+  "est_monthly_krw": 0,
+  "mermaid": "flowchart LR\nweb --> db\nweb --> storage\nworker --> db"
+}
