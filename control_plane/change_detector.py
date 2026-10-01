@@ -179,3 +179,40 @@ def plan_redeploy(push, cached):
     if decision.requires_analysis:
         return RedeployDecision("reanalyze", decision.categories, decision.reasons)
     return RedeployDecision("rebuild_only", (), ("no deployment-relevant files changed",))
+
+
+SERVICE_FIELDS = ("kind", "public", "port", "cpu", "mem")
+
+
+def plan_diff(old_plans, new_plans):
+    """직전 LIVE의 plan과 새 plan을 대상별로 비교해 인프라 변경 목록을 돌려준다(비면 승인 불필요).
+
+    이미지·커밋·config 값처럼 같은 구조 안에서 바뀌는 것은 무시하고, 서비스·DB·저장소·비밀키 구조만 본다.
+    기획서 시나리오 B-2: worker가 하나 늘면 ECS 서비스가 늘어나므로 승인을 받는다.
+    """
+    if not old_plans:
+        return []
+    changes = []
+    for target in sorted(set(old_plans) | set(new_plans)):
+        old, new = old_plans.get(target), new_plans.get(target)
+        if old is None or new is None:
+            changes.append(f"{target}: 배포 대상 {'추가' if old is None else '제거'}")
+            continue
+        old_services = {s["name"]: s for s in old["services"]}
+        new_services = {s["name"]: s for s in new["services"]}
+        for name in sorted(new_services.keys() - old_services.keys()):
+            changes.append(f"{target}: 서비스 {name} 추가 ({new_services[name]['kind']})")
+        for name in sorted(old_services.keys() - new_services.keys()):
+            changes.append(f"{target}: 서비스 {name} 제거")
+        for name in sorted(old_services.keys() & new_services.keys()):
+            for field in SERVICE_FIELDS:
+                if old_services[name].get(field) != new_services[name].get(field):
+                    changes.append(f"{target}: 서비스 {name}의 {field} 변경")
+        for section in ("db", "storage"):
+            before = (old.get(section) or {}).get("type")
+            after = (new.get(section) or {}).get("type")
+            if before != after:
+                changes.append(f"{target}: {section} {before or '없음'} → {after or '없음'}")
+        for secret in sorted(set(new.get("secrets", [])) - set(old.get("secrets", []))):
+            changes.append(f"{target}: 비밀키 {secret} 추가")
+    return changes

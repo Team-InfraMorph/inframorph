@@ -22,7 +22,7 @@ class Status(str, Enum):
 
 
 TERMINAL = {Status.LIVE, Status.FAILED, Status.ROLLED_BACK, Status.SUPERSEDED}
-RUNNING = {Status.DEPLOYING}
+BLOCKING = (Status.DEPLOYING.value, Status.AWAITING_APPROVAL.value)  # 이 상태가 있으면 새 배포는 대기
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS deployment_targets (
     url TEXT,
     PRIMARY KEY (deployment_id, target)
 );
+CREATE TABLE IF NOT EXISTS plans (
+    deployment_id TEXT NOT NULL REFERENCES deployments(id),
+    target TEXT NOT NULL,
+    plan TEXT NOT NULL,
+    PRIMARY KEY (deployment_id, target)
+);
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     delivery_id TEXT PRIMARY KEY,
     received_at TEXT NOT NULL
@@ -78,6 +84,9 @@ DEPLOYMENT_COLUMNS = {
     "triggered_by": "TEXT NOT NULL DEFAULT 'manual'",
     "analysis_mode": "TEXT",
     "change_reasons": "TEXT",
+    "approval_reasons": "TEXT",
+    "approved_at": "TEXT",
+    "rollback_of": "TEXT",
 }
 INSERT_DEPLOYMENT = (
     "INSERT INTO deployments (id, project_id, status, commit_sha, created_at, updated_at, triggered_by, "
@@ -166,7 +175,8 @@ class Store:
 
     def _deployment(self, row):
         data = dict(row)
-        data["change_reasons"] = json.loads(data["change_reasons"]) if data.get("change_reasons") else []
+        for key in ("change_reasons", "approval_reasons"):
+            data[key] = json.loads(data[key]) if data.get(key) else []
         targets = self._conn.execute(
             "SELECT target, status, url FROM deployment_targets WHERE deployment_id=? ORDER BY target", (row["id"],)
         ).fetchall()
@@ -241,8 +251,7 @@ class Store:
         """
         with self._lock, self._conn:
             if self._conn.execute(
-                "SELECT 1 FROM deployments WHERE project_id=? AND status=?",
-                (project_id, Status.DEPLOYING.value),
+                "SELECT 1 FROM deployments WHERE project_id=? AND status IN (?, ?)", (project_id, *BLOCKING)
             ).fetchone():
                 raise ConflictError(project_id)
             latest = self._conn.execute(
@@ -287,6 +296,74 @@ class Store:
                 "UPDATE deployments SET status=?, updated_at=? WHERE id=?",
                 (Status(status).value, _now(), deployment_id),
             )
+
+    def save_plans(self, deployment_id, plans):
+        """B Planner의 plan.<target>.json을 배포 작업에 붙인다. 스키마가 틀리면 ValueError."""
+        from pydantic import ValidationError
+
+        from schemas.plan import Plan
+
+        try:
+            checked = {target: Plan.model_validate(plan) for target, plan in plans.items()}
+        except ValidationError as exc:
+            raise ValueError(f"invalid plan: {exc.errors()[0]['msg']}") from exc
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO plans VALUES (?, ?, ?)",
+                [(deployment_id, target, plan.model_dump_json()) for target, plan in checked.items()],
+            )
+
+    def get_plans(self, deployment_id):
+        rows = self._conn.execute("SELECT target, plan FROM plans WHERE deployment_id=?", (deployment_id,)).fetchall()
+        return {r["target"]: json.loads(r["plan"]) for r in rows}
+
+    def last_live(self, project_id, before_deployment_id):
+        """before_deployment_id보다 먼저 만들어진 배포 중 가장 최근 LIVE. 승인 비교와 롤백 기준점."""
+        row = self._conn.execute(
+            "SELECT d.* FROM deployments d, deployments ref WHERE ref.id=? AND d.project_id=? AND d.status=? "
+            "AND d.rowid < ref.rowid ORDER BY d.rowid DESC LIMIT 1",
+            (before_deployment_id, project_id, Status.LIVE.value),
+        ).fetchone()
+        return self._deployment(row) if row else None
+
+    def await_approval(self, deployment_id, reasons):
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE deployments SET status=?, approval_reasons=?, updated_at=? WHERE id=?",
+                (Status.AWAITING_APPROVAL.value, json.dumps(reasons, ensure_ascii=False), _now(), deployment_id),
+            )
+            self._conn.execute(
+                "UPDATE deployment_targets SET status=? WHERE deployment_id=?",
+                (Status.AWAITING_APPROVAL.value, deployment_id),
+            )
+
+    def resolve_approval(self, deployment_id, approved):
+        """승인이면 DEPLOYING, 거절이면 FAILED. 승인 대기 상태가 아니면 False."""
+        status = Status.DEPLOYING if approved else Status.FAILED
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE deployments SET status=?, approved_at=?, updated_at=? WHERE id=? AND status=?",
+                (status.value, _now() if approved else None, _now(), deployment_id, Status.AWAITING_APPROVAL.value),
+            )
+            if cur.rowcount:
+                self._conn.execute(
+                    "UPDATE deployment_targets SET status=? WHERE deployment_id=?", (status.value, deployment_id)
+                )
+            return cur.rowcount == 1
+
+    def create_rollback(self, deployment_id, base):
+        """base(직전 LIVE)의 커밋과 plan으로 새 배포 작업을 만든다. 실행은 begin_deploy가 맡는다."""
+        new_id, now = _new_id("d"), _now()
+        with self._lock, self._conn:
+            self._conn.execute(
+                INSERT_DEPLOYMENT,
+                (new_id, base["project_id"], Status.CREATED.value, base["commit_sha"], now, now, "rollback", None, None),
+            )
+            self._conn.execute("UPDATE deployments SET rollback_of=? WHERE id=?", (deployment_id, new_id))
+            self._conn.execute(
+                "INSERT INTO plans SELECT ?, target, plan FROM plans WHERE deployment_id=?", (new_id, base["id"])
+            )
+        return new_id
 
     def add_event(self, deployment_id, event):
         with self._lock, self._conn:

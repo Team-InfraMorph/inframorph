@@ -18,7 +18,7 @@ from schemas.common import Target
 
 from . import webhook
 from .db import TERMINAL, ConflictError, Status, Store
-from .change_detector import plan_redeploy
+from .change_detector import plan_diff, plan_redeploy
 from .orchestrator import run_deployment
 
 DEFAULT_DB = Path(os.environ.get("INFRAMORPH_HOME", "/tmp/inframorph")) / "control_plane.db"
@@ -72,19 +72,34 @@ def fake_deployer_cmd(deployment_id, target):
     return cmd
 
 
+FIXTURE_PLANS = Path(__file__).resolve().parents[1] / "schemas" / "fixtures"
+
+
+def fake_planner(deployment):
+    """실제 Planner(B)가 붙기 전까지 쓰는 plan. 커밋이 fixture(v1·v2)와 같으면 그 plan, 커밋이 없으면 v1."""
+    for version in ("v1", "v2"):
+        plans = {t: json.loads((FIXTURE_PLANS / version / f"plan.{t}.json").read_text()) for t in ("local", "aws")}
+        if deployment["commit_sha"] in (None, plans["aws"]["source_revision"]):
+            return {t: plans[t] for t in deployment["targets"]}
+    return None
+
+
 def _sse(event, data, seq=None):
     head = f"id: {seq}\n" if seq is not None else ""
     return f"{head}event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def create_app(db_path=None, deployer_cmd=fake_deployer_cmd):
+def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, planner=fake_planner):
     store = Store(db_path or DEFAULT_DB)
     store.recover_interrupted()
 
     def execute(project_id, deployment_id):
         """대상별 배포기를 동시에 돌리고, 끝나면 그동안 쌓인 요청(queued) 중 최신 것을 이어서 실행한다."""
         while deployment_id:
-            targets = store.get_deployment(deployment_id)["targets"]
+            deployment = store.get_deployment(deployment_id)
+            targets = deployment["targets"]
+            if not deployment["approved_at"] and deployment["triggered_by"] != "rollback" and needs_approval(deployment):
+                return
             run_deployment(store, deployment_id, {t: deployer_cmd(deployment_id, t) for t in targets})
             deployment_id = None
             if store.has_queued(project_id):
@@ -92,6 +107,24 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd):
                     deployment_id = store.begin_deploy(project_id)
                 except ConflictError:
                     return
+
+    def needs_approval(deployment):
+        """직전 LIVE 대비 인프라 구조가 바뀌면 AWAITING_APPROVAL로 멈춘다(기획서 시나리오 B-2)."""
+        plans = store.get_plans(deployment["id"]) or planner(deployment)
+        if not plans:  # 설계도가 없으면 비교할 구조도 없다(가짜 모드의 임의 커밋)
+            return False
+        store.save_plans(deployment["id"], plans)
+        base = store.last_live(deployment["project_id"], deployment["id"])
+        changes = plan_diff(store.get_plans(base["id"]) if base else {}, plans)
+        if changes:
+            store.await_approval(deployment["id"], changes)
+        return bool(changes)
+
+    def deployment_or_404(deployment_id):
+        deployment = store.get_deployment(deployment_id)
+        if deployment is None:
+            raise HTTPException(404, "deployment not found")
+        return deployment
 
     app = FastAPI(title="InfraMorph Control Plane")
     app.state.store = store
@@ -137,6 +170,43 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd):
         if deployment is None:
             raise HTTPException(404, "deployment not found")
         return deployment
+
+    @app.get("/api/deployments/{deployment_id}/plans")
+    def get_plans(deployment_id: str):
+        deployment_or_404(deployment_id)
+        return store.get_plans(deployment_id)
+
+    @app.post("/api/deployments/{deployment_id}/approve", status_code=202)
+    def approve(deployment_id: str, background: BackgroundTasks):
+        deployment = deployment_or_404(deployment_id)
+        if not store.resolve_approval(deployment_id, approved=True):
+            raise HTTPException(409, "deployment is not awaiting approval")
+        background.add_task(execute, deployment["project_id"], deployment_id)
+        return {"deployment_id": deployment_id, "status": Status.DEPLOYING.value}
+
+    @app.post("/api/deployments/{deployment_id}/reject")
+    def reject(deployment_id: str):
+        deployment_or_404(deployment_id)
+        if not store.resolve_approval(deployment_id, approved=False):
+            raise HTTPException(409, "deployment is not awaiting approval")
+        return {"deployment_id": deployment_id, "status": Status.FAILED.value}
+
+    @app.post("/api/deployments/{deployment_id}/rollback", status_code=202)
+    def rollback(deployment_id: str, background: BackgroundTasks):
+        """직전 LIVE 배포의 커밋과 plan으로 다시 배포한다(Local은 이전 app:<sha>, AWS는 이전 task definition)."""
+        deployment = deployment_or_404(deployment_id)
+        if Status(deployment["status"]) not in TERMINAL:
+            raise HTTPException(409, "deployment is still in progress")
+        base = store.last_live(deployment["project_id"], deployment_id)
+        if base is None:
+            raise HTTPException(409, "no earlier LIVE deployment to roll back to")
+        new_id = store.create_rollback(deployment_id, base)
+        try:
+            started = store.begin_deploy(deployment["project_id"])
+        except ConflictError:
+            return {"deployment_id": new_id, "state": "queued", "commit": base["commit_sha"]}
+        background.add_task(execute, deployment["project_id"], started)
+        return {"deployment_id": new_id, "state": "started", "commit": base["commit_sha"]}
 
     @app.get("/api/deployments/{deployment_id}/events")
     async def stream_events(deployment_id: str, request: Request, after: int = 0):
