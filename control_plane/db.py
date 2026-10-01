@@ -87,6 +87,7 @@ DEPLOYMENT_COLUMNS = {
     "approval_reasons": "TEXT",
     "approved_at": "TEXT",
     "rollback_of": "TEXT",
+    "analysis_metrics": "TEXT",
 }
 INSERT_DEPLOYMENT = (
     "INSERT INTO deployments (id, project_id, status, commit_sha, created_at, updated_at, triggered_by, "
@@ -181,6 +182,7 @@ class Store:
         data = dict(row)
         for key in ("change_reasons", "approval_reasons"):
             data[key] = json.loads(data[key]) if data.get(key) else []
+        data["analysis_metrics"] = json.loads(data["analysis_metrics"]) if data.get("analysis_metrics") else None
         targets = self._conn.execute(
             "SELECT target, status, url FROM deployment_targets WHERE deployment_id=? ORDER BY target", (row["id"],)
         ).fetchall()
@@ -299,6 +301,23 @@ class Store:
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE deployments SET commit_sha=COALESCE(commit_sha, ?) WHERE id=?", (commit_sha, deployment_id)
+            )
+
+    def set_analysis_metrics(self, deployment_id, metrics):
+        """Analyzer가 보고한 모델 호출 수·토큰·예상 비용. 화면의 'AI 호출 수·비용' 표시에 쓴다."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE deployments SET analysis_metrics=? WHERE id=?",
+                (json.dumps(metrics) if metrics is not None else None, deployment_id),
+            )
+
+    def fail(self, deployment_id):
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE deployments SET status=?, updated_at=? WHERE id=?", (Status.FAILED.value, _now(), deployment_id)
+            )
+            self._conn.execute(
+                "UPDATE deployment_targets SET status=? WHERE deployment_id=?", (Status.FAILED.value, deployment_id)
             )
 
     def set_status(self, deployment_id, status):

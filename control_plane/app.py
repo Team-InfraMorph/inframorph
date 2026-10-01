@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from schemas.common import Target
 
 from . import webhook
+from .analysis import AnalysisFailed, fixture_analyzer
 from .db import TERMINAL, ConflictError, Status, Store
 from .change_detector import plan_diff, plan_redeploy
 from .orchestrator import run_deployment
@@ -74,45 +75,24 @@ def fake_deployer_cmd(deployment_id, target):
     return cmd
 
 
-FIXTURES = Path(__file__).resolve().parents[1] / "schemas" / "fixtures"
-
-
-def fake_analyzer(deployment):
-    """실제 Repo Mapper·Analyzer·Planner(B·C)가 붙기 전까지 쓰는 분석 결과.
-
-    커밋이 fixture(v1·v2)와 같으면 그 커밋의 repo_map·intent·plan을 돌려준다.
-    커밋이 없는 수동 배포는 v1을 스냅샷한 것으로 본다. 모르는 커밋이면 None(분석 없음).
-    """
-    for version in ("v1", "v2"):
-        folder = FIXTURES / version
-        repo_map = json.loads((folder / "repo_map.json").read_text())
-        if deployment["commit_sha"] in (None, repo_map["commit"]):
-            return {
-                "commit_sha": repo_map["commit"],
-                "repo_map": repo_map,
-                "intent": json.loads((folder / "intent.json").read_text()),
-                "plans": {t: json.loads((folder / f"plan.{t}.json").read_text()) for t in deployment["targets"]},
-            }
-    return None
-
-
 def _sse(event, data, seq=None):
     head = f"id: {seq}\n" if seq is not None else ""
     return f"{head}event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fake_analyzer):
+def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_analyzer):
     store = Store(db_path or DEFAULT_DB)
     store.recover_interrupted()
 
     def execute(project_id, deployment_id):
-        """대상별 배포기를 동시에 돌리고, 끝나면 그동안 쌓인 요청(queued) 중 최신 것을 이어서 실행한다."""
+        """분석·승인 확인 후 대상별 배포기를 동시에 돌리고, 끝나면 대기 중인 최신 요청을 이어서 실행한다."""
         while deployment_id:
             deployment = store.get_deployment(deployment_id)
-            targets = deployment["targets"]
-            if not deployment["approved_at"] and deployment["triggered_by"] != "rollback" and needs_approval(deployment):
-                return
-            run_deployment(store, deployment_id, {t: deployer_cmd(deployment_id, t) for t in targets})
+            if deployment["approved_at"] or deployment["triggered_by"] == "rollback" or ready(deployment):
+                targets = deployment["targets"]
+                run_deployment(store, deployment_id, {t: deployer_cmd(deployment_id, t) for t in targets})
+            elif store.get_deployment(deployment_id)["status"] == Status.AWAITING_APPROVAL.value:
+                return  # 승인이 나면 approve가 이어서 실행한다
             deployment_id = None
             if store.has_queued(project_id):
                 try:
@@ -120,29 +100,26 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fake_analy
                 except ConflictError:
                     return
 
-    def prepare(deployment):
-        """분석·설계 단계(구간 2~7). 결과를 커밋 단위 캐시와 배포 작업에 저장해 다음 push 판정과 승인 비교에 쓴다.
-
-        실제 모듈을 붙일 때 analyzer는 deployment["analysis_mode"]를 보고 rebuild_only면 AI 분석을 건너뛴다.
-        """
-        result = analyzer(deployment)
-        if result is None:
-            return
+    def ready(deployment):
+        """분석·설계(구간 2~7)를 하고 승인이 필요 없으면 True. 분석 실패면 FAILED, 구조 변경이면 승인 대기."""
+        try:
+            result = analyzer(deployment)
+        except AnalysisFailed as exc:
+            store.set_analysis_metrics(deployment["id"], {**exc.metrics, "error": exc.code})
+            store.fail(deployment["id"])
+            return False
+        if result is None:  # 분석 결과가 없으면(가짜 모드의 임의 커밋) 비교할 구조도 없다
+            return True
+        store.set_analysis_metrics(deployment["id"], result.get("metrics"))
         store.set_commit(deployment["id"], result["commit_sha"])
         store.save_analysis(deployment["project_id"], result["commit_sha"], result["repo_map"], result["intent"])
         store.save_plans(deployment["id"], result["plans"])
-
-    def needs_approval(deployment):
-        """직전 LIVE 대비 인프라 구조가 바뀌면 AWAITING_APPROVAL로 멈춘다(기획서 시나리오 B-2)."""
-        prepare(deployment)
-        plans = store.get_plans(deployment["id"])
-        if not plans:  # 설계도가 없으면 비교할 구조도 없다(가짜 모드의 임의 커밋)
-            return False
+        # 직전 LIVE 대비 인프라 구조가 바뀌면 사람 승인을 받는다(기획서 시나리오 B-2)
         base = store.last_live(deployment["project_id"], deployment["id"], with_plans=True)
-        changes = plan_diff(store.get_plans(base["id"]) if base else {}, plans)
+        changes = plan_diff(store.get_plans(base["id"]) if base else {}, result["plans"])
         if changes:
             store.await_approval(deployment["id"], changes)
-        return bool(changes)
+        return not changes
 
     def deployment_or_404(deployment_id):
         deployment = store.get_deployment(deployment_id)
