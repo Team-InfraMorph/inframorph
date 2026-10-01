@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 from dataclasses import dataclass
 
 from pydantic import ValidationError
@@ -39,6 +40,7 @@ class RunResult:
     accepted: int
     rejected: int
     status: Status
+    url: str | None = None
 
 
 def _final_status(exit_code, events):
@@ -49,14 +51,22 @@ def _final_status(exit_code, events):
     return Status.LIVE
 
 
-def run_deployer(store, deployment_id, cmd, timeout=DEFAULT_TIMEOUT_S):
-    """cmd를 실행하고 끝날 때까지 이벤트를 저장한 뒤 최종 상태를 기록한다."""
+def _overall_status(statuses):
+    """대상 하나라도 실패하면 FAILED, 롤백됐으면 ROLLED_BACK, 모두 성공해야 LIVE."""
+    for status in (Status.FAILED, Status.ROLLED_BACK):
+        if status in statuses:
+            return status
+    return Status.LIVE
+
+
+def run_target(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S):
+    """대상 하나의 배포기를 실행하고 끝날 때까지 이벤트를 저장한 뒤 그 대상의 상태를 기록한다."""
     accepted, rejected, events = 0, 0, []
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1)
     except OSError as exc:
-        log.error("deployer failed to start: %s", exc)
-        store.set_status(deployment_id, Status.FAILED)
+        log.error("%s deployer failed to start: %s", target, exc)
+        store.set_target_status(deployment_id, target, Status.FAILED)
         return RunResult(None, 0, 0, Status.FAILED)
 
     try:
@@ -70,9 +80,9 @@ def run_deployer(store, deployment_id, cmd, timeout=DEFAULT_TIMEOUT_S):
                 rejected += 1
                 log.warning("rejected event line: %s", exc.errors()[0]["msg"])
                 continue
-            if event.deployment_id != deployment_id:
+            if event.deployment_id != deployment_id or event.target.value != target:
                 rejected += 1
-                log.warning("rejected event for other deployment: %s", event.deployment_id)
+                log.warning("rejected event for %s/%s", event.deployment_id, event.target.value)
                 continue
             if event.detail:
                 event = event.model_copy(update={"detail": mask_secrets(event.detail)})
@@ -84,10 +94,28 @@ def run_deployer(store, deployment_id, cmd, timeout=DEFAULT_TIMEOUT_S):
         proc.kill()
         proc.wait()
         exit_code = None
-        log.error("deployer timed out after %ss", timeout)
+        log.error("%s deployer timed out after %ss", target, timeout)
     finally:
         proc.stdout.close()
 
     status = _final_status(exit_code, events)
+    url = next((e.url for e in reversed(events) if e.url and e.status == "ok"), None)
+    store.set_target_status(deployment_id, target, status, url)
+    return RunResult(exit_code, accepted, rejected, status, url)
+
+
+def run_deployment(store, deployment_id, cmds, timeout=DEFAULT_TIMEOUT_S):
+    """대상별 배포기를 동시에 실행한다(기획서 시나리오 A: Local과 AWS 동시 진행). cmds = {target: cmd}."""
+    results = {}
+
+    def run(target, cmd):
+        results[target] = run_target(store, deployment_id, target, cmd, timeout)
+
+    threads = [threading.Thread(target=run, args=item) for item in cmds.items()]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    status = _overall_status({r.status for r in results.values()})
     store.set_status(deployment_id, status)
-    return RunResult(exit_code, accepted, rejected, status)
+    return results

@@ -19,7 +19,7 @@ from schemas.common import Target
 from . import webhook
 from .db import TERMINAL, ConflictError, Status, Store
 from .change_detector import plan_redeploy
-from .orchestrator import run_deployer
+from .orchestrator import run_deployment
 
 DEFAULT_DB = Path(os.environ.get("INFRAMORPH_HOME", "/tmp/inframorph")) / "control_plane.db"
 REPO_URL = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(\.git)?/?")
@@ -56,12 +56,18 @@ class ProjectIn(BaseModel):
         return value
 
 
-def fake_deployer_cmd(deployment_id):
-    """실제 배포기가 붙기 전까지 쓰는 명령. 환경 변수로 지연·fixture·종료 코드를 바꿀 수 있다."""
+def _fake_env(name, target, default=None):
+    """INFRAMORPH_FAKE_<NAME>_<TARGET>이 있으면 그 대상에만, 없으면 INFRAMORPH_FAKE_<NAME>을 쓴다."""
+    return os.environ.get(f"INFRAMORPH_FAKE_{name}_{target.upper()}", os.environ.get(f"INFRAMORPH_FAKE_{name}", default))
+
+
+def fake_deployer_cmd(deployment_id, target):
+    """실제 배포기가 붙기 전까지 쓰는 명령. 환경 변수로 지연·fixture·종료 코드를 대상별로 바꿀 수 있다."""
     cmd = [sys.executable, "-m", "control_plane.fake_deployer", "--deployment-id", deployment_id,
-           "--delay", os.environ.get("INFRAMORPH_FAKE_DELAY", "1"),
-           "--exit-code", os.environ.get("INFRAMORPH_FAKE_EXIT_CODE", "0")]
-    if fixture := os.environ.get("INFRAMORPH_FAKE_FIXTURE"):
+           "--target", target,
+           "--delay", _fake_env("DELAY", target, "1"),
+           "--exit-code", _fake_env("EXIT_CODE", target, "0")]
+    if fixture := _fake_env("FIXTURE", target):
         cmd += ["--fixture", fixture]
     return cmd
 
@@ -74,6 +80,18 @@ def _sse(event, data, seq=None):
 def create_app(db_path=None, deployer_cmd=fake_deployer_cmd):
     store = Store(db_path or DEFAULT_DB)
     store.recover_interrupted()
+
+    def execute(project_id, deployment_id):
+        """대상별 배포기를 동시에 돌리고, 끝나면 그동안 쌓인 요청(queued) 중 최신 것을 이어서 실행한다."""
+        while deployment_id:
+            targets = store.get_deployment(deployment_id)["targets"]
+            run_deployment(store, deployment_id, {t: deployer_cmd(deployment_id, t) for t in targets})
+            deployment_id = None
+            if store.has_queued(project_id):
+                try:
+                    deployment_id = store.begin_deploy(project_id)
+                except ConflictError:
+                    return
 
     app = FastAPI(title="InfraMorph Control Plane")
     app.state.store = store
@@ -104,7 +122,7 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd):
             deployment_id = store.begin_deploy(project_id)
         except ConflictError:
             raise HTTPException(409, "deployment already running for this project")
-        background.add_task(run_deployer, store, deployment_id, deployer_cmd(deployment_id))
+        background.add_task(execute, project_id, deployment_id)
         return {"deployment_id": deployment_id, "status": Status.DEPLOYING.value}
 
     @app.get("/api/projects/{project_id}/deployments")
@@ -186,7 +204,7 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd):
                 state = "queued"
             else:
                 state = "started"
-                background.add_task(run_deployer, store, started, deployer_cmd(started))
+                background.add_task(execute, project_id, started)
             redeploys.append({"project_id": project_id, "deployment_id": deployment_id, "state": state,
                               **decision.as_dict()})
 

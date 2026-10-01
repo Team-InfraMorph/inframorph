@@ -18,9 +18,10 @@ class Status(str, Enum):
     LIVE = "LIVE"
     FAILED = "FAILED"
     ROLLED_BACK = "ROLLED_BACK"
+    SUPERSEDED = "SUPERSEDED"  # 시작 전에 더 새 커밋의 요청이 와서 건너뛴 작업
 
 
-TERMINAL = {Status.LIVE, Status.FAILED, Status.ROLLED_BACK}
+TERMINAL = {Status.LIVE, Status.FAILED, Status.ROLLED_BACK, Status.SUPERSEDED}
 RUNNING = {Status.DEPLOYING}
 
 SCHEMA = """
@@ -55,6 +56,13 @@ CREATE TABLE IF NOT EXISTS analyses (
     intent TEXT,
     created_at TEXT NOT NULL,
     PRIMARY KEY (project_id, commit_sha)
+);
+CREATE TABLE IF NOT EXISTS deployment_targets (
+    deployment_id TEXT NOT NULL REFERENCES deployments(id),
+    target TEXT NOT NULL,
+    status TEXT NOT NULL,
+    url TEXT,
+    PRIMARY KEY (deployment_id, target)
 );
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     delivery_id TEXT PRIMARY KEY,
@@ -111,6 +119,9 @@ class Store:
     def recover_interrupted(self):
         """서버가 꺼질 때 진행 중이던 배포는 결과를 알 수 없으므로 FAILED로 둔다."""
         with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE deployment_targets SET status=? WHERE status=?", (Status.FAILED.value, Status.DEPLOYING.value)
+            )
             cur = self._conn.execute(
                 "UPDATE deployments SET status=?, updated_at=? WHERE status IN (?)",
                 (Status.FAILED.value, _now(), Status.DEPLOYING.value),
@@ -153,10 +164,13 @@ class Store:
         ).fetchall()
         return [r["id"] for r in rows]
 
-    @staticmethod
-    def _deployment(row):
+    def _deployment(self, row):
         data = dict(row)
         data["change_reasons"] = json.loads(data["change_reasons"]) if data.get("change_reasons") else []
+        targets = self._conn.execute(
+            "SELECT target, status, url FROM deployment_targets WHERE deployment_id=? ORDER BY target", (row["id"],)
+        ).fetchall()
+        data["targets"] = {t["target"]: {"status": t["status"], "url": t["url"]} for t in targets}
         return data
 
     def get_deployment(self, deployment_id):
@@ -212,8 +226,19 @@ class Store:
         return {"repo_map": json.loads(row["repo_map"]),
                 "intent": json.loads(row["intent"]) if row["intent"] else None}
 
+    def has_queued(self, project_id):
+        latest = self._conn.execute(
+            "SELECT status FROM deployments WHERE project_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        return latest is not None and latest["status"] == Status.CREATED.value
+
     def begin_deploy(self, project_id):
-        """진행 중 배포가 없을 때만 DEPLOYING으로 바꾼다. 확인과 변경을 한 잠금 안에서 해서 동시 요청을 막는다."""
+        """진행 중 배포가 없을 때만 DEPLOYING으로 바꾼다. 확인과 변경을 한 잠금 안에서 해서 동시 요청을 막는다.
+
+        가장 최근 CREATED 작업을 실행하고, 그보다 오래된 CREATED 작업은 SUPERSEDED로 닫는다.
+        대상(local·aws)마다 상태 행을 만든다.
+        """
         with self._lock, self._conn:
             if self._conn.execute(
                 "SELECT 1 FROM deployments WHERE project_id=? AND status=?",
@@ -234,10 +259,27 @@ class Store:
                     (deployment_id, project_id, Status.CREATED.value, None, now, now, "manual", None, None),
                 )
             self._conn.execute(
+                "UPDATE deployments SET status=?, updated_at=? WHERE project_id=? AND status=? AND id<>?",
+                (Status.SUPERSEDED.value, now, project_id, Status.CREATED.value, deployment_id),
+            )
+            self._conn.execute(
                 "UPDATE deployments SET status=?, updated_at=? WHERE id=?",
                 (Status.DEPLOYING.value, now, deployment_id),
             )
+            targets = json.loads(self._conn.execute(
+                "SELECT targets FROM projects WHERE id=?", (project_id,)).fetchone()["targets"])
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO deployment_targets VALUES (?, ?, ?, NULL)",
+                [(deployment_id, target, Status.DEPLOYING.value) for target in targets],
+            )
         return deployment_id
+
+    def set_target_status(self, deployment_id, target, status, url=None):
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE deployment_targets SET status=?, url=COALESCE(?, url) WHERE deployment_id=? AND target=?",
+                (Status(status).value, url, deployment_id, target),
+            )
 
     def set_status(self, deployment_id, status):
         with self._lock, self._conn:

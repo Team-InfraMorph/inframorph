@@ -75,12 +75,14 @@ class ControlPlaneApiTest(unittest.TestCase):
         deployment_id = res.json()["deployment_id"]
         self.assertEqual(deployment_id, project["deployment_id"])
 
-        status = self.client.get(f"/api/deployments/{deployment_id}").json()["status"]
-        self.assertEqual(status, "LIVE")
+        deployment = self.client.get(f"/api/deployments/{deployment_id}").json()
+        self.assertEqual(deployment["status"], "LIVE")
+        self.assertEqual(deployment["targets"]["local"], {"status": "LIVE", "url": "http://localhost:3000"})
+        self.assertEqual(deployment["targets"]["aws"]["status"], "LIVE")
 
         with self.client.stream("GET", f"/api/deployments/{deployment_id}/events") as stream:
             body = "".join(stream.iter_text())
-        expected = len((FIXTURES / "happy_path.jsonl").read_text().splitlines())
+        expected = 2 * len((FIXTURES / "happy_path.jsonl").read_text().splitlines())  # local + aws
         self.assertEqual(body.count("event: deploy"), expected)
         self.assertIn("event: end", body)
         self.assertIn(deployment_id, body)
@@ -101,6 +103,18 @@ class ControlPlaneApiTest(unittest.TestCase):
         deployment_id = self.client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
         status = self.client.get(f"/api/deployments/{deployment_id}").json()["status"]
         self.assertEqual(status, "ROLLED_BACK")
+
+    def test_aws_only_rollback_keeps_local_live(self):
+        os.environ["INFRAMORPH_FAKE_FIXTURE_AWS"] = str(FIXTURES / "rollback.jsonl")
+        try:
+            project = self.create().json()
+            deployment_id = self.client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
+        finally:
+            os.environ.pop("INFRAMORPH_FAKE_FIXTURE_AWS", None)
+        deployment = self.client.get(f"/api/deployments/{deployment_id}").json()
+        self.assertEqual(deployment["status"], "ROLLED_BACK")
+        self.assertEqual(deployment["targets"]["aws"]["status"], "ROLLED_BACK")
+        self.assertEqual(deployment["targets"]["local"]["status"], "LIVE")
 
     def test_nonzero_exit_marks_failed(self):
         os.environ["INFRAMORPH_FAKE_FIXTURE"] = str(FIXTURES / "happy_path.jsonl")

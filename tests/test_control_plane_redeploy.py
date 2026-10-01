@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from control_plane.app import create_app  # noqa: E402
+from control_plane.app import create_app, fake_deployer_cmd  # noqa: E402
 from control_plane.change_detector import plan_redeploy  # noqa: E402
 from control_plane.db import Store  # noqa: E402
 from control_plane.webhook import PushEvent  # noqa: E402
@@ -80,6 +80,14 @@ class AnalysisCacheTest(unittest.TestCase):
         broken = dict(V1_INTENT, unexpected=True)
         with self.assertRaises(ValueError):
             self.store.save_analysis(self.project, BEFORE, V1_REPO_MAP, broken)
+
+    def test_newest_queued_request_runs_and_older_ones_are_superseded(self):
+        first = self.store.list_deployments(self.project)[0]["id"]
+        newer = self.store.create_push_deployment(self.project, AFTER, "rebuild_only", [])
+        self.assertEqual(self.store.begin_deploy(self.project), newer)
+        self.assertEqual(self.store.get_deployment(first)["status"], "SUPERSEDED")
+        self.assertEqual(self.store.get_deployment(newer)["targets"], {"local": {"status": "DEPLOYING", "url": None}})
+        self.assertFalse(self.store.has_queued(self.project))
 
     def test_old_database_gets_new_columns(self):
         old = Path(self.tmp.name) / "old.db"
@@ -169,6 +177,30 @@ class PushRedeployEndpointTest(unittest.TestCase):
         self.send(["README.md"], "d5")
         history = self.client.get(f"/api/projects/{self.project}/deployments").json()
         self.assertEqual([d["triggered_by"] for d in history], ["push", "manual"])
+
+
+class QueueDrainTest(unittest.TestCase):
+    def test_push_arriving_mid_deploy_runs_after_current_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["INFRAMORPH_FAKE_DELAY"] = "0"
+            calls = []
+
+            def deployer_cmd(deployment_id, target):
+                if not calls:  # 첫 배포가 도는 중에 push가 들어온 상황
+                    store.create_push_deployment(project, AFTER, "rebuild_only", [])
+                calls.append(deployment_id)
+                return fake_deployer_cmd(deployment_id, target)
+
+            app = create_app(db_path=Path(tmp) / "cp.db", deployer_cmd=deployer_cmd)
+            store = app.state.store
+            with TestClient(app) as client:
+                project = client.post("/api/projects", json={"repo_url": REPO, "targets": ["local"]}).json()["project_id"]
+                client.post(f"/api/projects/{project}/deploy")
+                history = client.get(f"/api/projects/{project}/deployments").json()
+            os.environ.pop("INFRAMORPH_FAKE_DELAY", None)
+            store.close()
+        self.assertEqual([d["status"] for d in history], ["LIVE", "LIVE"])
+        self.assertEqual(len(set(calls)), 2)
 
 
 if __name__ == "__main__":
