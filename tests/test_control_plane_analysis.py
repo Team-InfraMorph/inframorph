@@ -65,7 +65,9 @@ class AnalyzerInPipelineTest(unittest.TestCase):
                     project = client.post("/api/projects", json={
                         "repo_url": "https://github.com/Team-InfraMorph/demo-app", "targets": ["local", "aws"]}).json()
                     dep = client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
-                    return client.get(f"/api/deployments/{dep}").json()
+                    deployment = client.get(f"/api/deployments/{dep}").json()
+                    deployment["analysis"] = client.get(f"/api/deployments/{dep}/analysis").json()
+                    return deployment
             finally:
                 os.environ.pop("INFRAMORPH_ANALYZER_ROOT", None)
                 os.environ.pop("INFRAMORPH_FAKE_DELAY", None)
@@ -75,6 +77,7 @@ class AnalyzerInPipelineTest(unittest.TestCase):
         deployment = self.deploy()
         self.assertEqual(deployment["status"], "LIVE")
         self.assertEqual(deployment["analysis_metrics"]["model_calls"], 5)
+        self.assertEqual(deployment["analysis"]["intent"]["workloads"][0]["name"], "web")
 
     def test_analyzer_failure_stops_before_deploying(self):
         deployment = self.deploy(exit_code=1)

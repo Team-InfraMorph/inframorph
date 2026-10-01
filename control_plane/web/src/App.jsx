@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
+import { Structure } from "./Structure.jsx";
 
 const TARGETS = { local: "Local (노트북 Docker)", aws: "AWS (서울)" };
 const STEPS = {
@@ -14,6 +15,9 @@ const STATUS = {
 const TRIGGER = { manual: "수동", push: "git push", rollback: "롤백" };
 const MODE = { full_analysis: "전체 분석", reanalyze: "재분석", rebuild_only: "빌드만 (AI 생략)" };
 const TERMINAL = ["LIVE", "FAILED", "ROLLED_BACK", "SUPERSEDED"];
+
+const STATE_KIND = { relational_db: "관계형 DB", persistent_files: "영구 파일" };
+const BACKEND = { replay: "저장된 응답 재생", openai: "실제 모델 호출", fixture: "예시 분석 결과" };
 
 const PLAN_ROWS = [
   ["서비스", (p) => p.services.map((s) => `${s.name} (${s.kind})`).join(", ")],
@@ -83,6 +87,57 @@ function ApprovalBanner({ deployment, onAct }) {
   );
 }
 
+function Usage({ deployment, metrics }) {
+  if (deployment.analysis_mode === "rebuild_only") {
+    return <p className="usage saved">AI 분석 생략: 이전 분석을 재사용 (모델 호출 0회, 비용 $0)</p>;
+  }
+  if (!metrics) return null;
+  if (metrics.error) return <p className="usage error">AI 분석 실패: {metrics.error}</p>;
+  const parts = [`모델 호출 ${metrics.model_calls ?? 0}회`];
+  if (metrics.tool_calls != null) parts.push(`파일 탐색 ${metrics.tool_calls}회`);
+  if (metrics.input_tokens || metrics.output_tokens) parts.push(`토큰 ${metrics.input_tokens}/${metrics.output_tokens}`);
+  if (metrics.estimated_usd != null) parts.push(`예상 $${Number(metrics.estimated_usd).toFixed(3)}`);
+  if (metrics.duration_ms != null) parts.push(`${(metrics.duration_ms / 1000).toFixed(1)}초`);
+  return <p className="usage">{parts.join(" · ")} <span className="dim">({BACKEND[metrics.backend] ?? metrics.backend})</span></p>;
+}
+
+function AnalysisCard({ deployment, intent }) {
+  return (
+    <div className="card">
+      <h2>AI가 이해한 앱</h2>
+      <Usage deployment={deployment} metrics={deployment.analysis_metrics} />
+      {intent && (
+        <table className="intent">
+          <tbody>
+            {intent.workloads.map((w) => (
+              <tr key={w.name}>
+                <th>{w.kind === "http" ? "웹 서비스" : "백그라운드 작업"}</th>
+                <td>
+                  {w.name}{w.port ? ` · 포트 ${w.port}` : ""}{w.public ? " · 외부 공개" : ""}{w.command ? ` · ${w.command}` : ""}
+                  <div className="evidence">근거: {w.evidence.join(", ")}</div>
+                </td>
+              </tr>
+            ))}
+            {intent.state.map((st) => (
+              <tr key={st.kind + (st.path ?? "")}>
+                <th>{STATE_KIND[st.kind] ?? st.kind}</th>
+                <td>
+                  {[st.engine, st.orm, st.path].filter(Boolean).join(" · ")}
+                  {st.reason && <div>{st.reason}</div>}
+                  <div className="evidence">근거: {st.evidence.join(", ")}</div>
+                </td>
+              </tr>
+            ))}
+            {intent.secrets.length > 0 && (
+              <tr><th>비밀값</th><td>{intent.secrets.join(", ")} <span className="dim">(이름만, 값은 배포 때 주입)</span></td></tr>
+            )}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function PlanCompare({ plans, targets }) {
   if (!targets.every((t) => plans[t])) return null;
   return (
@@ -96,6 +151,14 @@ function PlanCompare({ plans, targets }) {
           ))}
         </tbody>
       </table>
+      <div className="structures">
+        {targets.map((t) => (
+          <div key={t}>
+            <h3>{TARGETS[t]} 구조</h3>
+            <Structure plan={plans[t]} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -159,6 +222,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [events, setEvents] = useState([]);
   const [plans, setPlans] = useState({});
+  const [intent, setIntent] = useState(null);
   const [error, setError] = useState("");
 
   const project = projects.find((p) => p.project_id === projectId);
@@ -196,7 +260,9 @@ export default function App() {
   }, [selectedKey]);
 
   useEffect(() => {
-    if (selectedKey) api.plans(selectedKey).then(setPlans).catch(() => setPlans({}));
+    if (!selectedKey) return;
+    api.plans(selectedKey).then(setPlans).catch(() => setPlans({}));
+    api.analysis(selectedKey).then((a) => setIntent(a.intent)).catch(() => setIntent(null));
   }, [selectedKey, selectedStatus]);
 
   const choose = (id) => {
@@ -259,6 +325,8 @@ export default function App() {
           {selected?.change_reasons.length > 0 && (
             <p className="dim reasons">판정 근거: {selected.change_reasons.join(" / ")}</p>
           )}
+
+          {selected && <AnalysisCard deployment={selected} intent={intent} />}
 
           <PlanCompare plans={plans} targets={targets} />
 

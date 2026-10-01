@@ -181,6 +181,13 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
         deployment_or_404(deployment_id)
         return store.get_plans(deployment_id)
 
+    @app.get("/api/deployments/{deployment_id}/analysis")
+    def get_analysis(deployment_id: str):
+        """이 배포 커밋의 분석 결과(C의 intent). 화면의 'AI가 이해한 앱'에 쓴다."""
+        deployment = deployment_or_404(deployment_id)
+        cached = store.get_analysis(deployment["project_id"], deployment["commit_sha"]) if deployment["commit_sha"] else None
+        return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"]}
+
     @app.post("/api/deployments/{deployment_id}/approve", status_code=202)
     def approve(deployment_id: str, background: BackgroundTasks):
         deployment = deployment_or_404(deployment_id)
