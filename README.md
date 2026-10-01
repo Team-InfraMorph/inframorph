@@ -23,3 +23,7 @@
 - 리뷰는 기획서 5장 리뷰 파트너가 맡습니다: A → B, B → A, C → E, D → C, E → D (작성 → 리뷰)
 - `demo-app`(샘플 앱)과 `redteam-repo`(공격 입력)는 별도 저장소입니다.
 - 결정 기록(ADR)과 문서는 Notion에 둡니다.
+
+## E 로컬 구현
+
+Policy Gate, Builder, Local Adapter의 실행법·검증 근거·남은 통합 범위는 [E_VALIDATION.md](E_VALIDATION.md)를 확인하세요.
