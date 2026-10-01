@@ -2,6 +2,7 @@ name: Analyzer tests
 
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
     paths:
       - 'analyzer/**'
       - 'code_patch/**'
@@ -21,6 +22,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Validate branch and PR body for every base branch
+        run: python3 scripts/repo_policy.py --event "$GITHUB_EVENT_PATH"
       - name: Install Python dependencies
         run: |
           python3 -m venv .venv
