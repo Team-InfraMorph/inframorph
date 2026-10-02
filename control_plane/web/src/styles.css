@@ -1,9 +1,9 @@
 :root {
-  --bg: #f6f7f9;
+  --bg: #f3f6fc;
   --card: #ffffff;
   --text: #1c2024;
   --dim: #6b7280;
-  --line: #e3e6ea;
+  --line: #dde5f2;
   --accent: #2563eb;
   --ok: #059669;
   --ok-bg: #d1fae5;
@@ -15,16 +15,16 @@
   --run-bg: #dbeafe;
   --run-glow: #2563eb55;
   --done: #2563eb;
-  --muted-bg: #eef0f3;
+  --muted-bg: #e9eff9;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0d0f12;
-    --card: #16191d;
+    --bg: #0a1120;
+    --card: #101a2c;
     --text: #e6e8ea;
-    --dim: #9aa1a9;
-    --line: #2c3035;
+    --dim: #8fa0bb;
+    --line: #1f2c44;
     --accent: #60a5fa;
     --ok: #34d399;
     --ok-bg: #0f2a22;
@@ -36,7 +36,7 @@
     --run-bg: #14233d;
     --run-glow: #60a5fa77;
     --done: #60a5fa;
-    --muted-bg: #24282c;
+    --muted-bg: #172338;
   }
 }
 
@@ -147,7 +147,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 }
 .nowbar .elapsed { margin-left: auto; font: 600 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--dim); }
 .nowbar.t-run { background: var(--run-bg); color: var(--run); }
-.nowbar.t-ok { background: var(--ok-bg); color: var(--ok); }
+.nowbar.t-ok { background: var(--run-bg); color: var(--ok); }
 .nowbar.t-fail { background: var(--fail-bg); color: var(--fail); }
 .nowbar.t-wait { background: var(--warn-bg); color: var(--warn); }
 .pulse { width: 10px; height: 10px; border-radius: 50%; background: currentColor; flex: none; }
@@ -161,12 +161,15 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .node { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 160px; padding-right: 14px; }
 .track.small .node { width: 132px; }
 /* 칸 사이 연결선: 점 오른쪽에서 다음 점까지. 앞 칸이 끝났으면 초록, 진행 중이면 흐르는 파랑 */
+/* 연결선은 처음엔 파란 점선, 앞 칸이 잘 끝나면 초록 점선 */
 .node:not(:last-child)::after {
-  content: ""; position: absolute; left: 38px; right: 6px; top: 14px; height: 2px; border-radius: 2px; background: var(--line);
+  content: ""; position: absolute; left: 38px; right: 6px; top: 13px; height: 4px; border-radius: 2px;
+  background-image: radial-gradient(circle, var(--done) 1.6px, transparent 2px); background-size: 9px 4px; background-repeat: repeat-x;
+  opacity: 0.45;
 }
 .node .dot {
   width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 4px;
-  font-size: 13px; font-weight: 800; background: var(--card); border: 2px solid var(--line); color: var(--dim);
+  font-size: 13px; font-weight: 800; background: var(--card); border: 2px solid var(--done); color: var(--done);
   transition: background 0.3s, border-color 0.3s, color 0.3s;
 }
 .node .label { font-weight: 600; font-size: 13px; }
@@ -174,12 +177,10 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .node .note { font-size: 12px; line-height: 1.35; color: var(--dim); }
 .node .flag { margin-top: 2px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--fail); color: #fff; }
 
-/* 완료: 파란 테두리+체크, 지나온 길은 초록 점선 */
-.node.n-ok .dot { background: var(--run-bg); border-color: var(--done); color: var(--done); }
-.node.n-ok::after {
-  height: 4px; top: 13px; background-color: transparent;
-  background-image: radial-gradient(circle, var(--ok) 1.6px, transparent 2px); background-size: 9px 4px; background-repeat: repeat-x;
-}
+.node.n-pending .dot { opacity: 0.55; }
+/* 완료: 초록 테두리+체크, 지나온 길도 초록 점선 */
+.node.n-ok .dot { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+.node.n-ok::after { background-image: radial-gradient(circle, var(--ok) 1.6px, transparent 2px); opacity: 1; }
 /* 진행 중: 파란 고리가 숨쉬고, 다음 칸으로 초록 점이 흘러간다 */
 .node.n-started .dot { border-color: var(--done); background: var(--run-bg); animation: ring 1.6s ease-out infinite; }
 .node.n-started .dot::before {
@@ -190,20 +191,20 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .node.n-started .time { font-weight: 600; }
 .node.n-started::after {
   height: 6px; top: 12px; background-color: transparent;
-  background-image: radial-gradient(circle, var(--ok) 2.5px, transparent 3px);
+  background-image: radial-gradient(circle, var(--done) 2.5px, transparent 3px); opacity: 1;
   background-size: 14px 6px; background-repeat: repeat-x; animation: travel 0.7s linear infinite;
 }
 /* 실패: 빨간 원 + 그 뒤로는 끊긴 선 */
 .node.n-fail .dot { background: var(--fail); border-color: var(--fail); color: #fff; box-shadow: 0 0 0 4px var(--fail-bg); }
 .node.n-fail .label { color: var(--fail); }
-.node.n-fail::after { background: repeating-linear-gradient(90deg, var(--fail) 0 4px, transparent 4px 9px); opacity: 0.5; }
+.node.n-fail::after { background-image: radial-gradient(circle, var(--fail) 1.6px, transparent 2px); opacity: 0.5; }
 /* 기록 없는 구간: 시계 모양 회색 칸 */
 .node.n-gap .dot { border-style: dotted; color: var(--warn); border-color: var(--warn); background: transparent; }
 .node.n-gap .label { color: var(--warn); font-weight: 500; }
-.node.n-gap::after { background-image: radial-gradient(circle, var(--ok) 1.6px, transparent 2px); background-size: 9px 4px; background-repeat: repeat-x; background-color: transparent; height: 4px; top: 13px; }
+.node.n-gap::after { background-image: radial-gradient(circle, var(--ok) 1.6px, transparent 2px); opacity: 1; }
 .node.n-wait .dot { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); animation: breathe 1.6s ease-in-out infinite; }
 .node.n-pending .label { color: var(--dim); font-weight: 500; }
-.node.n-skip .dot, .node.n-notrun .dot { border-style: dashed; }
+.node.n-skip .dot, .node.n-notrun .dot { border-style: dashed; border-color: var(--dim); color: var(--dim); }
 .node.n-skip .label, .node.n-notrun .label { color: var(--dim); font-weight: 500; }
 .node.n-notrun { opacity: 0.4; }
 .node.clickable { cursor: pointer; }
@@ -268,7 +269,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 }
 .feed li.f-ok { border-left-color: var(--ok); }
 .feed li.f-fail { border-left-color: var(--fail); background: var(--fail-bg); }
-.feed li.f-started { border-left-color: var(--run); }
+.feed li.f-started { border-left-color: var(--done); }
 .feed .what { font-size: 13px; }
 .feed .at { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .feed .detail { grid-column: 2 / -1; font-size: 12px; color: var(--dim); word-break: break-word; }
