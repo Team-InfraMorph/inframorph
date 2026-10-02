@@ -11,6 +11,7 @@ from .contracts import BuildArtifact, FoundationOutputs, Plan
 from .errors import AdapterError, ContractError, DeploymentError
 from .events import EventEmitter
 from .image import ImagePublisher
+from .mode import DeployMode, detect_mode
 from .naming import AppIdentity
 from .records import DeploymentRecord
 from .smoke import external_https_smoke
@@ -84,6 +85,10 @@ class DeploymentOrchestrator:
                 self.identity.hostname(self.foundation.apps_domain),
             )
 
+            # Decide first / resume / redeploy from the record AND the real AWS state, before any change.
+            current_step = "plan"
+            mode = self.detect_mode(previous, request.state_bucket)
+
             current_step = "push"
             self._emit("push", "started", detail="publishing immutable ECR tag")
             published = self.publisher.publish(local_image, self.artifact, self.foundation)
@@ -93,7 +98,7 @@ class DeploymentOrchestrator:
             )
 
             current_step = "infra"
-            self._emit("infra", "started", detail="planning app-owned resources only")
+            self._emit("infra", "started", detail=mode.detail(action="planning app-owned resources only"))
             self.terraform.prepare(request.work_dir)
             self.terraform.init(
                 request.work_dir,
@@ -159,7 +164,7 @@ class DeploymentOrchestrator:
             hostname = self.identity.hostname(self.foundation.apps_domain)
             url = "https://{}".format(hostname)
             current_step = "url"
-            self._emit("url", "ok", detail="external URL is eligible for smoke", url=url)
+            self._emit("url", "ok", detail=mode.detail(action="external URL is eligible for smoke"), url=url)
 
             current_step = "smoke"
             self._emit("smoke", "started", detail="performing verified external HTTPS health request")
@@ -178,6 +183,7 @@ class DeploymentOrchestrator:
                 url=url,
                 state_key=self.identity.state_key,
                 terraform_values=final_values,
+                deploy_mode=mode.mode,
             )
             record.save(request.record_path)
             return record
@@ -187,6 +193,18 @@ class DeploymentOrchestrator:
             if mutation_attempted:
                 self._recover(previous, request, safe_error)
             raise
+
+    def detect_mode(self, previous: Optional[DeploymentRecord], state_bucket: str) -> DeployMode:
+        names = {"{}-{}".format(self.identity.resource_prefix, service.name) for service in self.plan.services}
+        if previous is not None:
+            names.update(previous.service_names.values())
+        return detect_mode(
+            self.plan.app,
+            previous,
+            self.aws.state_exists(state_bucket, self.identity.state_key),
+            self.aws.live_services(names),
+            self.identity.state_key,
+        )
 
     def _prepare_database(
         self,
@@ -223,12 +241,15 @@ class DeploymentOrchestrator:
                     "url": database_url,
                 },
             )
+        log_group = "/inframorph/apps/{}/data-tasks".format(self.plan.app)
         self.aws.run_task(
             bootstrap_task,
             data_sg,
             self.foundation.private_subnet_ids,
             "database bootstrap",
             request.timeout_seconds,
+            log_group=log_group,
+            log_prefix="bootstrap",
         )
         self.aws.run_task(
             migration_task,
@@ -236,6 +257,8 @@ class DeploymentOrchestrator:
             self.foundation.private_subnet_ids,
             "database migration",
             request.timeout_seconds,
+            log_group=log_group,
+            log_prefix="migration",
         )
 
     def _recover(

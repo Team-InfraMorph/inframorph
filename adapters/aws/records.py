@@ -18,13 +18,16 @@ class DeploymentRecord:
     url: str
     state_key: str
     terraform_values: Dict[str, Any]
+    # first | resume | redeploy. Records written before this field existed load as "unknown".
+    deploy_mode: str = "unknown"
 
     @classmethod
     def load(cls, path: Path) -> Optional["DeploymentRecord"]:
         if not path.exists():
             return None
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return cls(**raw)
+        known = set(cls.__dataclass_fields__)
+        return cls(**{key: value for key, value in raw.items() if key in known})
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

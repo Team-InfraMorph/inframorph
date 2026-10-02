@@ -208,7 +208,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 record_path=args.record,
             )
             with AppLock(args.record.with_suffix(args.record.suffix + ".lock")):
-                orchestrator.deploy(request)
+                record = orchestrator.deploy(request)
+            # stdout stays DeployEvent JSONL only; the human-readable result goes to stderr.
+            print("AWS Adapter: {} deploy complete: {}".format(record.deploy_mode, record.url), file=sys.stderr)
             return 0
         record = DeploymentRecord.load(args.record)
         if record is None:
