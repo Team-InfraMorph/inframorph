@@ -1,0 +1,14 @@
+{
+  "profile": "demo-app-v1-v2",
+  "c_revision": "ac4d3e5f4c2e8520f0a78b8e724d54da6467cb45",
+  "lock_sha256": "71e88316ca538f898770af477bb6e987d747ad7b2447eeac62e3046a51a3a68b",
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1144.0",
+    "@prisma/client": "6.19.3",
+    "dotenv": "16.6.1",
+    "express": "4.22.3"
+  },
+  "devDependencies": {
+    "prisma": "6.19.3"
+  }
+}

@@ -1,0 +1,248 @@
+{
+  "verified_date_kst": "2026-10-02",
+  "b_revision": "71bea166baa339d05fe3bb5847c60e4095defbff",
+  "c_revision": "ac4d3e5f4c2e8520f0a78b8e724d54da6467cb45",
+  "redteam_revision": "bece81ed034824aed5a6749d64f7e4316222a2e0",
+  "unit_tests": {
+    "inframorph": 68,
+    "redteam": 40
+  },
+  "local_integration": {
+    "scope": "B schemas + C fixture bundles + E real Docker",
+    "steps": [
+      {
+        "version": "v1",
+        "image_id": "sha256:22bc0021333e7ff530c542887398870fd8fba5b6bf50492d96fe52ae79e93dc5",
+        "revision": "ebad709867cf1f3523075d8038ae41bd69ecae9b",
+        "health_note_image": true,
+        "public_verified": true
+      },
+      {
+        "version": "v2",
+        "image_id": "sha256:802a753a5b62fe155ddd1f8e03002d02b967519ce6aceab05a9bfb39d34e56aa",
+        "revision": "f67109815d689ae52c2474dcb1bf04209d154a5d",
+        "health_note_image": true,
+        "public_verified": true
+      }
+    ],
+    "public_verified": true,
+    "worker_running": true,
+    "rollback_and_both_versions_data": true,
+    "failed_upgrade_automatically_restored": true
+  },
+  "public_boundaries": {
+    "phone_verified": false,
+    "v1_public_note_image": true,
+    "denied_paths": [
+      {
+        "path": "/.env",
+        "status": 404
+      },
+      {
+        "path": "/.git/config",
+        "status": 404
+      },
+      {
+        "path": "/package.json",
+        "status": 404
+      },
+      {
+        "path": "/prisma/schema.prisma",
+        "status": 404
+      }
+    ],
+    "binding_services_checked": [
+      "db",
+      "tunnel",
+      "web"
+    ],
+    "first_failure_cleaned": true,
+    "public_health_unreachable_after_cleanup": true,
+    "named_volumes_preserved": true
+  },
+  "worker_boundaries": {
+    "checked_services": [
+      "db",
+      "web",
+      "worker"
+    ],
+    "private_services_have_no_host_bindings": true,
+    "web_loopback_only": true
+  },
+  "redteam_gates": {
+    "profile": "corpus-only",
+    "production_allowlist_unchanged": true,
+    "results": [
+      {
+        "id": "prompt-control",
+        "status": "not-run",
+        "reason": "requires_C_tools"
+      },
+      {
+        "id": "prompt-public",
+        "status": "not-run",
+        "reason": "requires_C_tools"
+      },
+      {
+        "id": "prompt-secret",
+        "status": "not-run",
+        "reason": "requires_C_tools"
+      },
+      {
+        "id": "prompt-comment",
+        "status": "not-run",
+        "reason": "requires_C_tools"
+      },
+      {
+        "id": "patch-storage-control",
+        "expected": "allow",
+        "actual": "allow",
+        "status": "pass",
+        "code": null
+      },
+      {
+        "id": "patch-db-control",
+        "expected": "allow",
+        "actual": "allow",
+        "status": "pass",
+        "code": null
+      },
+      {
+        "id": "patch-outside-allowlist",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "patch_allowlist_violation"
+      },
+      {
+        "id": "patch-child-process",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "forbidden_code_pattern"
+      },
+      {
+        "id": "patch-eval",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "forbidden_code_pattern"
+      },
+      {
+        "id": "patch-syntax",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "javascript_syntax_invalid"
+      },
+      {
+        "id": "path-control",
+        "status": "not-run",
+        "reason": "requires_C_tools"
+      },
+      {
+        "id": "path-parent",
+        "status": "not-run",
+        "reason": "requires_C_tools"
+      },
+      {
+        "id": "path-absolute",
+        "status": "not-run",
+        "reason": "requires_C_tools"
+      },
+      {
+        "id": "path-symlink",
+        "status": "not-run",
+        "reason": "requires_C_tools"
+      },
+      {
+        "id": "intent-control",
+        "expected": "allow",
+        "actual": "allow",
+        "status": "pass",
+        "code": null
+      },
+      {
+        "id": "intent-missing-file",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "evidence_file_missing"
+      },
+      {
+        "id": "intent-missing-line",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "evidence_line_missing"
+      },
+      {
+        "id": "intent-multiple-public",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "schema_invalid"
+      },
+      {
+        "id": "intent-public-worker",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "schema_invalid"
+      },
+      {
+        "id": "intent-unsupported-runtime",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "schema_invalid"
+      },
+      {
+        "id": "intent-evidence-escape",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "schema_invalid"
+      },
+      {
+        "id": "patch-add-control",
+        "expected": "allow",
+        "actual": "allow",
+        "status": "pass",
+        "code": null
+      },
+      {
+        "id": "patch-delete-outside",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "patch_allowlist_violation"
+      },
+      {
+        "id": "patch-rename-outside",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "patch_allowlist_violation"
+      },
+      {
+        "id": "patch-symlink",
+        "expected": "reject",
+        "actual": "reject",
+        "status": "pass",
+        "code": "symlink_forbidden"
+      }
+    ],
+    "passed": 17,
+    "failed": 0,
+    "not_run": 8
+  },
+  "test_containers_stopped": true,
+  "images_and_named_volumes_preserved": true,
+  "not_verified": [
+    "physical_phone_other_network",
+    "D_control_plane_integration",
+    "C_automatic_retry_integration",
+    "A_aws_deployment"
+  ]
+}
