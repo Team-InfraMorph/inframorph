@@ -277,27 +277,38 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
   .node.n-started .dot::before { animation: none; }
 }
 
-/* 배포할 앱 코드: 트리 | 실행 조건 */
-.repo-title { font-size: 15px; }
-.appcode { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 18px; }
-@media (max-width: 900px) { .appcode { grid-template-columns: minmax(0, 1fr); } }
-.appcode h3 { margin-top: 4px; }
-.codetree { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--muted-bg); border: 1px solid var(--line);
-  border-radius: 10px; padding: 10px 12px; overflow-x: auto; }
+/* 배포할 앱: 코드 트리 | 필요한 것 → 대상별 변환 */
+.appcard-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 14px; }
+.appcard-head h2 { margin: 0; font-size: 16px; }
+.appcard-head > .dim { font-size: 13px; }
+.appcard .usage { margin: 14px 0 0; padding: 0; background: none; font-size: 12px; color: var(--dim); }
+.appcode { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 860px) { .appcode { grid-template-columns: minmax(0, 1fr); } }
+
+.codetree { font: 13px/1.75 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--muted-bg);
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
 .tree, .tree-sub { list-style: none; margin: 0; padding: 0; }
-.tree-sub { margin-left: 9px; padding-left: 12px; border-left: 1px solid var(--rail); }
-.tree li { padding: 2px 0; }
-.tree-dir > .tree-name { color: var(--cyan); }
-.tree-file .tree-name { color: var(--dim); }
-.tree-file.has-role .tree-name { color: var(--text); font-weight: 600; }
-.ttag { display: inline-block; margin-left: 8px; font: 600 11px/1.6 -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
-  padding: 0 7px; border-radius: 6px; vertical-align: 1px; }
-.tt-role { background: var(--run-bg); color: var(--cyan); }
-.tt-state { background: color-mix(in srgb, var(--blue) 18%, transparent); color: var(--blue); }
-.tt-env { background: var(--warn-bg); color: var(--warn); }
-.tt-dim { background: transparent; color: var(--dim); border: 1px solid var(--line); }
-.tt-added { background: var(--ok-bg); color: var(--ok); }
-.tt-changed { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok-2); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); }
-.tree-hidden { margin: 6px 0 0; font-size: 11px; }
-.routes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
-.routes code { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--card); border: 1px solid var(--line); }
+.tree-sub { margin-left: 7px; padding-left: 12px; border-left: 1px solid var(--rail); }
+.tree-dir { color: var(--dim); }
+.tree-file { display: flex; align-items: center; gap: 8px; }
+.tree-name { color: var(--dim); }
+.tree-file.has-role .tree-name { color: var(--text); }
+.tree-role { font: 500 11px/1 -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif; color: var(--cyan); }
+.tree-git { margin-left: auto; font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tree-legend .tree-git { margin: 0 2px 0 8px; }
+.g-A { color: var(--ok); }
+.g-M { color: var(--warn); }
+.tree-legend { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--line); font: 11px/1.4 -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif; color: var(--dim); }
+
+.xlate { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.xlate th { font-size: 12px; font-weight: 600; color: var(--dim); background: var(--muted-bg); padding: 9px 14px; border-bottom: 1px solid var(--line); }
+.xlate td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.xlate tr:last-child td { border-bottom: 0; }
+.xlate .need { font-size: 14px; }
+.xlate .need strong { font-weight: 600; }
+.xlate .cite { margin-top: 3px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--cyan); }
+.xlate .fix { margin-top: 4px; font-size: 12px; color: var(--ok); }
+.xlate .fix::before { content: "↳ "; }
+.xlate .to { font-size: 14px; white-space: nowrap; }
+.xlate .to-aws { color: var(--text); }
+.xlate td.to + td.to, .xlate th + th + th { border-left: 1px solid var(--line); }

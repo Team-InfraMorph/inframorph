@@ -2,12 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
 import { Badge, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
-import { CodeTree } from "./CodeTree.jsx";
+import { AppCode } from "./CodeTree.jsx";
 
 const TRIGGER = { manual: "수동", push: "git push", rollback: "롤백" };
 const MODE = { full_analysis: "전체 분석", reanalyze: "재분석", rebuild_only: "빌드만 (AI 생략)" };
 
-const STATE_KIND = { relational_db: "관계형 DB", persistent_files: "영구 파일" };
 const BACKEND = { replay: "저장된 응답 재생", "codex-cli": "로컬 Codex · ChatGPT 로그인", openai: "실제 모델 호출", fixture: "예시 분석 결과", mixed: "혼합" };
 const ANALYSIS_STAGE = { mapper: "소스 준비", snapshot: "소스 확인", cached_intent: "이전 분석 확인",
   analyzer: "모델 분석", intent_policy: "분석 결과와 소스 대조", intent_gate: "분석 근거 검사",
@@ -22,14 +21,6 @@ const ANALYSIS_ERROR = {
   plan_source_mismatch: "배포 설계가 검토된 소스의 실행 조건과 일치하지 않아요.",
 };
 
-const PLAN_ROWS = [
-  ["서비스", (p) => p.services.map((s) => `${s.name} (${s.kind})`).join(", ")],
-  ["포트 · 상태 확인", (p) => p.services.filter((s) => s.public).map((s) => `${s.port} · ${s.health ?? "없음"}`).join(", ")],
-  ["DB", (p) => p.db?.type ?? "없음"],
-  ["파일 저장소", (p) => (p.storage ? `${p.storage.type} · ${p.storage.path}` : "없음")],
-  ["로그", (p) => p.logs],
-  ["예상 월 비용", (p) => (p.est_monthly_krw == null ? "미정" : `₩${p.est_monthly_krw.toLocaleString()}`)],
-];
 
 function load(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -132,54 +123,20 @@ function Recovery({ metrics }) {
   </div>;
 }
 
-function AnalysisCard({ deployment, intent, repoMap, patch, repo }) {
+function AnalysisCard({ deployment, intent, repoMap, patch, plans, targets, repo }) {
   return (
     <>
     <Recovery metrics={deployment.analysis_metrics} />
-    <div className="card">
-      <h2 className="repo-title">
-        <span className="mono">{repo.replace("https://github.com/", "")}</span>
-        {repoMap?.commit && <span className="dim mono"> @ {repoMap.commit.slice(0, 7)}</span>}
-        <span className="dim"> · 배포할 앱 코드</span>
-      </h2>
+    <div className="card appcard">
+      <div className="appcard-head">
+        <h2>
+          <span className="mono">{repo.replace("https://github.com/", "")}</span>
+          {repoMap?.commit && <span className="dim mono"> @{repoMap.commit.slice(0, 7)}</span>}
+        </h2>
+        <span className="dim">배포할 앱 · 이 앱이 필요로 하는 것이 대상별로 무엇이 되는지</span>
+      </div>
+      <AppCode repoMap={repoMap} intent={intent} patch={patch} plans={plans} targets={targets} />
       <Usage deployment={deployment} metrics={deployment.analysis_metrics} />
-      <div className="appcode">
-      <div>
-        <h3>코드 구조 <span className="dim">· 꼬리표 = AI가 찾은 역할(근거 줄)과 코드 수정 단계가 바꾼 파일</span></h3>
-        <CodeTree repoMap={repoMap} intent={intent} patch={patch} />
-      </div>
-      <div>
-      <h3>AI가 파악한 실행 조건</h3>
-      {intent && (
-        <table className="intent">
-          <tbody>
-            {intent.workloads.map((w) => (
-              <tr key={w.name}>
-                <th>{w.kind === "http" ? "웹 서비스" : "백그라운드 작업"}</th>
-                <td>
-                  {w.name}{w.port ? ` · 포트 ${w.port}` : ""}{w.public ? " · 외부 공개" : ""}{w.command ? ` · ${w.command}` : ""}
-                  <div className="evidence">근거: {w.evidence.join(", ")}</div>
-                </td>
-              </tr>
-            ))}
-            {intent.state.map((st) => (
-              <tr key={st.kind + (st.path ?? "")}>
-                <th>{STATE_KIND[st.kind] ?? st.kind}</th>
-                <td>
-                  {[st.engine, st.orm, st.path].filter(Boolean).join(" · ")}
-                  {st.reason && <div>{st.reason}</div>}
-                  <div className="evidence">근거: {st.evidence.join(", ")}</div>
-                </td>
-              </tr>
-            ))}
-            {intent.secrets.length > 0 && (
-              <tr><th>비밀값</th><td>{intent.secrets.join(", ")} <span className="dim">(이름만, 값은 배포 때 주입)</span></td></tr>
-            )}
-          </tbody>
-        </table>
-      )}
-      </div>
-      </div>
     </div>
     </>
   );
@@ -216,22 +173,6 @@ function PatchCard({ patch }) {
   );
 }
 
-function PlanCompare({ plans, targets }) {
-  if (!targets.every((t) => plans[t])) return null;
-  return (
-    <div className="card">
-      <h2>같은 앱, 대상별 설계도</h2>
-      <table className="compare">
-        <thead><tr><th />{targets.map((t) => <th key={t}>{TARGETS[t]}</th>)}</tr></thead>
-        <tbody>
-          {PLAN_ROWS.map(([label, read]) => (
-            <tr key={label}><th>{label}</th>{targets.map((t) => <td key={t}>{read(plans[t])}</td>)}</tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 function History({ deployments, selectedId, onSelect, onRollback }) {
   return (
@@ -407,8 +348,7 @@ export default function App() {
                 <Results deployment={selected} events={events} targets={targets}
                          onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
               )}
-              {selected && <AnalysisCard deployment={selected} intent={intent} repoMap={repoMap} patch={patch} repo={project.repo_url} />}
-              <PlanCompare plans={plans} targets={targets} />
+              {selected && <AnalysisCard deployment={selected} intent={intent} repoMap={repoMap} patch={patch} plans={plans} targets={targets} repo={project.repo_url} />}
               <PatchCard patch={patch} />
             </div>
           </div>
