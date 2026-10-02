@@ -42,6 +42,6 @@
     "STORAGE_DRIVER": "s3"
   },
   "logs": "cloudwatch",
-  "est_monthly_krw": null,
+  "est_monthly_krw": 271296,
   "mermaid": "flowchart LR\nweb --> db\nweb --> storage\nworker --> db"
 }

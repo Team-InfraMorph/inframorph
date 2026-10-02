@@ -26,8 +26,9 @@ RDS endpoint, 실제 S3 bucket 이름과 Terraform state는 Adapter가 정한다
 `plan.local.json`은 패치된 앱을 PostgreSQL 컨테이너와 volume에 배포하는
 계획이다. 두 가지 'local'을 혼동하지 않는다.
 
-`est_monthly_krw=null`은 AWS 가격표 미합의를 뜻한다. 실제 Terraform 사양,
-기준 시간, 포함 서비스, 환율과 단가를 A·B가 합의한 뒤 Planner가 계산한다.
+AWS `est_monthly_krw`는 현재 Terraform 기본 사양을 730시간 운영한다고
+가정한 고정 단가의 추정치다. 산식과 제외 항목은 `planner/README.md`에
+기록했다. 실제 청구액 또는 월 예산 보장을 뜻하지 않는다.
 fixtures/events의 URL과 타임스탬프는 실제 배포 결과가 아닌 UI 예시다.
 
 검증:
