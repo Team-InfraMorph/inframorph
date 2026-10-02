@@ -56,9 +56,13 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", system-ui, sans-serif;
+  font: 14px/1.55 "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", system-ui, sans-serif;
+  letter-spacing: -0.01em;
+  word-break: keep-all;        /* 한글이 단어 중간에서 끊기지 않게 */
+  overflow-wrap: anywhere;     /* 긴 주소·경로는 어디서든 줄바꿈 */
+  -webkit-font-smoothing: antialiased;
 }
-.app { max-width: 1480px; margin: 0 auto; padding: 20px 24px 48px; }
+.app { max-width: 1320px; margin: 0 auto; padding: 24px 28px 64px; }
 @media (max-width: 640px) { .app { padding: 16px 16px 40px; } }
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 h1 { font-size: 20px; margin: 0; }
@@ -75,6 +79,7 @@ button {
   background: var(--accent); color: #fff; border: 0; border-radius: 8px;
   padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer;
 }
+button { white-space: nowrap; flex: none; }
 button:disabled { opacity: 0.5; cursor: default; }
 button.secondary { background: var(--muted-bg); color: var(--text); }
 button.small { padding: 4px 10px; font-size: 12px; font-weight: 500; }
@@ -311,3 +316,27 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .xlate .to { font-size: 14px; white-space: nowrap; }
 .xlate .to-aws { color: var(--text); }
 .xlate td.to + td.to, .xlate th + th + th { border-left: 1px solid var(--line); }
+
+/* ── 구역: 번호 + 제목 + 왜 ─────────────────── */
+.sec { margin-top: 30px; }
+.sec-head { display: flex; gap: 12px; align-items: flex-start; justify-content: flex-start; margin-bottom: 12px; }
+.sec-n { flex: none; width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; margin-top: 1px;
+  font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--cyan); background: var(--run-bg); border: 1px solid var(--blue-dim); }
+.sec-head h2 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+.sec-head p { margin: 2px 0 0; font-size: 13px; color: var(--dim); }
+.sec .card { margin-bottom: 0; }
+.sec .targets { margin: 0; }
+
+/* 결과 카드: 주소 줄 */
+.url-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 6px; }
+.url-row .url { margin: 0; }
+.reach { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.r-pub { background: var(--ok-bg); color: var(--ok); }
+.r-local { background: var(--muted-bg); color: var(--dim); border: 1px solid var(--line); }
+
+/* 코드 변경 내역 */
+.patch-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 6px; }
+.ok-chip { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); }
+.patch-file summary { display: flex; align-items: center; gap: 10px; }
+.patch-file summary .tree-git { margin: 0; width: 12px; }
+.patch-file summary .dim { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }

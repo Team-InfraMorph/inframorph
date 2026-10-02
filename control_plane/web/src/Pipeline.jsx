@@ -431,6 +431,8 @@ export function Verification({ check, onRecheck }) {
   );
 }
 
+const reachable = (url) => !/^https?:\/\/(127\.|localhost|0\.0\.0\.0|\[::1\])/.test(url) && !/\.invalid(\/|:|$)/.test(url);
+
 function TargetResult({ target, deployment, stage, onRecheck }) {
   const state = deployment.targets[target];
   const status = state?.status ?? "CREATED";
@@ -453,7 +455,16 @@ function TargetResult({ target, deployment, stage, onRecheck }) {
           : unverified ? "배포기는 완료라고 했지만 접속이 안 됩니다" : HEADLINE[status] ?? status}
         {fake && <span className="fake">시험용 가짜 배포 · 실제 아님</span>}
       </p>
-      {state?.url && <a className="url" href={state.url} target="_blank" rel="noreferrer">{state.url}</a>}
+      {state?.url && (
+        <div className="url-row">
+          <a className="url" href={state.url} target="_blank" rel="noreferrer">{state.url}</a>
+          {/* 심사 기준 '배포된 앱에 누구나 접근할 수 있는가' — 주소가 이 노트북 안인지 공개인지 바로 보이게 */}
+          {fake ? null : reachable(state.url)
+            ? <span className="reach r-pub">누구나 접속 가능</span>
+            : <span className="reach r-local">이 노트북에서만 열림</span>}
+          <button className="small secondary" onClick={() => navigator.clipboard?.writeText(state.url)}>주소 복사</button>
+        </div>
+      )}
       <Verification check={state?.verification} onRecheck={onRecheck} />
       {rows.length > 0 && (
         <table className="changes"><tbody>

@@ -142,54 +142,75 @@ function AnalysisCard({ deployment, intent, repoMap, patch, plans, targets, repo
   );
 }
 
-const ACTION = { add: "추가", modify: "수정" };
 
 function PatchCard({ patch }) {
   const entries = Object.entries(patch);
   if (!entries.length) return null;
-  const same = entries.length > 1 && entries.every(([, p]) => JSON.stringify(p) === JSON.stringify(entries[0][1]));
-  const shown = same ? [["공통 변경", entries[0][1]]] : entries;
+  const key = (p) => JSON.stringify(p.files.map((f) => [f.path, f.action, f.diff]));
+  const same = entries.every(([, p]) => key(p) === key(entries[0][1]));
+  const shown = same ? [[entries.map(([t]) => TARGETS[t]?.split(" ")[0] ?? t).join("·") + " 공통", entries[0][1]]] : entries.map(([t, p]) => [TARGETS[t] ?? t, p]);
   return (
-    <div className="card">
-      <h2>코드를 이렇게 고쳤다</h2>
-      {shown.map(([target, value]) => <section key={target}>
-      <h3>{TARGETS[target] ?? target} {value.phase === "recovery" ? "· 자동 복구 후 패치" : ""}</h3>
-      {value.verified && <p className="dim">E 정책 검사 통과 · {value.applied ? "이 배포에서 실행 검증 완료" : "실행 검증이 완료되지 않은 변경"} · 커밋 {value.source_revision.slice(0, 7)}</p>}
-      {value.initial && <p className="dim">최초 패치 이력을 보존하고 복구에 성공한 패치를 표시합니다.</p>}
-      {value.status === "unchanged" && <p className="dim">수정할 코드가 없습니다.</p>}
-      {value.files.map((f) => (
-        <details key={f.path} className="patch-file">
-          <summary><span className="mono">{f.path}</span> <span className="dim">{ACTION[f.action] ?? f.action}</span></summary>
-          {f.diff == null ? <p className="dim">잠금 파일이라 내용은 생략</p> : <>
-            <pre className="diff">{f.diff.split("\n").map((line, i) => (
-              <span key={i} className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""}>{line}{"\n"}</span>
-            ))}</pre>
-            {f.truncated && <p className="dim">표시 크기 제한으로 diff 일부를 생략했습니다.</p>}
-          </>}
-        </details>
+    <div className="card patch">
+      {shown.map(([label, value]) => (
+        <div key={label}>
+          <div className="patch-head">
+            <strong>{label}</strong>
+            <span className="dim">{value.files.length}개 파일</span>
+            {value.verified && <span className="ok-chip">정책 검사 통과</span>}
+            {value.applied && <span className="ok-chip">실행 검증 완료</span>}
+            {value.phase === "recovery" && <span className="dim">자동 복구 후 패치</span>}
+          </div>
+          {value.status === "unchanged" && <p className="dim">고칠 코드가 없어 원본 그대로 배포했습니다.</p>}
+          {value.files.map((f) => (
+            <details key={f.path} className="patch-file">
+              <summary>
+                <span className={`tree-git g-${f.action === "add" ? "A" : "M"}`}>{f.action === "add" ? "A" : "M"}</span>
+                <span className="mono">{f.path}</span>
+                <span className="dim">{f.diff == null ? "잠금 파일 · 내용 생략" : `+${(f.diff.match(/^\+/gm) ?? []).length} −${(f.diff.match(/^-/gm) ?? []).length}`}</span>
+              </summary>
+              {f.diff != null && <>
+                <pre className="diff">{f.diff.split("\n").map((line, i) => (
+                  <span key={i} className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""}>{line}{"\n"}</span>
+                ))}</pre>
+                {f.truncated && <p className="dim">표시 크기 제한으로 diff 일부를 생략했습니다.</p>}
+              </>}
+            </details>
+          ))}
+        </div>
       ))}
-      </section>)}
     </div>
   );
 }
 
 
+/** 화면의 각 구역 = 번호 + 제목 + 이 구역을 왜 보여 주는지 한 줄. */
+function Section({ n, title, why, children }) {
+  return (
+    <section className="sec">
+      <header className="sec-head">
+        <span className="sec-n">{n}</span>
+        <div><h2>{title}</h2><p>{why}</p></div>
+      </header>
+      {children}
+    </section>
+  );
+}
+
 function History({ deployments, selectedId, onSelect, onRollback }) {
   return (
     <div className="card">
-      <h2>배포 이력</h2>
       <table className="history">
-        <thead><tr><th>시각</th><th>시작</th><th>커밋</th><th>처리 깊이</th><th>상태</th><th /></tr></thead>
+        <thead><tr><th>시각</th><th>계기</th><th>커밋</th><th>다시 한 범위</th><th>결과</th><th /></tr></thead>
         <tbody>
-          {deployments.map((d) => (
+          {deployments.map((d, i) => (
             <tr key={d.id} className={d.id === selectedId ? "selected" : ""} onClick={() => onSelect(d.id)}>
               <td>{new Date(d.created_at).toLocaleTimeString()}</td>
               <td>{TRIGGER[d.triggered_by] ?? d.triggered_by}</td>
               <td className="mono">{d.commit_sha ? d.commit_sha.slice(0, 7) : "—"}</td>
-              <td title={d.change_reasons.join("\n")}>{MODE[d.analysis_mode] ?? "—"}</td>
+              <td title={d.change_reasons.join("\n")}>{MODE[d.analysis_mode] ?? (d.triggered_by === "rollback" ? "이전 버전 재배포" : "전체 (처음부터)")}</td>
               <td><Badge status={d.status} /></td>
               <td>
-                {["LIVE", "FAILED", "ROLLED_BACK"].includes(d.status) && (
+                {i === 0 && deployments.slice(1).some((x) => x.status === "LIVE") && TERMINAL.includes(d.status) && (
                   <button className="small secondary" onClick={(e) => { e.stopPropagation(); onRollback(d.id); }}>
                     이전 버전으로
                   </button>
@@ -340,22 +361,36 @@ export default function App() {
             <span className="dim"> 검증된 동일 커밋의 분석을 재사용하고 소스와 배포 조건을 다시 검사합니다.</span>
           </p>}
 
-          {selected && <Pipeline deployment={selected} events={events} targets={targets} ctx={{ intent, patch, plans }} />}
+          {selected && (
+            <Section n="1" title="배포 과정" why="각 단계 끝에 검사가 있고, 통과해야 다음으로 갑니다. 실패하면 그 자리에서 멈추고 이유를 보여 줍니다. 칸을 누르면 기록이 열립니다.">
+              <Pipeline deployment={selected} events={events} targets={targets} ctx={{ intent, patch, plans }} />
+            </Section>
+          )}
 
-          <div className="board">
-            <div className="main-col">
-              {selected && (
-                <Results deployment={selected} events={events} targets={targets}
-                         onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
-              )}
-              {selected && <AnalysisCard deployment={selected} intent={intent} repoMap={repoMap} patch={patch} plans={plans} targets={targets} repo={project.repo_url} />}
+          {selected && (
+            <Section n="2" title="결과 · 접속 주소" why="배포기의 '완료' 보고를 믿지 않고, 조종실이 주소에 직접 접속해 응답을 확인합니다.">
+              <Results deployment={selected} events={events} targets={targets}
+                       onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
+            </Section>
+          )}
+
+          {selected && (
+            <Section n="3" title="환경 차이를 어떻게 흡수했나" why="같은 코드가 Local과 AWS에서 각각 무엇으로 바뀌는지. AI는 근거(파일:줄)를 찾고, 정해진 패치가 고칩니다.">
+              <AnalysisCard deployment={selected} intent={intent} repoMap={repoMap} patch={patch} plans={plans} targets={targets} repo={project.repo_url} />
+            </Section>
+          )}
+
+          {Object.keys(patch).length > 0 && (
+            <Section n="4" title="코드 변경 내역" why="원본 레포는 그대로 두고 복사본만 고칩니다. 정책 검사를 통과한 변경만 빌드됩니다.">
               <PatchCard patch={patch} />
-            </div>
-          </div>
+            </Section>
+          )}
 
-          <History deployments={deployments} selectedId={selected?.id}
-                   onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)}
-                   onRollback={(id) => act(api.rollback, id)} />
+          <Section n="5" title="배포 기록 · 되돌리기" why="모든 배포가 남고, 문제가 생기면 직전 정상 버전으로 한 번에 되돌립니다.">
+            <History deployments={deployments} selectedId={selected?.id}
+                     onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)}
+                     onRollback={(id) => act(api.rollback, id)} />
+          </Section>
         </>
       )}
     </div>
