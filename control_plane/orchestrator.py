@@ -63,6 +63,28 @@ def _overall_status(statuses):
     return Status.LIVE
 
 
+# Only the trusted AWS adapter needs cloud configuration. Builders (even for AWS)
+# and C/E workers retain the minimal environment.
+AWS_ADAPTER_ENV = frozenset({
+    "INFRAMORPH_FOUNDATION_OUTPUTS", "INFRAMORPH_AWS_ACCOUNT_ID",
+    "INFRAMORPH_TF_STATE_BUCKET", "INFRAMORPH_MIGRATION_COMMAND",
+    "INFRAMORPH_DEPLOY_TIMEOUT_SECONDS", "AWS_PROFILE", "AWS_DEFAULT_PROFILE",
+    "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE", "AWS_CA_BUNDLE", "AWS_SDK_LOAD_CONFIG",
+    "AWS_ROLE_ARN", "AWS_ROLE_SESSION_NAME", "AWS_WEB_IDENTITY_TOKEN_FILE",
+})
+
+
+def module_environment(target, cmd):
+    env = child_environment()
+    if (target == "aws" and len(cmd) >= 4
+            and list(cmd[1:3]) == ["-m", "adapters.aws"]
+            and cmd[3] in {"deploy", "rollback"}):
+        env.update({key: os.environ[key] for key in AWS_ADAPTER_ENV if key in os.environ})
+    return env
+
+
 def stream_events(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S, cwd=None):
     """cmd를 실행해 stdout의 DeployEvent를 줄마다 검증·저장한다. 반환 = (종료 코드, 받은 이벤트, 버린 줄 수).
 
@@ -70,7 +92,7 @@ def stream_events(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S, 
     """
     rejected, events = 0, []
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, env=child_environment(), cwd=cwd)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, env=module_environment(target, cmd), cwd=cwd)
     except OSError as exc:
         log.error("%s command failed to start: %s", target, exc)
         return None, events, rejected

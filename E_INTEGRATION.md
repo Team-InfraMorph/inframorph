@@ -79,3 +79,10 @@ redteam checkout의 HEAD는 pin의 SHA여야 한다. 작업 중인 checkout을 �
 실제 B Mapper/Planner, 실제 모델의 redteam 대응, 원격 Git 입력부터 시작하는 전체 제품 실행, 실제 AWS 배포, 휴대폰 외부망 접속은 미검증이다. E의 실행 연결과 전체 제품 완성을 구분한다. CI 통과도 실제 모델 행동이나 모든 공격에 대한 방어를 보장하지 않는다.
 
 redteam 입력 변경 시 고정 SHA 변경과 E 연결 검증을 한 묶음으로 검토한다. 두 저장소의 CI가 자동으로 서로를 실행한다고 가정하지 않는다. 이후 Policy v2 규칙을 추가하면 이 연결 검사를 유지하면서 정상/위반 쌍을 확장한다.
+
+## PR #29 연결 리뷰 수정
+
+- AWS 배포·롤백에만 계정/Foundation/state bucket/migration/timeout 및 AWS 인증 설정을 명시적 허용 목록으로 전달한다. AWS 대상 Builder와 C/E/Local 프로세스에는 전달하지 않으며 OpenAI 키도 제외한다. 실제 AWS CLI 파서를 별도 프로세스로 실행해 계약을 검증했다(클라우드 호출 없음).
+- Local Adapter의 명시적 롤백과 실패한 재배포의 자동 복구는 저장된 Compose의 tunnel 존재 여부를 기준으로 현재 공개 URL을 다시 찾는다. HTTPS에서 기존 데이터가 확인된 뒤에만 URL을 저장하고 복구 성공 이벤트를 보낸다. 공개 확인 실패 시 성공 상태를 갱신하지 않는다.
+- 회귀 검사 5개 추가: AWS 설정/격리, 공개 롤백, 공개 자동 복구, 각각의 공개 경로 실패. UI 변경 없음. 공개 롤백을 실제 Docker 검증 스크립트에도 추가했다.
+- 아래 수정 이후 실행 결과는 `validation/e-review-results.json`을 기준으로 한다. 기존 `e-integration-results.json`은 명시된 이전 커밋의 실행 기록이다.

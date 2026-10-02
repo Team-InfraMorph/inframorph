@@ -225,6 +225,28 @@ def wait_for(action, timeout=120):
             time.sleep(1)
 
 
+def verified_public_url(execute, args, records):
+    """Rediscover the active Quick Tunnel and verify persisted data over HTTPS."""
+    def find_tunnel():
+        logs = execute(args + ["logs", "--no-color", "tunnel"])
+        found = re.findall(r"https://[a-z0-9-]+\.trycloudflare\.com", logs)
+        require(bool(found), "tunnel_pending")
+        return found[-1]
+
+    url = wait_for(find_tunnel)
+    for record in records:
+        wait_for(lambda: smoke(url, record=record))
+    return url
+
+
+def restored_public_url(execute, args, previous, records):
+    # Read the saved Compose, not an old ephemeral URL or today's publish flag.
+    document = json.loads(Path(previous["config"]).read_text())
+    if "tunnel" in document["services"]:
+        return verified_public_url(execute, args, records)
+    return None
+
+
 @contextlib.contextmanager
 def lock_state(state_dir):
     state_dir = Path(state_dir).absolute()
@@ -353,15 +375,7 @@ def deploy(
             emit(sink, deployment_id, "local", "smoke", "ok")
             public_url = None
             if publish:
-
-                def find_tunnel():
-                    logs = execute(args + ["logs", "--no-color", "tunnel"])
-                    found = re.findall(r"https://[a-z0-9-]+\.trycloudflare\.com", logs)
-                    require(bool(found), "tunnel_pending")
-                    return found[-1]
-
-                public_url = wait_for(find_tunnel)
-                wait_for(lambda: smoke(public_url, record=record))
+                public_url = verified_public_url(execute, args, [record])
             result = {
                 "config": str(config),
                 "image_id": info["Id"],
@@ -402,7 +416,9 @@ def deploy(
                         lambda: local_url(execute, restore_args, old_web)
                     )
                     wait_for(lambda: smoke(previous["url"], record=previous["record"]))
-                    previous["public_url"] = None
+                    previous["public_url"] = restored_public_url(
+                        execute, restore_args, previous, [previous["record"]]
+                    )
                     private_file(state / "current.next", json.dumps(previous, indent=2))
                     (state / "current.next").replace(current)
                     emit(
@@ -411,9 +427,9 @@ def deploy(
                         "local",
                         "rollback",
                         "ok",
-                        url=previous["url"],
+                        url=previous["public_url"] or previous["url"],
                     )
-                except (RuntimeError, ValueError, OSError):
+                except (RuntimeError, ValueError, OSError, KeyError):
                     emit(
                         sink,
                         deployment_id,
@@ -473,15 +489,15 @@ def rollback(state_dir, *, deployment_id="local-rollback", sink=None, execute=ru
             previous["url"] = wait_for(lambda: local_url(execute, args, web))
             wait_for(lambda: smoke(previous["url"], record=current["record"]))
             wait_for(lambda: smoke(previous["url"], record=previous["record"]))
-            previous["public_url"] = (
-                None  # Quick Tunnel URL is ephemeral; never return a stale one.
+            previous["public_url"] = restored_public_url(
+                execute, args, previous, [current["record"], previous["record"]]
             )
             private_file(state / "previous.json", json.dumps(current, indent=2))
             private_file(state / "current.next", json.dumps(previous, indent=2))
             (state / "current.next").replace(state / "current.json")
-            emit(sink, deployment_id, "local", "rollback", "ok", url=previous["url"])
+            emit(sink, deployment_id, "local", "rollback", "ok", url=previous["public_url"] or previous["url"])
             return previous
-        except (ValueError, RuntimeError):
+        except (ValueError, RuntimeError, OSError, KeyError):
             emit(
                 sink,
                 deployment_id,

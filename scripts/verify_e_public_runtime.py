@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from control_plane.app import create_app
 from control_plane.b_bridge import DemoModules
 from control_plane.runtime import LocalRuntime
-from adapters.local.runtime import compose_args, smoke
+from adapters.local.runtime import compose_args, smoke, rollback
 from builder.runtime import run
 from policy_gate.gate import require
 from scripts.verify_e_boundaries import denied_paths, verify_bindings
@@ -58,6 +58,11 @@ def verify(output):
                 report.update(public_url=url, denied_paths=denied_paths(url),
                               bound_services=verify_bindings(state, current["config"]))
                 print(json.dumps({"attempt": attempt + 1, "public_runtime": "passed"}), flush=True)
+            recovered = rollback(state)
+            require(bool(recovered["public_url"]), "rollback_public_url_missing")
+            for record in records:
+                smoke(recovered["public_url"], record=record)
+            report["public_adapter_rollback_verified"] = True
             report.update(status="passed", verified_patch_applied=True, public_redeploy_data_preserved=True,
                           d_verified_public_https=True)
     except Exception:
