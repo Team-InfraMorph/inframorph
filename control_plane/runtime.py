@@ -5,7 +5,8 @@
 | 검사·빌드 | E Builder | `python -m builder --snapshot --bundle --plan --output --deployment-id` (BuildArtifact를 --output에) |
 | Local 배포 | E Local Adapter | `python -m adapters.local deploy --plan --artifact --state-dir --deployment-id [--publish]` |
 | Local 롤백 | E Local Adapter | `python -m adapters.local rollback --state-dir --deployment-id` |
-| AWS 배포 | A AWS Adapter | 아직 없음 → 가짜 배포기 |
+| AWS 배포 | A AWS Adapter | `python -m adapters.aws deploy --plan --artifact --state-dir --execute --deployment-id` |
+| AWS 롤백 | A AWS Adapter | `python -m adapters.aws rollback --state-dir --execute --deployment-id` |
 
 빌드는 실제 배포기가 있는 대상만 한다(가짜 배포기는 이미지가 필요 없다). 배포 작업 폴더 구조:
 <INFRAMORPH_HOME>/<deployment_id>/{snapshot, patched/<target>, plan.<target>.json, build.<target>.json}
@@ -17,7 +18,9 @@ import sys
 
 from .analysis import module_root
 
-ADAPTERS = {"local": "adapters/local"}  # A의 AWS Adapter가 오면 "aws": "adapters/aws"
+ADAPTERS = {"local": "adapters/local", "aws": "adapters/aws"}
+# AWS Adapter는 실제 계정을 바꾸므로 --execute 없이는 거부한다. 이 명령은 조종실 승인을 거친 뒤에만 실행된다.
+EXECUTE = {"aws": ["--execute"]}
 NO_BUILD_NOTE = "새 커밋의 코드가 없어 다시 빌드하지 않음 (B Repo Mapper 연결 전) · 기존 버전 유지"
 
 
@@ -66,13 +69,14 @@ def deployer_cmd(deployment, target, folder):
     if root is not None and plan_path.exists():
         state = folder.parent / "state" / json.loads(plan_path.read_text())["app"]
         base = [sys.executable, "-m", ADAPTERS[target].replace("/", "."), "--deployment-id", deployment["id"]]
+        execute = EXECUTE.get(target, [])
         if deployment["triggered_by"] == "rollback":
-            return root, base[:3] + ["rollback", "--state-dir", str(state)] + base[3:]
+            return root, base[:3] + ["rollback", "--state-dir", str(state)] + execute + base[3:]
         artifact = folder / f"build.{target}.json"
         if artifact.exists():
-            publish = ["--publish"] if os.environ.get("INFRAMORPH_LOCAL_PUBLISH") == "1" else []
+            publish = ["--publish"] if target == "local" and os.environ.get("INFRAMORPH_LOCAL_PUBLISH") == "1" else []
             return root, base[:3] + ["deploy", "--plan", str(plan_path), "--artifact", str(artifact),
-                                     "--state-dir", str(state)] + publish + base[3:]
+                                     "--state-dir", str(state)] + publish + execute + base[3:]
     if root is not None:  # 실제 배포기는 있는데 넘길 빌드 결과가 없다 = 이 커밋의 코드가 없다. 가짜 성공을 보이지 않는다.
         return None, fake_deployer_cmd(deployment, target, folder) + ["--note", NO_BUILD_NOTE]
     return None, fake_deployer_cmd(deployment, target, folder)
