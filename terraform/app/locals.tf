@@ -14,13 +14,13 @@ locals {
     }
   ]
   storage_environment = var.storage_enabled ? [{
-    name  = "STORAGE_BUCKET"
+    name  = "S3_BUCKET"
     value = var.storage_bucket_name
-  }] : []
+  }, { name = "AWS_REGION", value = var.region }] : []
   service_storage_environment = var.service_storage_enabled ? [{
-    name  = "STORAGE_BUCKET"
+    name  = "S3_BUCKET"
     value = var.storage_bucket_name
-  }] : []
+  }, { name = "AWS_REGION", value = var.region }] : []
 
   db_bootstrap_script = <<-SCRIPT
     export PGPASSWORD="$MASTER_PASSWORD"

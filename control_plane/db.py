@@ -149,9 +149,9 @@ class Store:
         from .patch_reviews import save
         return save(self, deployment_id, candidate, mapping, approval, phase)
 
-    def mark_patch_applied(self, deployment_id, phase):
+    def mark_patch_applied(self, deployment_id, phase, target="local"):
         from .patch_reviews import applied
-        return applied(self, deployment_id, phase)
+        return applied(self, deployment_id, phase, target)
 
     def get_runtime_patches(self, deployment_id):
         from .patch_reviews import get
@@ -322,6 +322,26 @@ class Store:
                 [(deployment_id, target, Status.DEPLOYING.value) for target in targets],
             )
         return deployment_id
+
+    def retry_validated_deployment(self, deployment_id):
+        """New manual run of the same reviewed revision, using the validated cache.
+
+        Keep the failed history intact; never reuse rejected Analyzer output.
+        The runtime rechecks the source digest, Intent, Plan, patch and image.
+        """
+        with self._lock, self._conn:
+            previous = self.get_deployment(deployment_id)
+            analysis = self.get_deployment_analysis(deployment_id)
+            if (previous is None or previous["status"] != Status.FAILED.value or analysis is None or
+                    previous["commit_sha"] is None or self.get_analysis(previous["project_id"], previous["commit_sha"]) is None):
+                raise ValueError("validated_retry_unavailable")
+            if self._one("SELECT 1 FROM deployments WHERE project_id=? AND status IN (?, ?)",
+                         (previous["project_id"], *BLOCKING)):
+                raise ConflictError(previous["project_id"])
+            new_id, now = _new_id("d"), _now()
+            self._conn.execute(INSERT_DEPLOYMENT, (new_id, previous["project_id"], Status.CREATED.value,
+                previous["commit_sha"], now, now, "manual", "rebuild_only", json.dumps(["검증된 동일 커밋의 분석을 재사용해 다시 배포"])))
+            return self.begin_deploy(previous["project_id"])
 
     def set_target_status(self, deployment_id, target, status, url=None):
         with self._lock, self._conn:

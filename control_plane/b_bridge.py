@@ -137,9 +137,9 @@ class BCommands:
             raise ValueError("b_revision_mismatch")
         return MappedSource(source, mapping)
 
-    def plan(self, intent):
+    def plan(self, intent, target="local"):
         return Plan.model_validate(call_json(self.planner_command,
-                                            {"intent": intent.model_dump(mode="json"), "target": "local"}, timeout=self.timeout))
+                                            {"intent": intent.model_dump(mode="json"), "target": target}, timeout=self.timeout))
 
 
 class DemoModules:
@@ -157,10 +157,12 @@ class DemoModules:
             return MappedSource(source, mapping)
         raise ValueError("unsupported_demo_revision")
 
-    def plan(self, intent):
+    def plan(self, intent, target="local"):
         # This is a fixture, not an attempt to implement B's mapping rules.
         case = "v2" if any(w.kind.value == "worker" for w in intent.workloads) else "v1"
-        return Plan.model_validate_json((ROOT / f"schemas/fixtures/{case}/plan.local.json").read_text())
+        if target not in {"local", "aws"}:
+            raise ValueError("unsupported_target")
+        return Plan.model_validate_json((ROOT / f"schemas/fixtures/{case}/plan.{target}.json").read_text())
 
     def replay(self, mapping):
         case = "v2" if "src/worker.js" in mapping.tree else "v1"

@@ -3,11 +3,13 @@ from dataclasses import dataclass
 import math
 
 
-MODEL = "gpt-5.3-codex"
-# Standard USD / million tokens, verified 2026-10-01. Ignore cache discounts.
-# https://developers.openai.com/api/docs/models/gpt-5.3-codex
-INPUT_USD_PER_MILLION = 1.75
-OUTPUT_USD_PER_MILLION = 14.0
+MODEL = "gpt-6-luna"
+REASONING_EFFORT = "low"
+# Standard USD / million tokens, verified 2026-10-02. Ignore cache discounts.
+# Requests are capped at 120 KB, below the 272K input-token long-context threshold.
+# https://developers.openai.com/api/docs/models/gpt-6-luna
+INPUT_USD_PER_MILLION = 0.10
+OUTPUT_USD_PER_MILLION = 0.50
 
 
 @dataclass(frozen=True)

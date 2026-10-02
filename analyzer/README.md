@@ -8,13 +8,15 @@
 1회 복구 코디네이터(#12)는 [복구 연결 문서](RECOVERY.md)를 따른다. 실제 E 연결 콜백은
 [C/E 연결 문서](E_RUNTIME.md), 파일 인젝션 방어와 중단 범위는 [보안 문서](SECURITY.md)에 있다.
 B Planner와 D 제품 실행 흐름에 연결하는 작업은 남아 있다.
+LocalRuntime은 검토된 소스와 실행 설정이 일치하지만 `unknowns`가 남은 경우에도 같은 한 번의
+수정 기회로 소스 재확인을 요청한다. 실제 불확실성과 거부된 출력은 강제로 수정하거나 저장하지 않는다.
 최신 D 배포 API와 CLI·Docker·SSE를 함께 검증하는 방법은 [C/D 연결 문서](CONTROL_PLANE.md)에 있다.
 
 ## 설치와 선행 계약
 
 Python 3.12 이상, POSIX(macOS/Linux)가 필요하다. 파일 접근 제한에 `dir_fd`와
 `O_NOFOLLOW`를 사용한다. OpenAI SDK는 `openai==3.22.1`, 모델은
-`gpt-5.3-codex`, reasoning은 `low`로 고정한다.
+`gpt-6-luna`, reasoning은 `low`로 고정한다. 로컬 Codex 기본값도 같은 모델과 reasoning이다.
 
 ```sh
 python3.12 -m venv .venv
@@ -53,7 +55,7 @@ stderr에 안전한 오류 코드와 수집 가능한 통계를 출력하며 exi
 
 ```sh
 codex login status
-.venv/bin/python -m analyzer.local_verify run --case all --model gpt-6-astra
+.venv/bin/python -m analyzer.local_verify run --case all --model gpt-6-luna
 ```
 
 `Logged in using ChatGPT`가 아니면 `codex login`으로 ChatGPT 로그인을 먼저 완료한다.
@@ -61,10 +63,10 @@ API 키 로그인은 스크립트가 거절한다. `.env`를 읽지 않으며 �
 `OPENAI_API_KEY`, `CODEX_API_KEY` 등의 키와 API 주소를 전달하지 않는다.
 로그인 토큰을 직접 읽거나 복사하지 않고 Codex의 저장된 로그인을 사용한다.
 
-기본 로컬 모델은 `gpt-6-astra`, reasoning은 `low`다. 해당 모델 접근 권한이 없으면
+기본 로컬 모델은 `gpt-6-luna`, reasoning은 `low`다. 해당 모델 접근 권한이 없으면
 `--model`로 계정에서 사용 가능한 모델을 명시한다. 자동으로 다른 모델이나 API 인증으로
-전환하지 않는다. API Analyzer의 `gpt-5.3-codex`는 ChatGPT 로그인 Codex에서 더 이상
-지원되지 않아, 보고서에 두 모델과 동일 모델 여부를 따로 기록한다.
+전환하지 않는다. 보고서에는 실제 로컬 모델과 API 설정 모델, 동일 모델 여부를 따로 기록한다.
+같은 모델이어도 이 전체 소스 평가와 API의 도구 탐색 방식은 다르므로 동일 조건의 비교는 아니다.
 
 스크립트는 고정된 v1·v2의 축소 스냅샷을 기존 필터로 읽고, 마스킹한 소스 전체를 줄 번호와
 함께 한 번에 전달한다. 정답 Intent와 replay는 전달하지 않는다. 빈 임시 디렉터리에서
@@ -202,7 +204,7 @@ Policy Gate가 추가로 검증한다. DeployEvent 포장은 Control Plane 연�
   raw 모델 응답, 소스 내용, 키 값은 stdout/stderr 통계에 남기지 않는다.
 
 참고: [함수 호출](https://developers.openai.com/api/docs/guides/function-calling),
-[모델 및 표준 단가](https://developers.openai.com/api/docs/models/gpt-5.3-codex),
+[모델 및 표준 단가](https://developers.openai.com/api/docs/models/gpt-6-luna),
 [Codex 실행](https://learn.chatgpt.com/docs/non-interactive-mode),
 [Codex 인증](https://learn.chatgpt.com/docs/auth),
 [Codex 모델](https://learn.chatgpt.com/docs/models).

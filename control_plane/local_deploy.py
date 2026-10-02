@@ -10,7 +10,6 @@ import signal
 import sys
 
 from schemas import DeployEvent, Plan
-from analyzer.backend import ReplayBackend
 from analyzer.e_runtime import EConnector, EWorkerError, run_worker
 from analyzer.feedback import PatchReference
 from analyzer.recovery import Approval, PatchedCandidate, _assert_patch, _check_plan, fingerprint, recover_local
@@ -24,7 +23,7 @@ from .b_bridge import DemoModules, call_json
 from .change_detector import plan_diff
 from .db import Store
 from .results import finish_run
-from .runtime import LocalContext
+from .runtime import LocalContext, analysis_backend, analysis_limits, context_plans
 
 
 def load_context(path):
@@ -45,9 +44,20 @@ def load_context(path):
             not __import__("re").fullmatch(r"p-[0-9a-f]{12}", context.project_id) or
             context.fault not in {"none", "first", "always"} or
             (context.fault != "none" and not context.demo) or
-            (not context.demo and not context.planner_command)):
+            (not context.demo and not context.planner_command) or
+            (context.analysis_backend == "codex-cli" and (context.replay is not None or
+                context.metrics.get("backend") != "codex-cli" or
+                context.metrics.get("model") != context.analysis_model)) or
+            (context.analysis_backend == "replay" and context.replay is None)):
         raise ValueError("runtime_context_binding_mismatch")
     _check_plan(context.intent, context.plan, context.repo_map.commit)
+    if not context.targets or len(set(context.targets)) != len(context.targets):
+        raise ValueError("runtime_context_binding_mismatch")
+    if ("aws" in context.targets) != (context.aws_plan is not None):
+        raise ValueError("runtime_context_binding_mismatch")
+    if context.aws_plan is not None:
+        from analyzer.source_policy import validate_demo_plan
+        validate_demo_plan(context.aws_plan, context.repo_map, target="aws")
     return context
 
 
@@ -62,13 +72,29 @@ def send(event):
     sys.stdout.flush()
 
 
+def public_failure_code(stage, error):
+    if isinstance(error, EWorkerError):
+        return str(error)
+    # E exposes fixed codes. Never publish arbitrary worker/source error text.
+    build_codes = {
+        "image_build_wait_timeout", "image_build_already_running",
+        "image_tag_collision", "image_platform_mismatch",
+        "image_provenance_mismatch", "untrusted_build_lock",
+        "command_failed", "command_unavailable_or_timeout",
+    }
+    if stage == "build" and isinstance(error, (ValueError, RuntimeError)) and str(error) in build_codes:
+        return str(error)
+    return "local_pipeline_failed"
+
+
 async def deploy(context, store):
     initial = store.get_deployment_analysis(context.deployment_id)
     deployment = store.get_deployment(context.deployment_id)
     if (deployment is None or deployment["project_id"] != context.project_id or initial is None or
             initial["initial"]["intent"] != context.intent.model_dump(mode="json") or
             initial["initial"]["repo_map"] != context.repo_map.model_dump(mode="json") or
-            initial["initial"]["plans"] != {"local": context.plan.model_dump(mode="json")}):
+            "local" not in context.targets or
+            initial["initial"]["plans"] != context_plans(context)):
         raise ValueError("runtime_context_binding_mismatch")
     store.claim_runtime_run(context.deployment_id, context.repo_map.commit)
 
@@ -129,18 +155,20 @@ async def deploy(context, store):
         result = await recover_local(deployment_id=context.deployment_id, repo_map=context.repo_map,
             snapshot_dir=Path(context.snapshot), previous_intent=context.intent, previous_plan=context.plan,
             previous_patch=PatchReference.from_manifest(manifest), failure=checked.failure,
-            backend=ReplayBackend.from_file(Path(context.replay)), hooks=connector.hooks(), store=retry_store,
+            backend=analysis_backend(context.analysis_backend, context.analysis_model, context.replay),
+            limits=analysis_limits(context.analysis_backend), hooks=connector.hooks(), store=retry_store,
             output_dir=Path(context.output_dir) / "retry", previous_metrics=previous, emit=send)
         update = {"status": "recovered" if result.status == "recovered" else "failed",
                   "reason": result.reason, "attempts": result.retry_attempts,
-                  "metrics": asdict(result.reanalysis_metrics) if result.reanalysis_metrics else {"backend": "replay"}}
+                  "metrics": asdict(result.reanalysis_metrics) if result.reanalysis_metrics else
+                             {"backend": context.analysis_backend, "model": context.analysis_model}}
         if result.status == "recovered":
             store.save_validated_patch(context.deployment_id, result.patch, context.repo_map,
                 Approval(approved=True, fingerprint=result.patch.fingerprint), "recovery")
             store.mark_patch_applied(context.deployment_id, "recovery")
             update["corrected"] = {"repo_map": context.repo_map.model_dump(mode="json"),
                 "intent": result.analysis.intent.model_dump(mode="json"),
-                "plans": {"local": result.plan.model_dump(mode="json")}, "metrics": update["metrics"]}
+                "plans": context_plans(context) | {"local": result.plan.model_dump(mode="json")}, "metrics": update["metrics"]}
         store.apply_recovery_analysis(context.deployment_id, update)
         finish_run(store, context.deployment_id, "succeeded" if result.status == "recovered" else "failed")
         return 0 if result.status == "recovered" else 1
@@ -150,7 +178,7 @@ async def deploy(context, store):
         raise
     except Exception as error:
         finish_run(store, context.deployment_id, "failed")
-        emit(context, stage, "fail", str(error) if isinstance(error, EWorkerError) else "local_pipeline_failed")
+        emit(context, stage, "fail", public_failure_code(stage, error))
         return 1
 
 

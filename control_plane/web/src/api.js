@@ -13,9 +13,11 @@ async function request(method, path, body) {
 }
 
 export const api = {
+  runtime: () => request("GET", "/runtime"),
   projects: () => request("GET", "/projects"),
   createProject: (body) => request("POST", "/projects", body),
   deploy: (projectId) => request("POST", `/projects/${projectId}/deploy`),
+  retry: (deploymentId) => request("POST", `/deployments/${deploymentId}/retry`),
   deployments: (projectId) => request("GET", `/projects/${projectId}/deployments`),
   plans: (deploymentId) => request("GET", `/deployments/${deploymentId}/plans`),
   analysis: (deploymentId) => request("GET", `/deployments/${deploymentId}/analysis`),
