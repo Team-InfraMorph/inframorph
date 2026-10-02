@@ -1,4 +1,4 @@
-"""B Repo Mapper: exact-commit read-only snapshot plus rule-based repo_map."""
+"""Repo Mapper: exact-commit read-only snapshot plus rule-based repo_map."""
 from dataclasses import dataclass
 from pathlib import Path
 import re
