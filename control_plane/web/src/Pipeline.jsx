@@ -22,7 +22,7 @@ const DEPLOY_STEPS = {
 };
 // 대상별 배포 단계의 기본 순서. 배포기가 이 밖의 단계를 보내면 뒤에 붙인다.
 const LANE = { aws: ["plan", "push", "infra", "start", "health", "url", "smoke"], local: ["start", "health", "url", "smoke"] };
-const MARK = { ok: "✓", fail: "✗", wait: "!", skip: "–", notrun: "", gap: "…" };
+const MARK = { ok: "✓", fail: "✗", wait: "!", skip: "–", notrun: "" };
 const HEADLINE = {
   LIVE: "배포 완료", FAILED: "배포 실패", ROLLED_BACK: "이전 버전으로 복구됨",
   DEPLOYING: "배포 중", CREATED: "대기 중", AWAITING_APPROVAL: "승인 대기",
@@ -133,8 +133,11 @@ function stageNote(key, st, ctx) {
 
 const GAP_MS = 15000;
 
-/** 대상 하나의 배포 단계들(실제 일어난 순서). 실패 뒤 단계는 'notrun', 기록 없는 15초 이상 구간은 'gap' 칸. */
-function lane(target, events, running, now) {
+/** 대상 하나의 배포 단계들(실제 일어난 순서). 실패 뒤 단계는 'notrun'.
+ * AWS Adapter는 Plan에 DB가 있을 때만, 인프라 적용 직후 DB 준비(bootstrap·migration)를 기록 없이 실행한다
+ * (adapters/aws/deployment.py `if self.plan.db is not None: self._prepare_database`). 그 경우에만 'DB 준비' 칸을 넣고,
+ * 그 밖의 기록 없는 15초 이상 구간은 칸을 만들지 않고 앞 칸의 선 위에 시간만 적는다. */
+function lane(target, events, running, now, hasDb) {
   const seen = {};
   const order = [];
   let patched = false, planned = false, prev = null;
@@ -169,16 +172,21 @@ function lane(target, events, running, now) {
     const ms = end - start;
     prevEnd = end;
     const prior = nodes.at(-1);
+    const dbSlot = hasDb && target === "aws" && i > 0 && order[i - 1].step === "infra" && cur.step === "start";
     const gap = prior && cur.started ? Date.parse(cur.first) - Date.parse(order[i - 1].last) : 0;
-    if (gap > GAP_MS) {
-      const db = target === "aws" && order[i - 1].step === "infra" && cur.step === "start";
-      nodes.push({ step: `gap-${cur.step}`, label: db ? "DB 준비 (추정)" : "기록 없는 구간", status: "gap", ms: gap, gap: db ? "db" : "unknown" });
-    }
+    if (dbSlot && gap > 0) nodes.push({ step: "db", label: "DB 준비", status: "ok", ms: gap, gap: "db" });
+    else if (gap > GAP_MS) prior.pause = gap;
     nodes.push({ step: cur.step, label: DEPLOY_STEPS[cur.step] ?? cur.step, status, ms, events: cur.events });
   });
   for (const step of LANE[target] ?? []) {
     if (!seen[step] && running && !stopped) nodes.push({ step, label: DEPLOY_STEPS[step] ?? step, status: "pending" });
     else if (!seen[step] && stopped && order.length) nodes.push({ step, label: DEPLOY_STEPS[step] ?? step, status: "notrun" });
+  }
+  // 인프라가 끝났고 아직 '실행'이 시작되지 않았으면 지금 DB 준비 중이다.
+  const last = order.at(-1);
+  if (running && hasDb && target === "aws" && last?.step === "infra" && last.status === "ok") {
+    nodes.splice(nodes.findIndex((n) => n.step === "infra") + 1, 0,
+      { step: "db", label: "DB 준비", status: "started", ms: now - Date.parse(last.last), gap: "db" });
   }
   // 진행 중인데 다음 단계의 '시작'이 아직 안 왔으면, 마지막으로 끝난 칸에서 다음 칸으로 빛줄기를 흘린다.
   const next = nodes.findIndex((n) => n.status === "pending");
@@ -211,12 +219,13 @@ function Where({ place, detail }) {
   );
 }
 
-function Node({ status, label, time, note, flag, onClick, selected, index, flowing }) {
+function Node({ status, label, time, note, flag, onClick, selected, index, flowing, pause }) {
   return (
     <li className={`node n-${status}${flowing ? " flowing" : ""}${onClick ? " clickable" : ""}${selected ? " selected" : ""}`} onClick={onClick ?? undefined}
         role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined}
         onKeyDown={onClick ? (e) => (e.key === "Enter" || e.key === " ") && onClick() : undefined}>
       <span className="link"><i /></span>
+      {pause && <span className="link-note">기록 없음 {seconds(pause)}</span>}
       <span className="dot">{MARK[status] || (status === "pending" || status === "notrun" ? index : "")}</span>
       <span className="label">{label}</span>
       <span className="time">{time}</span>
@@ -226,7 +235,7 @@ function Node({ status, label, time, note, flag, onClick, selected, index, flowi
   );
 }
 
-const nodeTime = (status, ms) => (status === "started" ? clock(ms) : ["ok", "fail", "gap"].includes(status) ? seconds(ms) : status === "wait" ? "대기 중" : "");
+const nodeTime = (status, ms) => (status === "started" ? clock(ms) : ["ok", "fail"].includes(status) ? seconds(ms) : status === "wait" ? "대기 중" : "");
 
 function nextUp(targets, lanes) {
   const next = targets.map((t) => [t, lanes[t].find((n) => n.status === "pending")]).filter(([, n]) => n);
@@ -290,7 +299,7 @@ function Flow({ deployment, targets, stages, perTarget, ctx, now }) {
   const lanes = Object.fromEntries(targets.map((t) => {
     const status = deployment.targets[t]?.status;
     const laneRunning = running && !["LIVE", "FAILED", "ROLLED_BACK"].includes(status);
-    const nodes = lane(t, perTarget[t], laneRunning, now);
+    const nodes = lane(t, perTarget[t], laneRunning, now, Boolean(ctx.plans?.[t]?.db));
     return [t, stop >= 0 ? nodes.map((n) => ({ ...n, status: "notrun" })) : nodes];
   }));
   return (
@@ -314,7 +323,7 @@ function Flow({ deployment, targets, stages, perTarget, ctx, now }) {
             <div className="lane-title">{SHORT[t]} <Badge status={deployment.targets[t]?.status ?? "CREATED"} /></div>
             <ol className="track small">
               {lanes[t].map((n, i) => (
-                <Node key={n.step} index={i + 1} label={n.label} status={n.status} flowing={n.flowing} time={nodeTime(n.status, n.ms)}
+                <Node key={n.step} index={i + 1} label={n.label} status={n.status} flowing={n.flowing} pause={n.pause} time={nodeTime(n.status, n.ms)}
                       flag={n.status === "fail" ? "여기서 멈춤" : null} selected={open?.id === `${t}:${n.step}`}
                       onClick={n.events || n.gap ? () => setOpen(open?.id === `${t}:${n.step}` ? null
                         : { id: `${t}:${n.step}`, title: `${SHORT[t]} › ${n.label}`, events: n.events ?? [], gap: n.gap, ms: n.ms }) : null} />
@@ -349,11 +358,10 @@ function StepDetail({ item, onClose }) {
         <strong>{item.title}</strong>
         <button className="small secondary" onClick={onClose}>닫기</button>
       </div>
-      {item.gap && (
-        <p className="gap-note">
-          {seconds(item.ms)} 동안 배포기 기록이 없습니다.
-          {item.gap === "db" ? " A AWS Adapter 코드상 인프라 적용 직후 이 자리에서 DB 준비(bootstrap·migration 일회성 ECS 작업)가 실행됩니다 (adapters/aws/deployment.py). 화면은 이 구간을 '추정'으로 표시합니다."
-            : " 배포기가 이 구간의 시작·완료를 보내지 않았습니다."}
+      {item.gap === "db" && (
+        <p className="detail-note">
+          AWS Adapter는 앱에 DB가 있으면 인프라 적용 직후 DB 준비(앱 전용 DB·계정 생성 → 테이블 생성, 일회성 ECS 작업 2개)를 실행합니다.
+          이 단계는 시작·완료 기록을 따로 보내지 않아, 시간은 '인프라 완료 ~ 실행 시작' 사이로 잽니다 (adapters/aws/deployment.py).
         </p>
       )}
       <ol>

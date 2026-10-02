@@ -174,7 +174,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .node .link { position: absolute; left: 40px; right: 8px; top: 15px; height: 2px; border-radius: 2px; background: var(--rail); overflow: hidden; }
 .node:last-child .link { display: none; }
 .node .link i { position: absolute; inset: 0; border-radius: inherit; transform-origin: left; transform: scaleX(0); transition: transform 0.6s ease; }
-.node.n-ok .link i, .node.n-gap .link i { transform: scaleX(1); background: linear-gradient(90deg, var(--ok), var(--ok-2)); }
+.node.n-ok .link i { transform: scaleX(1); background: linear-gradient(90deg, var(--ok), var(--ok-2)); }
 .node.n-started .link i, .node.flowing .link i {
   transform: none; width: 46px; background: linear-gradient(90deg, transparent, var(--cyan), var(--blue));
   box-shadow: 0 0 10px var(--cyan); animation: comet 1.3s cubic-bezier(.4, 0, .2, 1) infinite;
@@ -209,9 +209,8 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 /* 실패 */
 .node.n-fail .dot { background: var(--fail); border-color: var(--fail); color: #fff; box-shadow: 0 0 0 4px var(--fail-bg), 0 0 18px -4px var(--fail); }
 .node.n-fail .label { color: var(--fail); }
-/* 기록 없는 구간 */
-.node.n-gap .dot { border-style: dashed; color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
-.node.n-gap .label { color: var(--warn); font-weight: 500; }
+/* 기록 없는 긴 구간: 칸 대신 선 위에 작게 */
+.node .link-note { position: absolute; left: 44px; top: -4px; font-size: 10px; color: var(--dim); white-space: nowrap; }
 .node.n-wait .dot { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); animation: breathe 1.6s ease-in-out infinite; }
 .node.n-skip .dot, .node.n-notrun .dot { border-style: dashed; border-color: var(--rail); color: var(--dim); }
 .node.n-skip .label, .node.n-notrun .label { color: var(--dim); font-weight: 500; }
@@ -234,7 +233,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .step-detail .detail { font-size: 13px; color: var(--dim); }
 .step-detail .changes { width: 100%; margin: 2px 0 0; }
 .step-detail .changes td { word-break: break-all; font-size: 12px; }
-.gap-note { margin: 6px 0 0; font-size: 13px; color: var(--warn); }
+.detail-note { margin: 6px 0 0; font-size: 13px; color: var(--dim); line-height: 1.5; }
 
 
 /* 실패 위치 + 설명 */
