@@ -10,6 +10,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from tests.cp_isolation import NO_MODULES  # noqa: E402,F401
 from control_plane.app import create_app  # noqa: E402
 from tests.test_control_plane_analysis import add_code_patch_stub, make_stub_root  # noqa: E402
 
@@ -86,7 +87,7 @@ class TeamModulesPipelineTest(unittest.TestCase):
                     deployment["events"] = [e["event"] for e in store.list_events(dep)]
                     return deployment
             finally:
-                os.environ.pop("INFRAMORPH_MODULES_ROOT", None)
+                os.environ["INFRAMORPH_MODULES_ROOT"] = NO_MODULES
                 os.environ.pop("INFRAMORPH_FAKE_DELAY", None)
                 store.close()
 

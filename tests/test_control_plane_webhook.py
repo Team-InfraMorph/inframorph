@@ -13,6 +13,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from tests.cp_isolation import NO_MODULES  # noqa: E402,F401
 from control_plane.app import create_app  # noqa: E402
 from control_plane.fake_push import build_payload, from_git  # noqa: E402
 from control_plane.webhook import parse_push_details, verify_signature  # noqa: E402
