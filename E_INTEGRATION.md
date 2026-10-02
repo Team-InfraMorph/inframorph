@@ -68,10 +68,11 @@ redteam checkout의 HEAD는 pin의 SHA여야 한다. 작업 중인 checkout을 �
 - [x] 실제 D/C/E 공개 HTTPS 첫 배포·재배포 통과. D의 URL 재검사, 데이터 보존, 검증된 패치 적용 확인.
 - [x] 공개 민감 경로 4개 404, DB·tunnel에 호스트 포트 없음, web은 loopback 바인딩 확인.
 - [x] 위 Docker/API·공개 시험의 자체 컨테이너·테스트 볼륨 정리 확인.
-- [ ] GitHub Actions 원격 실행 결과 확인.
+- [x] 최초 공개 배포의 의도적 실패 후 앱·터널 종료, 공개 health 접근 중단, 데이터 볼륨 보존 확인. 확인 후 검증기가 자신의 테스트 볼륨만 정리.
+- [x] 구현 커밋 `8ca7151`의 GitHub Actions `repo-policy`, `analyzer`, `e-runtime` 모두 통과. 최신 커밋 상태는 [PR #29](https://github.com/Team-InfraMorph/inframorph/pull/29)의 Checks에서 확인한다.
 - [ ] main 병합 및 병합 후 최종 SHA에서 재검증.
 
-원본 기록은 `.local/e-integration/`에 보관한다. 앱 비밀값이 있는 상태 파일을 커밋하지 않는다. 공개 보고서에는 판정·사유·버전·체크 결과만 기록한다.
+원본 기록은 `.local/e-integration/`에 보관한다. 앱 비밀값이 있는 상태 파일을 커밋하지 않는다. 공개 보고서 [validation/e-integration-results.json](validation/e-integration-results.json)에는 판정·사유·버전·체크 결과만 기록한다.
 
 ## 남은 공동 검증
 
