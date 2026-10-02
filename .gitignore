@@ -14,3 +14,7 @@ dist/
 .terraform/
 *.tfstate
 *.tfstate.*
+
+# Environment-specific deployment inputs
+foundation-outputs.json
+*-foundation-outputs.json
