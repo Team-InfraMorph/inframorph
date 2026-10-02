@@ -1,0 +1,45 @@
+[
+  {
+    "output": [
+      {
+        "type": "function_call",
+        "call_id": "read_0",
+        "name": "Read",
+        "arguments": "{\"path\": \"package.json\", \"start_line\": 1, \"line_count\": 200}"
+      }
+    ]
+  },
+  {
+    "output": [
+      {
+        "type": "function_call",
+        "call_id": "read_1",
+        "name": "Read",
+        "arguments": "{\"path\": \"prisma/schema.prisma\", \"start_line\": 1, \"line_count\": 200}"
+      }
+    ]
+  },
+  {
+    "output": [
+      {
+        "type": "function_call",
+        "call_id": "read_2",
+        "name": "Read",
+        "arguments": "{\"path\": \"src/server.js\", \"start_line\": 1, \"line_count\": 200}"
+      }
+    ]
+  },
+  {
+    "output": [
+      {
+        "type": "function_call",
+        "call_id": "read_3",
+        "name": "Read",
+        "arguments": "{\"path\": \"src/images.js\", \"start_line\": 1, \"line_count\": 200}"
+      }
+    ]
+  },
+  {
+    "text": "{\n  \"schema_version\": \"1.0.0\",\n  \"source_revision\": \"ebad709867cf1f3523075d8038ae41bd69ecae9b\",\n  \"app\": \"demo-app\",\n  \"runtime\": \"node22\",\n  \"workloads\": [\n    {\n      \"name\": \"web\",\n      \"kind\": \"http\",\n      \"port\": 3000,\n      \"public\": true,\n      \"health\": \"/health\",\n      \"command\": null,\n      \"evidence\": [\n        \"src/server.js:22\",\n        \"src/server.js:87\"\n      ]\n    }\n  ],\n  \"state\": [\n    {\n      \"kind\": \"relational_db\",\n      \"engine\": \"sqlite\",\n      \"orm\": \"prisma\",\n      \"path\": null,\n      \"reason\": null,\n      \"evidence\": [\n        \"prisma/schema.prisma:6\"\n      ]\n    },\n    {\n      \"kind\": \"persistent_files\",\n      \"engine\": null,\n      \"orm\": null,\n      \"path\": \"uploads/\",\n      \"reason\": \"업로드한 사진이 재시작 후에도 남아야 함\",\n      \"evidence\": [\n        \"src/images.js:10\",\n        \"src/images.js:23\"\n      ]\n    }\n  ],\n  \"secrets\": [\n    \"DATABASE_URL\"\n  ],\n  \"config\": {},\n  \"unknowns\": []\n}\n"
+  }
+]

@@ -10,6 +10,9 @@ __pycache__/
 node_modules/
 dist/
 
+# 개발용 모델 평가 결과 (로컬 보관)
+.local/
+
 # Terraform
 .terraform/
 *.tfstate
