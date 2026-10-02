@@ -23,10 +23,11 @@ from . import webhook
 from .analysis import StageFailed, fixture_analyzer, fixture_patcher, read_patch
 from .db import TERMINAL, ConflictError, Status, Store
 from .change_detector import plan_diff, plan_redeploy
-from .orchestrator import run_deployment
+from .orchestrator import record_verification, run_deployment
 from .orchestrator import stream_events as run_module
 from .runtime import build_cmds, fake_deployer_cmd  # noqa: F401 (fake_deployer_cmd: 테스트·대역용)
 from .runtime import deployer_cmd as module_deployer_cmd
+from .verify import check_url
 
 DEFAULT_DB = Path(os.environ.get("INFRAMORPH_HOME", "/tmp/inframorph")) / "control_plane.db"
 REPO_URL = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(\.git)?/?")
@@ -92,7 +93,7 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
             if (deployment["approved_at"] or rollback or ready(deployment, folder)) and (
                     rollback or (patched(deployment, folder) and built(deployment, folder))):
                 cmds = {t: deployer_cmd(deployment, t, folder) for t in deployment["targets"]}
-                run_deployment(store, deployment_id, cmds)
+                run_deployment(store, deployment_id, cmds, verify=lambda t, url, d=deployment_id: verify(d, t, url))
             elif store.get_deployment(deployment_id)["status"] == Status.AWAITING_APPROVAL.value:
                 return  # 승인이 나면 approve가 이어서 실행한다
             deployment_id = None
@@ -170,6 +171,12 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
                 store.fail(deployment["id"])
                 return False
         return True
+
+    def verify(deployment_id, target, url):
+        """배포기가 알려 준 주소를 조종실이 직접 호출한다. 주소에 경로가 없으면 plan의 공개 서비스 health 경로를 붙인다."""
+        plan = store.get_plans(deployment_id).get(target) or {}
+        health = next((s["health"] for s in plan.get("services", []) if s.get("public") and s.get("health")), "/health")
+        return check_url(url, health)
 
     def write_plans(deployment, folder):
         """롤백 작업에는 복사된 plan만 있으므로 배포기가 읽을 plan 파일을 작업 폴더에 쓴다."""
@@ -261,6 +268,15 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         deployment = deployment_or_404(deployment_id)
         folder = workdir / deployment_id / "patched"
         return {t: patch for t in deployment["targets"] if (patch := read_patch(folder / t))}
+
+    @app.post("/api/deployments/{deployment_id}/verify")
+    def reverify(deployment_id: str):
+        """지금 다시 직접 확인(화면의 '다시 확인' 버튼). 타임라인에는 남기지 않고 결과만 갱신한다."""
+        deployment = deployment_or_404(deployment_id)
+        for target, state in deployment["targets"].items():
+            if state["url"]:
+                record_verification(store, deployment_id, target, verify(deployment_id, target, state["url"]))
+        return store.get_deployment(deployment_id)["targets"]
 
     @app.post("/api/deployments/{deployment_id}/approve", status_code=202)
     def approve(deployment_id: str, background: BackgroundTasks):

@@ -87,7 +87,7 @@ class AnalysisCacheTest(unittest.TestCase):
         newer = self.store.create_push_deployment(self.project, AFTER, "rebuild_only", [])
         self.assertEqual(self.store.begin_deploy(self.project), newer)
         self.assertEqual(self.store.get_deployment(first)["status"], "SUPERSEDED")
-        self.assertEqual(self.store.get_deployment(newer)["targets"], {"local": {"status": "DEPLOYING", "url": None}})
+        self.assertEqual(self.store.get_deployment(newer)["targets"], {"local": {"status": "DEPLOYING", "url": None, "verification": None}})
         self.assertFalse(self.store.has_queued(self.project))
 
     def test_old_database_gets_new_columns(self):

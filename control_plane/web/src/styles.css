@@ -121,3 +121,8 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
   font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .diff .add { color: var(--ok); }
 .diff .del { color: var(--fail); }
+
+.verify { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -2px 0 10px; font-size: 13px; }
+.verify.v-ok { color: var(--ok); }
+.verify.v-fail { color: var(--fail); }
+.verify.v-skipped { color: var(--dim); }

@@ -83,7 +83,9 @@ class ControlPlaneApiTest(unittest.TestCase):
 
         deployment = self.client.get(f"/api/deployments/{deployment_id}").json()
         self.assertEqual(deployment["status"], "LIVE")
-        self.assertEqual(deployment["targets"]["local"], {"status": "LIVE", "url": "http://localhost:3000"})
+        local = deployment["targets"]["local"]
+        self.assertEqual((local["status"], local["url"]), ("LIVE", "http://local.invalid:3000"))
+        self.assertEqual(local["verification"]["status"], "skipped")  # 가짜 배포기 주소는 직접 확인하지 않는다
         self.assertEqual(deployment["targets"]["aws"]["status"], "LIVE")
 
         with self.client.stream("GET", f"/api/deployments/{deployment_id}/events") as stream:
@@ -93,6 +95,14 @@ class ControlPlaneApiTest(unittest.TestCase):
         self.assertEqual(body.count("event: deploy"), expected)
         self.assertIn("event: end", body)
         self.assertIn(deployment_id, body)
+
+    def test_reverify_endpoint_refreshes_direct_checks(self):
+        project = self.create().json()
+        deployment_id = self.client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
+        targets = self.client.post(f"/api/deployments/{deployment_id}/verify").json()
+        self.assertEqual({t: v["verification"]["status"] for t, v in targets.items()},
+                         {"local": "skipped", "aws": "skipped"})
+        self.assertEqual(self.client.post("/api/deployments/d-missing/verify").status_code, 404)
 
     def test_event_stream_resumes_after_last_event_id(self):
         project = self.create().json()

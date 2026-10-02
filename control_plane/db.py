@@ -89,6 +89,7 @@ DEPLOYMENT_COLUMNS = {
     "rollback_of": "TEXT",
     "analysis_metrics": "TEXT",
 }
+TARGET_COLUMNS = {"verification": "TEXT"}  # 조종실이 직접 호출해 본 결과(JSON)
 INSERT_DEPLOYMENT = (
     "INSERT INTO deployments (id, project_id, status, commit_sha, created_at, updated_at, triggered_by, "
     "analysis_mode, change_reasons) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -123,6 +124,10 @@ class Store:
             for name, ddl in DEPLOYMENT_COLUMNS.items():
                 if name not in existing:
                     self._conn.execute(f"ALTER TABLE deployments ADD COLUMN {name} {ddl}")
+            existing = {row[1] for row in self._conn.execute("PRAGMA table_info(deployment_targets)")}
+            for name, ddl in TARGET_COLUMNS.items():
+                if name not in existing:
+                    self._conn.execute(f"ALTER TABLE deployment_targets ADD COLUMN {name} {ddl}")
 
     def _one(self, sql, params=()):
         with self._lock:
@@ -193,9 +198,12 @@ class Store:
             data[key] = json.loads(data[key]) if data.get(key) else []
         data["analysis_metrics"] = json.loads(data["analysis_metrics"]) if data.get("analysis_metrics") else None
         targets = self._all(
-            "SELECT target, status, url FROM deployment_targets WHERE deployment_id=? ORDER BY target", (row["id"],)
+            "SELECT target, status, url, verification FROM deployment_targets WHERE deployment_id=? ORDER BY target",
+            (row["id"],),
         )
-        data["targets"] = {t["target"]: {"status": t["status"], "url": t["url"]} for t in targets}
+        data["targets"] = {t["target"]: {"status": t["status"], "url": t["url"],
+                                         "verification": json.loads(t["verification"]) if t["verification"] else None}
+                           for t in targets}
         return data
 
     def get_deployment(self, deployment_id):
@@ -293,7 +301,7 @@ class Store:
             targets = json.loads(self._one(
                 "SELECT targets FROM projects WHERE id=?", (project_id,))["targets"])
             self._conn.executemany(
-                "INSERT OR REPLACE INTO deployment_targets VALUES (?, ?, ?, NULL)",
+                "INSERT OR REPLACE INTO deployment_targets (deployment_id, target, status, url) VALUES (?, ?, ?, NULL)",
                 [(deployment_id, target, Status.DEPLOYING.value) for target in targets],
             )
         return deployment_id
@@ -303,6 +311,13 @@ class Store:
             self._conn.execute(
                 "UPDATE deployment_targets SET status=?, url=COALESCE(?, url) WHERE deployment_id=? AND target=?",
                 (Status(status).value, url, deployment_id, target),
+            )
+
+    def set_verification(self, deployment_id, target, result):
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE deployment_targets SET verification=? WHERE deployment_id=? AND target=?",
+                (json.dumps(result, ensure_ascii=False), deployment_id, target),
             )
 
     def set_commit(self, deployment_id, commit_sha):

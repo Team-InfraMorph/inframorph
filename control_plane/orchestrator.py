@@ -8,6 +8,7 @@ import re
 import subprocess
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
@@ -110,7 +111,19 @@ def run_target(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S, cwd
     return RunResult(exit_code, len(events), rejected, status, url)
 
 
-def run_deployment(store, deployment_id, cmds, timeout=DEFAULT_TIMEOUT_S):
+def record_verification(store, deployment_id, target, check, event=False):
+    """직접 확인 결과를 저장하고, 배포 직후 확인이면 타임라인에도 '상태 확인' 줄로 남긴다(확인 안 함은 남기지 않음)."""
+    store.set_verification(deployment_id, target, check)
+    if event and check["status"] != "skipped":
+        ok = check["status"] == "ok"
+        detail = (f"조종실 직접 확인: {check['code']} · {check['ms'] / 1000:.2f}초" if ok
+                  else f"조종실 직접 확인 실패: {check['detail']}")
+        store.add_event(deployment_id, DeployEvent(
+            deployment_id=deployment_id, ts=datetime.now(timezone.utc), target=target, step="health",
+            status="ok" if ok else "fail", detail=detail, url=check["url"]).model_dump(mode="json", exclude_none=True))
+
+
+def run_deployment(store, deployment_id, cmds, timeout=DEFAULT_TIMEOUT_S, verify=None):
     """대상별 배포기를 동시에 실행한다(기획서 시나리오 A: Local과 AWS 동시 진행).
 
     cmds = {target: cmd} 또는 {target: (작업 위치, cmd)}. 팀원 모듈은 자기 checkout에서 실행해야 한다.
@@ -126,6 +139,10 @@ def run_deployment(store, deployment_id, cmds, timeout=DEFAULT_TIMEOUT_S):
         thread.start()
     for thread in threads:
         thread.join()
+    if verify is not None:
+        for target, result in results.items():
+            if result.url and result.status in (Status.LIVE, Status.ROLLED_BACK):
+                record_verification(store, deployment_id, target, verify(target, result.url), event=True)
     status = _overall_status({r.status for r in results.values()})
     store.set_status(deployment_id, status)
     return results

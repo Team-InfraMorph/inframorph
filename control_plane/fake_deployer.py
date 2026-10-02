@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_FIXTURE = Path(__file__).resolve().parents[1] / "schemas" / "fixtures" / "events" / "happy_path.jsonl"
-LOCAL_URL = "http://localhost:3000"
+LOCAL_URL = "http://local.invalid:3000"  # 가짜 주소(.invalid)라 조종실이 직접 확인하지 않는다
 
 
 def main():

@@ -186,7 +186,21 @@ function PlanCompare({ plans, targets }) {
   );
 }
 
-function TargetColumn({ target, state, events }) {
+function Verification({ check, onRecheck }) {
+  if (!check) return null;
+  const time = new Date(check.checked_at).toLocaleTimeString();
+  const text = check.status === "ok" ? `조종실이 직접 확인 · 응답 ${check.code} · ${(check.ms / 1000).toFixed(2)}초`
+    : check.status === "fail" ? `직접 확인 실패 · ${check.detail}` : check.detail;
+  return (
+    <div className={`verify v-${check.status}`}>
+      <span>{check.status === "ok" ? "✓" : check.status === "fail" ? "✗" : "–"} {text}</span>
+      <span className="dim"> · {time}</span>
+      {check.status !== "skipped" && <button className="small secondary" onClick={onRecheck}>다시 확인</button>}
+    </div>
+  );
+}
+
+function TargetColumn({ target, state, events, onRecheck }) {
   return (
     <div className="card target">
       <div className="row between">
@@ -194,6 +208,7 @@ function TargetColumn({ target, state, events }) {
         {state && <Badge status={state.status} />}
       </div>
       {state?.url && <a className="url" href={state.url} target="_blank" rel="noreferrer">{state.url}</a>}
+      <Verification check={state?.verification} onRecheck={onRecheck} />
       <ol className="timeline">
         {events.map((e) => (
           <li key={e.seq} className={`ev-${e.status}`}>
@@ -360,7 +375,8 @@ export default function App() {
 
           <div className="targets">
             {targets.map((t) => (
-              <TargetColumn key={t} target={t} state={selected?.targets[t]} events={events.filter((e) => e.target === t)} />
+              <TargetColumn key={t} target={t} state={selected?.targets[t]} events={events.filter((e) => e.target === t)}
+                            onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
             ))}
           </div>
 
