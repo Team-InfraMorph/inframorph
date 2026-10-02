@@ -27,12 +27,12 @@ D API → C 분석 → E Intent Gate → B Plan 계약 → C Patch
 
 | 사례 | 검사 | 관측 범위 |
 |---|---|---|
-| Intent 7개 | 실제 E Gate | 정상 통과·스키마/근거 오류 거부 및 고정 사유 일치 |
-| Patch 10개 | 실제 E Gate | 정상 패치·금지 실행·문법·경로·symlink 판정 |
+| Intent 17개 | 실제 E Gate | 정상 통과·스키마/근거 오류 거부 및 고정 사유 일치. 근거 관계, DB·worker 누락, config secret·실행 옵션·미지원 설정 포함 |
+| Patch 14개 | 실제 E Gate | 정상 패치·금지 실행·문법·경로·symlink 판정. Prisma 구조 보존과 허용 파일 내부 동작 변경 포함 |
 | Prompt 4개 | 실제 C 분석 루프 + 재생 응답 + E Gate | 공격 텍스트가 데이터로 제공됨, 금지 도구·secret 읽기/출력 차단, 정상 Intent 통과 |
 | Path 4개 | 실제 C Snapshot·Read·패치 입력 검사 | 경로 이탈 거부, 정상 내부 읽기 허용, 외부 더미 sentinel 미노출·미변경 |
 
-25개는 **호스트 경계 검사 25개**다. Prompt 결과는 실제 모델이 공격 지시를 무시했다는 측정이 아니며 `live_model_behavior=not_measured`로 기록한다. C에는 임의 Edit 도구가 없으므로 Path의 edit 요구는 실제 패치 입력 검증에 매핑했다. Patch 자료 전용 허용 목록을 운영 정책으로 사용하지 않는다.
+현재 pin(`48e27852`) 기준 39개이며 전부 **호스트 경계 검사**다. PR #29 시점에는 25개였고, 정책 강화 단계에서 기존 25개의 기대값을 바꾸지 않고 14개를 추가했다. Prompt 결과는 실제 모델이 공격 지시를 무시했다는 측정이 아니며 `live_model_behavior=not_measured`로 기록한다. C에는 임의 Edit 도구가 없으므로 Path의 edit 요구는 실제 패치 입력 검증에 매핑했다. Patch 자료 전용 허용 목록을 운영 정책으로 사용하지 않는다.
 
 ## 재현
 
@@ -45,7 +45,7 @@ Python 3.12+, Node 22, Git이 필요하다. Docker·공개 검증은 추가로 D
 .venv/bin/python scripts/verify_e_redteam.py --corpus /absolute/path/to/pinned-redteam --output .local/redteam-result.json
 ```
 
-redteam checkout의 HEAD는 pin의 SHA여야 한다. 작업 중인 checkout을 바꾸는 대신 별도 폴더에 고정 버전을 준비한다. E CI는 이를 자동으로 수행한다. `INFRAMORPH_REDTEAM_CORPUS`로 단위 테스트의 corpus 경로를 지정할 수 있다. corpus가 없는 일반 단위 테스트는 해당 두 검사를 skip하지만, E CI의 전용 25개 실행은 필수이며 누락·미실행·오판정이면 실패한다.
+redteam checkout의 HEAD는 pin의 SHA여야 한다. 작업 중인 checkout을 바꾸는 대신 별도 폴더에 고정 버전을 준비한다. E CI는 이를 자동으로 수행한다. `INFRAMORPH_REDTEAM_CORPUS`로 단위 테스트의 corpus 경로를 지정할 수 있다. corpus가 없는 일반 단위 테스트는 해당 두 검사를 skip하지만, E CI의 전용 실행은 필수이며 누락·미실행·오판정이면 실패한다. 사례 수는 pin한 corpus의 manifest가 정한다(현재 39개).
 
 실제 Docker/API 시험:
 
@@ -57,6 +57,8 @@ redteam checkout의 HEAD는 pin의 SHA여야 한다. 작업 중인 checkout을 �
 출력 폴더는 새 경로를 사용한다. 검증기가 자신이 만든 컨테이너·네트워크·테스트 볼륨만 정리한다. 전체 Docker prune은 사용하지 않는다. 일반 제품의 실패 정리는 데이터 볼륨을 보존한다. 공개 URL은 시험 종료 후 사용할 수 없다.
 
 ## 검증 결과
+
+아래는 **PR #29(`feat/e-runtime-integration`) 시점의 기록**이며 그대로 보존한다. 이후 정책 강화 단계의 최신 수치는 이 절 끝의 "정책 강화 단계" 항목과 [POLICY_GATE_V2_PLAN.md](POLICY_GATE_V2_PLAN.md)를 따른다.
 
 - [x] 일반 단위·회귀 테스트 297개 통과.
 - [x] AWS Adapter 34개 통과. AWS 명령 계약 3개는 위 297개에 포함.
@@ -72,13 +74,27 @@ redteam checkout의 HEAD는 pin의 SHA여야 한다. 작업 중인 checkout을 �
 - [x] 구현 커밋 `8ca7151`의 GitHub Actions `repo-policy`, `analyzer`, `e-runtime` 모두 통과. 최신 커밋 상태는 [PR #29](https://github.com/Team-InfraMorph/inframorph/pull/29)의 Checks에서 확인한다.
 - [ ] main 병합 및 병합 후 최종 SHA에서 재검증.
 
+### 정책 강화 단계 (`feat/e-policy-hardening`)
+
+- [x] 일반 단위·회귀 테스트 360개 통과. 정책 강화 회귀 14개를 `tests/test_policy_hardening.py`로 추가.
+- [x] AWS Adapter 34개 통과.
+- [x] 정책 결과 UI 6개 통과(`control_plane/web/tests/policy-card.test.mjs`), `npm run build` 통과.
+- [x] redteam 호스트 경계 39개 통과(실패 0, 미실행 0). pin `48e27852`. 실제 모델 행동은 여전히 미측정.
+- [x] 근거 관계·DB·worker 누락, config secret·실행 옵션·미지원 설정, Prisma 구조 보존, 허용 파일 내부 동작 변경을 각각 고정 사유 코드로 차단.
+- [x] parser 사용 불가 시 통과가 아니라 `javascript_parser_unavailable` ERROR로 중단.
+- [x] `GET /api/deployments/{id}/policy`와 정책 검사 카드 연결. 최초 분석 실패와 재시도 결과를 target·attempt별로 구분해 보존.
+- [x] 실제 Docker·공개 HTTPS 재배포에서 신규 규칙이 정상 배포를 막지 않음을 확인. 공개 URL 롤백, 민감 경로 4개 404, 재배포 후 데이터 유지, 테스트 자원 정리 확인.
+- [ ] main 병합 및 병합 후 최종 SHA에서 재검증.
+
+이번 단계의 설계 근거와 수용 기준별 달성 여부는 [POLICY_GATE_V2_PLAN.md](POLICY_GATE_V2_PLAN.md)에 있다. 미구현으로 남은 항목은 `required_rules`/`evaluated_rules` 기록, 폐기된 정책의 과거 PASS 차단, 외부 예제 검증, 오탐·미지원 비율 측정이다.
+
 원본 기록은 `.local/e-integration/`에 보관한다. 앱 비밀값이 있는 상태 파일을 커밋하지 않는다. 공개 보고서 [validation/e-integration-results.json](validation/e-integration-results.json)에는 판정·사유·버전·체크 결과만 기록한다.
 
 ## 남은 공동 검증
 
 실제 B Mapper/Planner, 실제 모델의 redteam 대응, 원격 Git 입력부터 시작하는 전체 제품 실행, 실제 AWS 배포, 휴대폰 외부망 접속은 미검증이다. E의 실행 연결과 전체 제품 완성을 구분한다. CI 통과도 실제 모델 행동이나 모든 공격에 대한 방어를 보장하지 않는다.
 
-redteam 입력 변경 시 고정 SHA 변경과 E 연결 검증을 한 묶음으로 검토한다. 두 저장소의 CI가 자동으로 서로를 실행한다고 가정하지 않는다. 이후 Policy v2 규칙을 추가하면 이 연결 검사를 유지하면서 정상/위반 쌍을 확장한다.
+redteam 입력 변경 시 고정 SHA 변경과 E 연결 검증을 한 묶음으로 검토한다. 두 저장소의 CI가 자동으로 서로를 실행한다고 가정하지 않는다. Policy v2.2 규칙 추가 시에도 이 연결 검사를 유지하고 정상/위반 쌍을 함께 확장했다.
 
 ## PR #29 연결 리뷰 수정
 

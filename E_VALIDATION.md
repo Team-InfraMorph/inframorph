@@ -64,6 +64,8 @@ python3 -m venv .venv
 
 ## 검증 결과
 
+아래는 **E 로컬 구현 단계(PR #24, `feat/e-runtime-implementation`) 시점의 기록**이며 그대로 보존한다. 이후 단계의 최신 수치는 [E_INTEGRATION.md](E_INTEGRATION.md)의 검증 결과와 [POLICY_GATE_V2_PLAN.md](POLICY_GATE_V2_PLAN.md)를 따른다. 현재 pin 기준 redteam은 39개이고 C 연동 미실행 사례는 없다.
+
 - 단위·회귀 검사: 68개 통과 (기존 협업 규칙 및 B 스키마 검사 포함).
 - E Intent/Patch redteam: 17/17 기대한 판정. 나머지 8개는 C의 prompt/tool 검증이므로 `not-run` 표시.
 - v1/v2 C 번들의 실제 Gate + Docker AMD64 빌드 통과.
