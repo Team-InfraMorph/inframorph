@@ -31,10 +31,10 @@ def classify_e_failure(code):
     return LocalFailure(stage=stage, code=reason)
 
 
-async def run_worker(payload):
+async def run_worker(payload, *, module="analyzer.e_worker"):
     """No shell; a separate process makes E's blocking Docker calls cancellable."""
     process = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "analyzer.e_worker", cwd=ROOT, env=child_environment(),
+        sys.executable, "-m", module, cwd=ROOT, env=child_environment(),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL, start_new_session=True)
 
@@ -78,7 +78,7 @@ async def run_worker(payload):
 
 
 class EConnector:
-    def __init__(self, *, snapshot, repo_map, state_root, runtime_name, deployment_id, make_plan):
+    def __init__(self, *, snapshot, repo_map, state_root, runtime_name, deployment_id, make_plan, worker=None):
         if not re.fullmatch(r"[a-z][a-z0-9-]{1,62}", runtime_name):
             raise ValueError("invalid_runtime_namespace")
         self.snapshot = Path(snapshot).absolute()
@@ -90,7 +90,11 @@ class EConnector:
         self.runtime_name = runtime_name
         self.deployment_id = deployment_id
         self.make_plan = make_plan
+        self.worker = worker
         self.last_deployment = None
+
+    async def invoke(self, payload):
+        return await (self.worker or run_worker)(payload)
 
     def payload(self, action, **values):
         return {"action": action, "snapshot": str(self.snapshot),
@@ -98,29 +102,29 @@ class EConnector:
                 "runtime_name": self.runtime_name, "deployment_id": self.deployment_id, **values}
 
     async def validate_intent(self, intent, signature):
-        await run_worker(self.payload("intent", intent=intent.model_dump(mode="json")))
+        await self.invoke(self.payload("intent", intent=intent.model_dump(mode="json")))
         return Approval(approved=True, fingerprint=signature)
 
     async def validate_patch(self, candidate, signature):
-        await run_worker(self.payload("patch", bundle=str(candidate.directory),
+        await self.invoke(self.payload("patch", bundle=str(candidate.directory),
                                       plan=candidate.plan.model_dump(mode="json")))
         return Approval(approved=True, fingerprint=signature)
 
     async def build(self, candidate, signature):
-        reply = await run_worker(self.payload("build", bundle=str(candidate.directory),
+        reply = await self.invoke(self.payload("build", bundle=str(candidate.directory),
                                              plan=candidate.plan.model_dump(mode="json")))
         return BuiltPatch(artifact=reply["artifact"], fingerprint=signature)
 
     async def cleanup(self):
         async with asyncio.timeout(60):
-            return await run_worker(self.payload("cleanup"))
+            return await self.invoke(self.payload("cleanup"))
 
     async def check_local(self, artifact, plan):
         # Plan.app is the logical source app. E uses it for physical Compose and
         # volume names; use a caller-owned stable project namespace at that boundary.
         runtime_plan = Plan.model_validate(plan.model_dump() | {"app": self.runtime_name})
         try:
-            reply = await run_worker(self.payload("deploy", plan=runtime_plan.model_dump(mode="json"),
+            reply = await self.invoke(self.payload("deploy", plan=runtime_plan.model_dump(mode="json"),
                                                  artifact=artifact.model_dump(mode="json")))
         except BaseException:
             # The E process may have died between `up` and writing current.json.

@@ -77,6 +77,16 @@ class EConnectorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "intent_source_mismatch"):
             await self.connector.validate_intent(bad, fingerprint(bad))
 
+    async def test_actual_e_worker_rejects_plan_execution_options_before_patch(self):
+        if not (ROOT / "policy_gate/gate.py").is_file():
+            self.skipTest("requires E modules")
+        from analyzer.e_runtime import run_worker
+        plan = self.plan.model_copy(deep=True)
+        plan.config["NODE_OPTIONS"] = "--require ./src/server.js"
+        with self.assertRaisesRegex(ValueError, "plan_source_mismatch"):
+            await run_worker(self.connector.payload("patch", bundle="unused",
+                plan=plan.model_dump(mode="json")))
+
     async def test_injected_intent_stops_before_planner_patch_and_builder_with_actual_e(self):
         if not (ROOT / "policy_gate/gate.py").is_file():
             self.skipTest("E modules are checked in the separately assembled team checkout")

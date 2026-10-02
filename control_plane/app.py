@@ -81,9 +81,12 @@ def _sse(event, data, seq=None):
     return f"{head}event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_analyzer):
+def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_analyzer, runtime=None):
     store = Store(db_path or DEFAULT_DB)
     store.recover_interrupted()
+    if runtime is not None:
+        analyzer = lambda deployment: runtime.analyze(store, deployment)
+        deployer_cmd = lambda deployment_id, target: runtime.command(store, deployment_id, target)
 
     def execute(project_id, deployment_id):
         """분석·승인 확인 후 대상별 배포기를 동시에 돌리고, 끝나면 대기 중인 최신 요청을 이어서 실행한다."""
@@ -91,7 +94,12 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
             deployment = store.get_deployment(deployment_id)
             if deployment["approved_at"] or deployment["triggered_by"] == "rollback" or ready(deployment):
                 targets = deployment["targets"]
-                run_deployment(store, deployment_id, {t: deployer_cmd(deployment_id, t) for t in targets})
+                try:
+                    commands = {t: deployer_cmd(deployment_id, t) for t in targets}
+                except Exception:
+                    store.fail(deployment_id)
+                else:
+                    run_deployment(store, deployment_id, commands)
             elif store.get_deployment(deployment_id)["status"] == Status.AWAITING_APPROVAL.value:
                 return  # 승인이 나면 approve가 이어서 실행한다
             deployment_id = None
@@ -111,10 +119,17 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
             return False
         if result is None:  # 분석 결과가 없으면(가짜 모드의 임의 커밋) 비교할 구조도 없다
             return True
-        store.set_analysis_metrics(deployment["id"], result.get("metrics"))
-        store.set_commit(deployment["id"], result["commit_sha"])
-        store.save_analysis(deployment["project_id"], result["commit_sha"], result["repo_map"], result["intent"])
-        store.save_plans(deployment["id"], result["plans"])
+        try:
+            from .results import checked_payload
+            checked_payload(result)
+            store.set_analysis_metrics(deployment["id"], result.get("metrics"))
+            store.set_commit(deployment["id"], result["commit_sha"])
+            store.save_analysis(deployment["project_id"], result["commit_sha"], result["repo_map"], result["intent"])
+            store.save_plans(deployment["id"], result["plans"])
+            store.save_initial_analysis(deployment["id"], result)
+        except (ValueError, KeyError, TypeError):
+            store.fail(deployment["id"])
+            return False
         # 직전 LIVE 대비 인프라 구조가 바뀌면 사람 승인을 받는다(기획서 시나리오 B-2)
         base = store.last_live(deployment["project_id"], deployment["id"], with_plans=True)
         changes = plan_diff(store.get_plans(base["id"]) if base else {}, result["plans"])
@@ -197,6 +212,10 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
     def get_analysis(deployment_id: str):
         """이 배포 커밋의 분석 결과(C의 intent). 화면의 'AI가 이해한 앱'에 쓴다."""
         deployment = deployment_or_404(deployment_id)
+        saved = store.get_deployment_analysis(deployment_id)
+        if saved is not None:
+            return {"intent": saved["intent"], "metrics": saved["metrics"],
+                    "initial_intent": saved["initial"]["intent"], "recovery": saved.get("recovery")}
         cached = store.get_analysis(deployment["project_id"], deployment["commit_sha"]) if deployment["commit_sha"] else None
         return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"]}
 

@@ -8,7 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from schemas import Intent
+from schemas import Intent, Plan
 from schemas.common import parse_evidence
 from code_patch.runner import read_snapshot
 
@@ -68,3 +68,20 @@ def validate_demo_intent(value, source, mapping):
             if line > len(rows) or not rows[line - 1].strip():
                 raise SourcePolicyError("invalid_source_evidence")
     return intent
+
+
+def validate_demo_plan(value, mapping):
+    """B output is data too; allow only reviewed demo execution settings."""
+    plan = Plan.model_validate(value.model_dump() if isinstance(value, Plan) else value)
+    expected = [("web", "http", 3000, "/health", True, None)]
+    if "src/worker.js" in mapping.tree:
+        expected.append(("worker", "worker", None, None, False, "node src/worker.js"))
+    actual = [(s.name, s.kind.value, s.port, s.health, s.public, s.command) for s in plan.services]
+    config = dict(plan.config)
+    config.pop("PORT", None)
+    if (plan.source_revision != mapping.commit or plan.app != "demo-app" or plan.target.value != "local" or
+            sorted(actual) != sorted(expected) or plan.db is None or plan.storage is None or
+            plan.storage.path.rstrip("/") != "uploads" or plan.secrets != ["DATABASE_URL"] or
+            config != {"STORAGE_DRIVER": "fs"} or plan.config.get("PORT", "3000") != "3000"):
+        raise SourcePolicyError("plan_source_mismatch")
+    return plan

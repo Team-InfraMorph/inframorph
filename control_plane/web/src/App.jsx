@@ -17,10 +17,11 @@ const MODE = { full_analysis: "전체 분석", reanalyze: "재분석", rebuild_o
 const TERMINAL = ["LIVE", "FAILED", "ROLLED_BACK", "SUPERSEDED"];
 
 const STATE_KIND = { relational_db: "관계형 DB", persistent_files: "영구 파일" };
-const BACKEND = { replay: "저장된 응답 재생", openai: "실제 모델 호출", fixture: "예시 분석 결과" };
+const BACKEND = { replay: "저장된 응답 재생", openai: "실제 모델 호출", fixture: "예시 분석 결과", mixed: "혼합" };
 
 const PLAN_ROWS = [
   ["서비스", (p) => p.services.map((s) => `${s.name} (${s.kind})`).join(", ")],
+  ["포트 · 상태 확인", (p) => p.services.filter((s) => s.public).map((s) => `${s.port} · ${s.health ?? "없음"}`).join(", ")],
   ["DB", (p) => p.db?.type ?? "없음"],
   ["파일 저장소", (p) => (p.storage ? `${p.storage.type} · ${p.storage.path}` : "없음")],
   ["로그", (p) => p.logs],
@@ -88,12 +89,14 @@ function ApprovalBanner({ deployment, onAct }) {
 }
 
 function Usage({ deployment, metrics }) {
-  if (deployment.analysis_mode === "rebuild_only") {
+  if (deployment.analysis_mode === "rebuild_only" && !metrics?.recovery?.attempts) {
     return <p className="usage saved">AI 분석 생략: 이전 분석을 재사용 (모델 호출 0회, 비용 $0)</p>;
   }
   if (!metrics) return null;
   if (metrics.error) return <p className="usage error">AI 분석 실패: {metrics.error}</p>;
-  const parts = [`모델 호출 ${metrics.model_calls ?? 0}회`];
+  const parts = [`${metrics.backend === "replay" ? "응답 재생" : "모델 호출"} ${metrics.model_calls ?? 0}회`];
+  if (metrics.api_calls != null) parts.push(`API 호출 ${metrics.api_calls}회`);
+  if (metrics.usage_complete === false) parts.push("사용량 집계 미완료");
   if (metrics.tool_calls != null) parts.push(`파일 탐색 ${metrics.tool_calls}회`);
   if (metrics.input_tokens || metrics.output_tokens) parts.push(`토큰 ${metrics.input_tokens}/${metrics.output_tokens}`);
   if (metrics.estimated_usd != null) parts.push(`예상 $${Number(metrics.estimated_usd).toFixed(3)}`);
@@ -101,8 +104,37 @@ function Usage({ deployment, metrics }) {
   return <p className="usage">{parts.join(" · ")} <span className="dim">({BACKEND[metrics.backend] ?? metrics.backend})</span></p>;
 }
 
+function Recovery({ metrics }) {
+  const recovery = metrics?.recovery;
+  if (!recovery) return null;
+  const recovered = recovery.status === "recovered";
+  const reason = { second_local_failure: "재시도 후에도 자동 테스트가 실패했어요.",
+    reanalysis_failed: "재분석을 완료하지 못했어요.", not_retryable: "자동 재시도 대상이 아닌 실패예요.",
+    recovery_timeout: "자동 복구 시간이 초과됐어요." }[recovery.reason];
+  return <div className={`card ${recovered ? "" : "error"}`}>
+    <h2>{recovered ? "자동 복구 완료" : "자동 복구 중단"}</h2>
+    <p>재시도 {recovery.attempts}회 / 최대 1회 · {recovered ? "검증을 통과한 분석 결과와 설계도를 반영했어요." : "기존 분석 결과와 설계도를 유지했어요."}</p>
+    {reason && <p>{reason}</p>}
+    <p className="dim">초기 응답 {recovery.initial_metrics.model_calls ?? 0}회 · 재분석 응답 {recovery.retry_metrics.model_calls ?? 0}회 · 총 사용량은 아래에 합산돼요.</p>
+  </div>;
+}
+
+function eventDetail(detail) {
+  try {
+    const value = JSON.parse(detail);
+    if (value.phase === "recoverable_failure") return "자동 테스트 실패를 확인해 한 번 재분석합니다.";
+    if (value.code === "retry_recovered") return "재시도 검증을 통과했습니다.";
+    if (value.code === "second_local_failure") return "재시도 후에도 실패해 자동 복구를 중단했습니다.";
+    if (value.retry_attempt != null) return `자동 복구 ${value.retry_attempt}/1회`;
+    if (typeof value.code === "string" && value.code.startsWith("initial_")) return "첫 배포 검증";
+  } catch { /* E가 보내는 일반 문구도 표시 */ }
+  return detail;
+}
+
 function AnalysisCard({ deployment, intent }) {
   return (
+    <>
+    <Recovery metrics={deployment.analysis_metrics} />
     <div className="card">
       <h2>AI가 이해한 앱</h2>
       <Usage deployment={deployment} metrics={deployment.analysis_metrics} />
@@ -135,6 +167,7 @@ function AnalysisCard({ deployment, intent }) {
         </table>
       )}
     </div>
+    </>
   );
 }
 
@@ -177,7 +210,7 @@ function TargetColumn({ target, state, events }) {
             <span className="step">{STEPS[e.step] ?? e.step}</span>
             <span className="mark">{e.status === "ok" ? "완료" : e.status === "fail" ? "실패" : "시작"}</span>
             {e.duration_ms != null && <span className="dim">{(e.duration_ms / 1000).toFixed(1)}초</span>}
-            {e.detail && <div className="detail">{e.detail}</div>}
+            {e.detail && <div className="detail">{eventDetail(e.detail)}</div>}
           </li>
         ))}
         {!events.length && <li className="dim">아직 이벤트가 없습니다</li>}
@@ -261,8 +294,12 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedKey) return;
-    api.plans(selectedKey).then(setPlans).catch(() => setPlans({}));
-    api.analysis(selectedKey).then((a) => setIntent(a.intent)).catch(() => setIntent(null));
+    let alive = true;
+    setPlans({});
+    setIntent(null);
+    api.plans(selectedKey).then((value) => alive && setPlans(value)).catch(() => alive && setPlans({}));
+    api.analysis(selectedKey).then((a) => alive && setIntent(a.intent)).catch(() => alive && setIntent(null));
+    return () => { alive = false; };
   }, [selectedKey, selectedStatus]);
 
   const choose = (id) => {

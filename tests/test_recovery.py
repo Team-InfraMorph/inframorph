@@ -146,6 +146,15 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.retry_attempts, 1)
         self.assertEqual(result.analysis.metrics.validation_retries, 1)
 
+    async def test_failed_reanalysis_preserves_consumed_metrics(self):
+        self.backend = ReplayBackend([Reply(text="invalid JSON"), Reply(text="invalid again")])
+        result = await self.run_recovery()
+        self.assertEqual(result.reason, "reanalysis_failed")
+        self.assertIsNone(result.analysis)
+        self.assertEqual(result.reanalysis_metrics.model_calls, 2)
+        self.assertEqual(result.reanalysis_metrics.validation_retries, 1)
+        self.assertEqual(self.calls, [])
+
     async def test_unknowns_block_planner_even_when_policy_callback_would_approve(self):
         intent = self.intent.model_dump(mode="json") | {"unknowns": ["storage path unresolved"]}
         self.backend = self.replay(final=intent)

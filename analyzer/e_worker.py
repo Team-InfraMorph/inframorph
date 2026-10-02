@@ -5,7 +5,7 @@ import re
 import sys
 
 from schemas import Intent, Plan, RepoMap
-from .source_policy import validate_demo_intent
+from .source_policy import validate_demo_intent, validate_demo_plan
 
 
 def perform(data):
@@ -21,6 +21,7 @@ def perform(data):
         return {"ok": True}
     if action in {"patch", "build"}:
         plan = Plan.model_validate(data["plan"])
+        validate_demo_plan(plan, mapping)
         if plan.source_revision != mapping.commit:
             raise ValueError("revision_mismatch")
         if action == "patch":
@@ -35,6 +36,7 @@ def perform(data):
         raise ValueError("invalid_runtime_state")
     if action == "deploy":
         plan = Plan.model_validate(data["plan"])
+        validate_demo_plan(plan.model_copy(update={"app": "demo-app"}), mapping)
         if plan.app != name or plan.source_revision != mapping.commit:
             raise ValueError("runtime_binding_mismatch")
         result = deploy(plan, data["artifact"], state, publish=False,

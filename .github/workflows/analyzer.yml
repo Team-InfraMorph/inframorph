@@ -6,6 +6,7 @@ on:
     paths:
       - 'analyzer/**'
       - 'code_patch/**'
+      - 'control_plane/**'
       - 'schemas/**'
       - 'tests/**'
       - 'requirements.txt'
