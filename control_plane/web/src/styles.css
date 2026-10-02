@@ -343,55 +343,28 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .patch-file summary .tree-git { margin: 0; width: 12px; }
 .patch-file summary .dim { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
 
-/* ── 배포 지도 ─────────────────────────────── */
-.deploy-map { padding: 6px 14px 0; overflow-x: auto; border-bottom: 1px solid var(--line); }
-.deploy-map svg { display: block; width: 100%; min-width: 640px; height: auto; max-height: 260px; }
-.leg-rail { fill: none; stroke: var(--rail); stroke-width: 2; }
-.leg-line { fill: none; stroke: var(--leg); stroke-width: 2.5; stroke-dasharray: 0 1; opacity: 0; transition: opacity 0.4s; }
-.leg-done .leg-line { opacity: 1; stroke-dasharray: none; stroke: var(--ok); }
-.leg-active .leg-line { opacity: 0.55; stroke-dasharray: 6 6; animation: march 0.8s linear infinite; }
-.leg-fail .leg-line { opacity: 0.8; stroke: var(--fail); stroke-dasharray: 4 6; }
-.packet { fill: var(--leg); }
-@keyframes march { to { stroke-dashoffset: -12; } }
-.mnode rect { fill: var(--card); stroke: var(--line); stroke-width: 1.5; transition: stroke 0.4s; }
-.mnode .mtitle { fill: var(--text); font: 700 16px "Pretendard Variable", Pretendard, system-ui, sans-serif; }
-.mnode .msub { fill: var(--dim); font: 500 13px "Pretendard Variable", Pretendard, system-ui, sans-serif; }
-.mnode .mdot { fill: var(--rail); }
-.mt-local .mdot { fill: var(--env-local); }
-.mt-aws .mdot { fill: var(--env-aws); }
-.mn-active rect { stroke: var(--accent); }
-.mn-active .msub { fill: var(--accent); }
-.mn-done rect { stroke: color-mix(in srgb, var(--ok) 55%, var(--line)); }
-.mn-done .msub { fill: var(--ok); }
-.mn-fail rect { stroke: var(--fail); }
-.mn-fail .msub { fill: var(--fail); }
-.mn-notrun { opacity: 0.45; }
-
-/* ── 환경 변환 지도: Local ← 필요한 것 → AWS ── */
-.xmap { display: grid; grid-template-columns: minmax(130px, 1fr) 48px minmax(240px, 1.4fr) 48px minmax(130px, 1fr); align-items: center; row-gap: 10px; }
-.xm-row { display: contents; }
-.xm-head { font-size: 12px; font-weight: 600; color: var(--dim); padding-bottom: 2px; }
-.xm-head:last-child, .xmap > .xm-head:nth-child(5) { text-align: left; }
-.xm-center { text-align: center; }
-.xh { display: inline-flex; align-items: center; gap: 6px; }
-.xh::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-.xe-local { color: var(--env-local); }
-.xe-aws { color: var(--env-aws); }
-.xm-env { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; font-size: 14px; font-weight: 500;
-  color: var(--text); background: var(--muted-bg); border: 1px solid var(--line); }
-.xm-env.xe-local { border-left: 3px solid var(--env-local); }
-.xm-env.xe-aws { border-left: 3px solid var(--env-aws); }
-.xm-dot { display: none; }
-.xm-link { height: 2px; position: relative; }
-.xm-link.xl-local { background: linear-gradient(90deg, var(--env-local), var(--rail)); }
-.xm-link.xl-aws { background: linear-gradient(90deg, var(--rail), var(--env-aws)); }
-.xm-link.xl-l::before { content: ""; position: absolute; left: -2px; top: -4px; border: 5px solid transparent; border-right: 7px solid var(--env-local); border-left: 0; }
-.xm-link.xl-r::after { content: ""; position: absolute; right: -2px; top: -4px; border: 5px solid transparent; border-left: 7px solid var(--env-aws); border-right: 0; }
-.xm-need { padding: 10px 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); text-align: center; }
-.xm-title { display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 4px 8px; font-size: 15px; }
-.xm-title span { font-size: 12px; color: var(--dim); }
-.xm-cite { display: inline-block; margin-top: 4px; font-size: 11.5px; color: var(--dim); background: var(--muted-bg); padding: 1px 6px; border-radius: 5px; }
-.xm-fix { margin-top: 4px; font-size: 12px; color: var(--ok); }
-@media (max-width: 760px) { .xmap { grid-template-columns: 1fr 20px 1.4fr 20px 1fr; } .xm-env { font-size: 12px; padding: 8px; } }
+/* ── 배포할 앱 구조도 ────────────────────────── */
+.arch2 { position: relative; height: 620px; min-width: 640px; margin: 4px 0 6px; }
+.arch2-wrap { overflow-x: auto; }
+.arch2 svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.ae { fill: none; stroke: var(--rail); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.ae-in { stroke: var(--accent); stroke-dasharray: 5 5; opacity: 0.7; }
+.apart { position: absolute; transform: translate(-50%, -50%); width: 250px; padding: 10px 12px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--line); text-align: center; }
+.ap-user { width: 220px; }
+.ap-svc { border-top: 3px solid var(--accent); }
+.ap-data { border-top: 3px solid var(--ok); }
+.ap-title { font-size: 14px; font-weight: 700; }
+.ap-sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
+.ap-cite { display: inline-block; margin-top: 5px; font-size: 11px; color: var(--dim); background: var(--muted-bg); padding: 1px 6px; border-radius: 5px; }
+.ap-note { margin-top: 4px; font-size: 11.5px; color: var(--ok); }
+.ap-env { display: grid; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); text-align: left; }
+.ape { display: flex; gap: 8px; font-size: 12px; color: var(--text); }
+.ape b { flex: none; width: 40px; font-size: 11px; font-weight: 700; }
+.ape-local b { color: var(--env-local); }
+.ape-aws b { color: var(--env-aws); }
+.arch2-foot { position: absolute; left: 0; right: 0; bottom: 4px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  font-size: 12px; color: var(--dim); }
+.arch2-foot code { font-size: 11.5px; color: var(--text); }
 .tree-box { margin-top: 14px; }
 .tree-box summary { cursor: pointer; font-size: 13px; font-weight: 600; margin-bottom: 8px; }

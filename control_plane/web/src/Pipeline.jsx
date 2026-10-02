@@ -289,85 +289,6 @@ function NowBar({ deployment, shared, lanes, targets, now, started }) {
   );
 }
 
-// ── 배포 지도: 레포 → 조종실 → Local / AWS. 지금 일이 일어나는 길 위로 점(패킷)이 움직인다. ──
-const ENV = {
-  local: { title: "Local · 내 노트북" },
-  aws: { title: "AWS · 서울 리전" },
-};
-const MAP_POS = { local: 60, aws: 196 }; // 대상 노드의 세로 중심(viewBox 900x256)
-
-function legState(statuses) {
-  if (statuses.includes("fail")) return "fail";
-  if (statuses.some((s) => s === "started" || s === "wait")) return "active";
-  if (statuses.length && statuses.every((s) => ["ok", "skip"].includes(s))) return "done";
-  return "idle";
-}
-
-function Leg({ d, state, color }) {
-  return (
-    <g className={`leg leg-${state}`} style={{ "--leg": color }}>
-      <path d={d} className="leg-rail" />
-      <path d={d} className="leg-line" />
-      {state === "active" && [0, 0.6, 1.2].map((delay) => (
-        <circle key={delay} r="4" className="packet">
-          <animateMotion dur="1.8s" begin={`${delay}s`} repeatCount="indefinite" path={d} />
-        </circle>
-      ))}
-    </g>
-  );
-}
-
-function MapNode({ x, y, w, h, title, sub, state, tone }) {
-  return (
-    <g className={`mnode mn-${state}${tone ? ` mt-${tone}` : ""}`} transform={`translate(${x},${y})`}>
-      <rect width={w} height={h} rx="14" />
-      <circle cx="22" cy={h / 2 - 6} r="5" className="mdot" />
-      <text x="36" y={h / 2 - 1} className="mtitle">{title}</text>
-      <text x="22" y={h / 2 + 20} className="msub">{sub}</text>
-    </g>
-  );
-}
-
-function DeployMap({ deployment, shared, lanes, targets, ctx }) {
-  const sharedNow = shared.find(([, , st]) => st.status === "started" || st.status === "wait");
-  const core = legState(shared.map(([, , st]) => st.status));
-  const host = (url) => url?.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-  const target = (t) => {
-    const status = deployment.targets[t]?.status;
-    const nodes = lanes[t];
-    const now = nodes.find((n) => n.status === "started") ?? nodes.find((n) => n.flowing);
-    if (status === "FAILED" || nodes.some((n) => n.status === "fail")) {
-      return { state: "fail", sub: `실패 · ${nodes.find((n) => n.status === "fail")?.label ?? "배포"}` };
-    }
-    if (status === "LIVE") {
-      const h = host(deployment.targets[t]?.url) ?? "배포 완료";
-      return { state: "done", sub: h.length > 28 ? `${h.slice(0, 27)}…` : h };
-    }
-    if (now) return { state: "active", sub: `${now.label} 중` };
-    if (core === "done" && !TERMINAL.includes(deployment.status)) return { state: "active", sub: "준비 중" };
-    return { state: core === "fail" ? "notrun" : "idle", sub: core === "fail" ? "배포하지 않음" : "대기" };
-  };
-  const ys = targets.length === 1 ? { [targets[0]]: 128 } : MAP_POS;
-  return (
-    <div className="deploy-map">
-      <svg viewBox="0 0 900 256" role="img" aria-label="배포 지도: 레포에서 조종실을 거쳐 각 배포 대상으로">
-        <Leg d="M210,128 C270,128 270,128 330,128" state={core === "idle" && deployment.status !== "CREATED" ? "active" : core} color="var(--accent)" />
-        {targets.map((t) => (
-          <Leg key={t} d={`M570,128 C620,128 610,${ys[t]} 650,${ys[t]}`} state={target(t).state === "notrun" ? "idle" : target(t).state} color={`var(--env-${t})`} />
-        ))}
-        <MapNode x={4} y={94} w={206} h={68} title="GitHub 레포" sub={`${ctx.repo?.replace("https://github.com/", "").split("/").at(-1) ?? "앱"} @${ctx.commit?.slice(0, 7) ?? "—"}`} state="done" />
-        <MapNode x={330} y={90} w={240} h={76} title="InfraMorph 조종실"
-                 sub={core === "fail" ? `${shared.find(([, , st]) => st.status === "fail")?.[1]}에서 멈춤` : sharedNow ? `${sharedNow[1]} 중` : core === "done" ? "분석·검사·빌드 완료" : "대기"}
-                 state={core === "idle" ? "idle" : core} />
-        {targets.map((t) => (
-          <MapNode key={t} x={650} y={ys[t] - 34} w={246} h={68} title={ENV[t].title} sub={target(t).sub}
-                   state={target(t).state} tone={t} />
-        ))}
-      </svg>
-    </div>
-  );
-}
-
 /** 배포 흐름: 공통 단계 트랙 → 대상별 레인. 진행 중인 칸은 움직이고, 실패 칸에는 '여기서 멈춤'. */
 function Flow({ deployment, targets, stages, perTarget, ctx, now }) {
   const [open, setOpen] = useState(null);
@@ -385,7 +306,6 @@ function Flow({ deployment, targets, stages, perTarget, ctx, now }) {
     <div className="card flow">
       <NowBar deployment={deployment} shared={shared} lanes={lanes} targets={targets} now={now}
               started={Date.parse(deployment.created_at)} />
-      <DeployMap deployment={deployment} shared={shared} lanes={lanes} targets={targets} ctx={ctx} />
       <div className="flow-body">
         <div className="lane-title">공통</div>
         <ol className="track">

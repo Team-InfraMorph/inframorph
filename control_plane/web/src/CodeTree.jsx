@@ -69,66 +69,68 @@ function CodeTree({ repoMap, intent, patch }) {
   );
 }
 
-/** 행 하나 = 앱이 필요로 하는 것 하나. 열 = 대상별로 그게 무엇이 되는지. */
-function rowsOf(intent, plans, targets) {
-  const svc = (t, name) => plans[t]?.services.find((s) => s.name === name);
-  const rows = [];
-  for (const w of intent.workloads) {
-    rows.push({
-      need: w.kind === "http" ? "웹 서버" : "백그라운드 작업",
-      detail: [w.port && `:${w.port}`, svc(targets[0], w.name)?.health, w.public ? "외부 공개" : "비공개"].filter(Boolean).join(" · "),
-      evidence: cite(w.evidence),
-      to: Object.fromEntries(targets.map((t) => [t, t === "aws"
-        ? `ECS Fargate${w.public ? " · 로드밸런서(HTTPS) 뒤" : ""}` : "Docker 컨테이너"])),
-    });
-  }
-  for (const s of intent.state) {
-    const db = s.kind === "relational_db";
-    rows.push({
-      need: db ? "DB" : "파일 저장",
-      detail: db ? [s.engine, s.orm].filter(Boolean).join(" · ") : s.path,
-      evidence: cite(s.evidence),
-      to: Object.fromEntries(targets.map((t) => [t, db ? DB[plans[t]?.db?.type] ?? plans[t]?.db?.type ?? "—"
-        : STORAGE[plans[t]?.storage?.type] ?? plans[t]?.storage?.type ?? "—"])),
-      fix: db ? plans[targets[0]]?.db?.patch && "SQLite → PostgreSQL로 코드 수정" : plans[targets[0]]?.storage?.patch && "저장 코드를 디스크·S3 겸용으로 교체",
-    });
-  }
-  if (intent.secrets.length) {
-    rows.push({ need: "비밀값", detail: intent.secrets.join(", "), to: Object.fromEntries(targets.map((t) => [t, SECRET_STORE[t]])) });
-  }
-  rows.push({ need: "로그", to: Object.fromEntries(targets.map((t) => [t, LOGS[plans[t]?.logs] ?? plans[t]?.logs ?? "—"])) });
-  return rows;
+const NAME = { sqlite: "SQLite", postgres: "PostgreSQL", postgresql: "PostgreSQL", mysql: "MySQL", prisma: "Prisma" };
+const spread = (n) => (n === 1 ? [50] : n === 2 ? [28, 72] : Array.from({ length: n }, (_, i) => 15 + (70 * i) / (n - 1)));
+
+/** 부품 하나. 아래에 그 부품이 Local·AWS에서 각각 무엇이 되는지 붙인다. */
+function Part({ x, y, title, sub, cite, note, env, tone }) {
+  return (
+    <div className={`apart${tone ? ` ap-${tone}` : ""}`} style={{ left: `${x}%`, top: `${y}%` }}>
+      <div className="ap-title">{title}</div>
+      {sub && <div className="ap-sub">{sub}</div>}
+      {cite && <code className="ap-cite">{cite}</code>}
+      {note && <div className="ap-note">{note}</div>}
+      {env && (
+        <div className="ap-env">
+          {Object.entries(env).map(([t, v]) => <span key={t} className={`ape ape-${t}`}><b>{TARGET[t]}</b>{v}</span>)}
+        </div>
+      )}
+    </div>
+  );
 }
 
-/** 환경 변환 지도: 가운데 = 앱이 필요로 하는 것(코드 근거), 왼쪽 = Local, 오른쪽 = AWS. 표 대신 선으로 잇는다. */
-function XlateMap({ intent, plans, targets }) {
+/** 배포할 앱의 구조도: 사용자 → 서비스(웹·백그라운드) → 저장소(DB·파일). AI가 찾은 근거와, 부품마다 대상별 모습을 함께 그린다. */
+function AppArch({ intent, plans, targets, repoMap }) {
   const shown = targets.filter((t) => plans[t]);
   if (!intent || !shown.length) return null;
-  const [left, right] = shown.length > 1 ? shown : [null, shown[0]];
-  const Side = ({ t, r }) => (t
-    ? <div className={`xm-env xe-${t}`}><span className="xm-dot" />{r.to[t]}</div>
-    : <div />);
-  const Link = ({ t, dir }) => (t ? <div className={`xm-link xl-${t} xl-${dir}`} /> : <div />);
+  const plan = plans[shown[0]];
+  const envOf = (fn) => Object.fromEntries(shown.map((t) => [t, fn(plans[t], t)]));
+  const svc = intent.workloads.map((w, i, all) => ({ ...w, x: spread(all.length)[i], y: 43 }));
+  const store = intent.state.map((st, i, all) => ({ ...st, key: st.kind === "relational_db" ? "db" : "storage", x: spread(all.length)[i], y: 76 }));
+  const at = Object.fromEntries([...svc.map((w) => [w.name, w]), ...store.map((st) => [st.key, st])]);
+  // 연결: Planner가 낸 plan.mermaid(web --> db 등). 없으면 웹 서비스가 모든 저장소에 닿는다고 본다.
+  const pairs = plan.mermaid?.split("\n").map((l) => l.trim().split(/\s*-->\s*/)).filter((p) => p.length === 2 && at[p[0]] && at[p[1]])
+    ?? svc.flatMap((w) => store.map((st) => [w.name, st.key]));
+  const user = { x: 50, y: 12 };
+  const curve = (a, b) => `M${a.x},${a.y} C${a.x},${(a.y + b.y) / 2} ${b.x},${(a.y + b.y) / 2} ${b.x},${b.y}`;
+  const express = repoMap?.deps?.includes("express") ? "Express · " : "";
   return (
-    <div className="xmap">
-      <div className="xm-head">{left && <span className={`xh xe-${left}`}>{TARGET[left]} · 내 노트북</span>}</div>
-      <div />
-      <div className="xm-head xm-center">앱이 필요로 하는 것 <span className="dim">· AI가 코드에서 찾은 근거</span></div>
-      <div />
-      <div className="xm-head">{right && <span className={`xh xe-${right}`}>{TARGET[right]} · 서울</span>}</div>
-      {rowsOf(intent, plans, shown).map((r) => (
-        <div key={r.need + (r.detail ?? "")} className="xm-row">
-          <Side t={left} r={r} />
-          <Link t={left} dir="l" />
-          <div className="xm-need">
-            <div className="xm-title"><strong>{r.need}</strong>{r.detail && <span>{r.detail}</span>}</div>
-            {r.evidence && <code className="xm-cite">{r.evidence}</code>}
-            {r.fix && <div className="xm-fix">{r.fix}</div>}
-          </div>
-          <Link t={right} dir="r" />
-          <Side t={right} r={r} />
-        </div>
+    <div className="arch2">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        {svc.filter((w) => w.public).map((w) => <path key={`u-${w.name}`} d={curve(user, w)} className="ae ae-in" />)}
+        {pairs.map(([a, b]) => <path key={`${a}-${b}`} d={curve(at[a], at[b])} className="ae" />)}
+      </svg>
+      <Part x={user.x} y={user.y} title="사용자 브라우저" tone="user"
+            sub={`HTTP${svc.find((w) => w.public)?.port ? ` :${svc.find((w) => w.public).port}` : ""} · API ${repoMap?.routes?.length ?? 0}개`}
+            env={envOf((p, t) => (t === "aws" ? "HTTPS 공개 주소" : "이 PC 주소"))} />
+      {svc.map((w) => (
+        <Part key={w.name} x={w.x} y={w.y} tone="svc" title={w.kind === "http" ? "웹 서버 (백엔드)" : "백그라운드 작업"}
+              sub={`${w.kind === "http" ? express : ""}${w.command ?? repoMap?.entrypoints?.start ?? ""}`} cite={cite(w.evidence)}
+              env={envOf((p, t) => (t === "aws" ? "ECS Fargate" : "Docker 컨테이너"))} />
       ))}
+      {store.map((st) => (
+        <Part key={st.key} x={st.x} y={st.y} tone="data"
+              title={st.key === "db" ? `DB · ${[st.engine, st.orm].filter(Boolean).map((n) => NAME[n] ?? n).join(" · ")}` : `파일 저장 · ${st.path}`}
+              cite={cite(st.evidence)}
+              note={st.key === "db" ? plan.db?.patch && "패치: SQLite → PostgreSQL" : plan.storage?.patch && "패치: 디스크·S3 겸용 저장"}
+              env={envOf((p) => (st.key === "db" ? DB[p.db?.type] ?? p.db?.type : STORAGE[p.storage?.type] ?? p.storage?.type))} />
+      ))}
+      <div className="arch2-foot">
+        {intent.secrets.length > 0 && (
+          <span>비밀값 <code>{intent.secrets.join(", ")}</code> → {shown.map((t) => `${TARGET[t]} ${SECRET_STORE[t]}`).join(" · ")}</span>
+        )}
+        <span>로그 → {shown.map((t) => `${TARGET[t]} ${LOGS[plans[t]?.logs] ?? plans[t]?.logs}`).join(" · ")}</span>
+      </div>
     </div>
   );
 }
@@ -136,7 +138,7 @@ function XlateMap({ intent, plans, targets }) {
 export function AppCode({ repoMap, intent, patch, plans, targets }) {
   return (
     <>
-      <XlateMap intent={intent} plans={plans} targets={targets} />
+      <div className="arch2-wrap"><AppArch intent={intent} plans={plans} targets={targets} repoMap={repoMap} /></div>
       {repoMap && (
         <details className="tree-box">
           <summary>코드 트리 보기 <span className="dim">· AI가 근거로 든 파일과 패치한 파일</span></summary>

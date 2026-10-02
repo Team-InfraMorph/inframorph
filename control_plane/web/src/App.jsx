@@ -133,7 +133,7 @@ function AnalysisCard({ deployment, intent, repoMap, patch, plans, targets, repo
           <span className="mono">{repo.replace("https://github.com/", "")}</span>
           {repoMap?.commit && <span className="dim mono"> @{repoMap.commit.slice(0, 7)}</span>}
         </h2>
-        <span className="dim">배포할 앱 · 이 앱이 필요로 하는 것이 대상별로 무엇이 되는지</span>
+        <span className="dim">부품마다 AI가 찾은 코드 근거와, Local·AWS에서 각각 무엇이 되는지</span>
       </div>
       <AppCode repoMap={repoMap} intent={intent} patch={patch} plans={plans} targets={targets} />
       <Usage deployment={deployment} metrics={deployment.analysis_metrics} />
@@ -189,7 +189,7 @@ function Section({ n, title, why, children }) {
     <section className="sec">
       <header className="sec-head">
         <span className="sec-n">{n}</span>
-        <div><h2>{title}</h2><p>{why}</p></div>
+        <div><h2>{title}</h2>{why && <p>{why}</p>}</div>
       </header>
       {children}
     </section>
@@ -362,32 +362,32 @@ export default function App() {
           </p>}
 
           {selected && (
-            <Section n="1" title="배포 과정" why="각 단계 끝에 검사가 있고, 통과해야 다음으로 갑니다. 실패하면 그 자리에서 멈추고 이유를 보여 줍니다. 칸을 누르면 기록이 열립니다.">
+            <Section n="1" title="배포 과정" why="칸을 누르면 그 단계의 기록이 열립니다">
               <Pipeline deployment={selected} events={events} targets={targets}
                         ctx={{ intent, patch, plans, repo: project.repo_url, commit: selected.commit_sha ?? repoMap?.commit }} />
             </Section>
           )}
 
           {selected && (
-            <Section n="2" title="결과 · 접속 주소" why="배포기의 '완료' 보고를 믿지 않고, 조종실이 주소에 직접 접속해 응답을 확인합니다.">
+            <Section n="2" title="결과 · 접속 주소">
               <Results deployment={selected} events={events} targets={targets}
                        onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
             </Section>
           )}
 
           {selected && (
-            <Section n="3" title="환경 차이를 어떻게 흡수했나" why="같은 코드가 Local과 AWS에서 각각 무엇으로 바뀌는지. AI는 근거(파일:줄)를 찾고, 정해진 패치가 고칩니다.">
+            <Section n="3" title="배포할 앱 구조">
               <AnalysisCard deployment={selected} intent={intent} repoMap={repoMap} patch={patch} plans={plans} targets={targets} repo={project.repo_url} />
             </Section>
           )}
 
           {Object.keys(patch).length > 0 && (
-            <Section n="4" title="코드 변경 내역" why="원본 레포는 그대로 두고 복사본만 고칩니다. 정책 검사를 통과한 변경만 빌드됩니다.">
+            <Section n="4" title="코드 변경 내역">
               <PatchCard patch={patch} />
             </Section>
           )}
 
-          <Section n="5" title="배포 기록 · 되돌리기" why="모든 배포가 남고, 문제가 생기면 직전 정상 버전으로 한 번에 되돌립니다.">
+          <Section n="5" title="배포 기록 · 되돌리기">
             <History deployments={deployments} selectedId={selected?.id}
                      onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)}
                      onRollback={(id) => act(api.rollback, id)} />
