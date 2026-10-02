@@ -39,6 +39,15 @@ EXPECTED_REJECTIONS = {
     "intent-unsupported-runtime": "schema_invalid", "intent-evidence-escape": "schema_invalid",
 }
 
+EXPECTED_REJECTIONS.update({
+    "intent-db-provider": "db_provider_mismatch", "intent-db-evidence": "db_evidence_unrelated",
+    "intent-db-omitted": "db_requirement_missing", "intent-config-secret": "config_overrides_secret",
+    "intent-config-execution": "config_policy_violation", "intent-config-unsupported": "config_not_supported",
+    "intent-worker-missing": "worker_entry_missing", "intent-worker-evidence": "worker_evidence_unrelated",
+    "patch-prisma-field-delete": "prisma_structure_changed", "patch-prisma-default-change": "prisma_structure_changed",
+    "patch-storage-behavior": "patch_behavior_changed",
+})
+
 
 def implementation_identity():
     checksum = hashlib.sha256()
@@ -152,7 +161,7 @@ def verify(corpus):
                         original,
                         bundle,
                         plan,
-                        allowed_paths=manifest["test_profile"]["allowed_patch_paths"],
+                        allowed_paths=manifest["test_profile"]["allowed_patch_paths"], profile="corpus",
                     )
                 decision = "allow"
             except PolicyError as exc:
@@ -192,7 +201,7 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
-    return bool(result["failed"] or result["not_run"] or len(result["results"]) != 25)
+    return bool(result["failed"] or result["not_run"] or len(result["results"]) != 39)
 
 
 if __name__ == "__main__":
