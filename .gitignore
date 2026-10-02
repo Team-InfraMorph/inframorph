@@ -15,6 +15,17 @@ dist/
 *.tfstate
 *.tfstate.*
 
+.terraform.tfstate.lock.info
+*.tfplan
+tfplan
+*.tfvars
+*.auto.tfvars
+*.backend.hcl
+crash.log
+crash.*.log
+
+
 # Environment-specific deployment inputs
 foundation-outputs.json
 *-foundation-outputs.json
+
