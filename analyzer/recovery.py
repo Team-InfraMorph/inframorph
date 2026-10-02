@@ -100,6 +100,7 @@ class RecoveryResult:
     plan: Plan | None = None
     patch: PatchedCandidate | None = None
     final_failure_code: str | None = None
+    reanalysis_metrics: Metrics | None = None
 
 
 class RecoveryStop(ValueError):
@@ -254,6 +255,7 @@ async def recover_local(*, deployment_id: str, repo_map: RepoMap, snapshot_dir: 
                 budget = replace(limits, max_estimated_usd=limits.max_estimated_usd - spent)
             result.analysis = await step("analyze", "intent", lambda: analyze(
                 mapping, source, backend, budget, feedback=feedback))
+            result.reanalysis_metrics = result.analysis.metrics
             if result.analysis.metrics.snapshot_digest != snapshot.digest:
                 raise RecoveryStop("source_changed_during_recovery")
             event("analyze", "ok", "intent_reanalyzed")
@@ -318,6 +320,7 @@ async def recover_local(*, deployment_id: str, repo_map: RepoMap, snapshot_dir: 
         elif isinstance(error, TimeoutError):
             code = "recovery_timeout"
         elif isinstance(error, AnalysisError):
+            result.reanalysis_metrics = error.metrics
             code = "reanalysis_failed"
         else:
             code = "recovery_dependency_failed"

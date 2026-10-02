@@ -17,10 +17,11 @@ const MODE = { full_analysis: "전체 분석", reanalyze: "재분석", rebuild_o
 const TERMINAL = ["LIVE", "FAILED", "ROLLED_BACK", "SUPERSEDED"];
 
 const STATE_KIND = { relational_db: "관계형 DB", persistent_files: "영구 파일" };
-const BACKEND = { replay: "저장된 응답 재생", openai: "실제 모델 호출", fixture: "예시 분석 결과" };
+const BACKEND = { replay: "저장된 응답 재생", openai: "실제 모델 호출", fixture: "예시 분석 결과", mixed: "혼합" };
 
 const PLAN_ROWS = [
   ["서비스", (p) => p.services.map((s) => `${s.name} (${s.kind})`).join(", ")],
+  ["포트 · 상태 확인", (p) => p.services.filter((s) => s.public).map((s) => `${s.port} · ${s.health ?? "없음"}`).join(", ")],
   ["DB", (p) => p.db?.type ?? "없음"],
   ["파일 저장소", (p) => (p.storage ? `${p.storage.type} · ${p.storage.path}` : "없음")],
   ["로그", (p) => p.logs],
@@ -88,12 +89,14 @@ function ApprovalBanner({ deployment, onAct }) {
 }
 
 function Usage({ deployment, metrics }) {
-  if (deployment.analysis_mode === "rebuild_only") {
+  if (deployment.analysis_mode === "rebuild_only" && !metrics?.recovery?.attempts) {
     return <p className="usage saved">AI 분석 생략: 이전 분석을 재사용 (모델 호출 0회, 비용 $0)</p>;
   }
   if (!metrics) return null;
   if (metrics.error) return <p className="usage error">AI 분석 실패: {metrics.error}</p>;
-  const parts = [`모델 호출 ${metrics.model_calls ?? 0}회`];
+  const parts = [`${metrics.backend === "replay" ? "응답 재생" : "모델 호출"} ${metrics.model_calls ?? 0}회`];
+  if (metrics.api_calls != null) parts.push(`API 호출 ${metrics.api_calls}회`);
+  if (metrics.usage_complete === false) parts.push("사용량 집계 미완료");
   if (metrics.tool_calls != null) parts.push(`파일 탐색 ${metrics.tool_calls}회`);
   if (metrics.input_tokens || metrics.output_tokens) parts.push(`토큰 ${metrics.input_tokens}/${metrics.output_tokens}`);
   if (metrics.estimated_usd != null) parts.push(`예상 $${Number(metrics.estimated_usd).toFixed(3)}`);
@@ -101,8 +104,37 @@ function Usage({ deployment, metrics }) {
   return <p className="usage">{parts.join(" · ")} <span className="dim">({BACKEND[metrics.backend] ?? metrics.backend})</span></p>;
 }
 
+function Recovery({ metrics }) {
+  const recovery = metrics?.recovery;
+  if (!recovery) return null;
+  const recovered = recovery.status === "recovered";
+  const reason = { second_local_failure: "재시도 후에도 자동 테스트가 실패했어요.",
+    reanalysis_failed: "재분석을 완료하지 못했어요.", not_retryable: "자동 재시도 대상이 아닌 실패예요.",
+    recovery_timeout: "자동 복구 시간이 초과됐어요." }[recovery.reason];
+  return <div className={`card ${recovered ? "" : "error"}`}>
+    <h2>{recovered ? "자동 복구 완료" : "자동 복구 중단"}</h2>
+    <p>재시도 {recovery.attempts}회 / 최대 1회 · {recovered ? "검증을 통과한 분석 결과와 설계도를 반영했어요." : "기존 분석 결과와 설계도를 유지했어요."}</p>
+    {reason && <p>{reason}</p>}
+    <p className="dim">초기 응답 {recovery.initial_metrics.model_calls ?? 0}회 · 재분석 응답 {recovery.retry_metrics.model_calls ?? 0}회 · 총 사용량은 아래에 합산돼요.</p>
+  </div>;
+}
+
+function eventDetail(detail) {
+  try {
+    const value = JSON.parse(detail);
+    if (value.phase === "recoverable_failure") return "자동 테스트 실패를 확인해 한 번 재분석합니다.";
+    if (value.code === "retry_recovered") return "재시도 검증을 통과했습니다.";
+    if (value.code === "second_local_failure") return "재시도 후에도 실패해 자동 복구를 중단했습니다.";
+    if (value.retry_attempt != null) return `자동 복구 ${value.retry_attempt}/1회`;
+    if (typeof value.code === "string" && value.code.startsWith("initial_")) return "첫 배포 검증";
+  } catch { /* E가 보내는 일반 문구도 표시 */ }
+  return detail;
+}
+
 function AnalysisCard({ deployment, intent }) {
   return (
+    <>
+    <Recovery metrics={deployment.analysis_metrics} />
     <div className="card">
       <h2>AI가 이해한 앱</h2>
       <Usage deployment={deployment} metrics={deployment.analysis_metrics} />
@@ -135,28 +167,37 @@ function AnalysisCard({ deployment, intent }) {
         </table>
       )}
     </div>
+    </>
   );
 }
 
 const ACTION = { add: "추가", modify: "수정" };
 
 function PatchCard({ patch }) {
-  const [first] = Object.values(patch);
-  if (!first) return null;
-  const same = Object.values(patch).every((p) => JSON.stringify(p) === JSON.stringify(first));
+  const entries = Object.entries(patch);
+  if (!entries.length) return null;
+  const same = entries.length > 1 && entries.every(([, p]) => JSON.stringify(p) === JSON.stringify(entries[0][1]));
+  const shown = same ? [["공통 변경", entries[0][1]]] : entries;
   return (
     <div className="card">
-      <h2>코드를 이렇게 고쳤다 {same && <span className="dim">· Local·AWS 동일, 실행 때 환경변수로 저장소 선택</span>}</h2>
-      {first.files.map((f) => (
+      <h2>코드를 이렇게 고쳤다</h2>
+      {shown.map(([target, value]) => <section key={target}>
+      <h3>{TARGETS[target] ?? target} {value.phase === "recovery" ? "· 자동 복구 후 패치" : ""}</h3>
+      {value.verified && <p className="dim">E 정책 검사 통과 · {value.applied ? "이 배포에서 실행 검증 완료" : "실행 검증이 완료되지 않은 변경"} · 커밋 {value.source_revision.slice(0, 7)}</p>}
+      {value.initial && <p className="dim">최초 패치 이력을 보존하고 복구에 성공한 패치를 표시합니다.</p>}
+      {value.status === "unchanged" && <p className="dim">수정할 코드가 없습니다.</p>}
+      {value.files.map((f) => (
         <details key={f.path} className="patch-file">
           <summary><span className="mono">{f.path}</span> <span className="dim">{ACTION[f.action] ?? f.action}</span></summary>
-          {f.diff == null ? <p className="dim">잠금 파일이라 내용은 생략</p> : (
+          {f.diff == null ? <p className="dim">잠금 파일이라 내용은 생략</p> : <>
             <pre className="diff">{f.diff.split("\n").map((line, i) => (
               <span key={i} className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""}>{line}{"\n"}</span>
             ))}</pre>
-          )}
+            {f.truncated && <p className="dim">표시 크기 제한으로 diff 일부를 생략했습니다.</p>}
+          </>}
         </details>
       ))}
+      </section>)}
     </div>
   );
 }
@@ -215,7 +256,7 @@ function TargetColumn({ target, state, events, onRecheck }) {
             <span className="step">{STEPS[e.step] ?? e.step}</span>
             <span className="mark">{e.status === "ok" ? "완료" : e.status === "fail" ? "실패" : "시작"}</span>
             {e.duration_ms != null && <span className="dim">{(e.duration_ms / 1000).toFixed(1)}초</span>}
-            {e.detail && <div className="detail">{e.detail}</div>}
+            {e.detail && <div className="detail">{eventDetail(e.detail)}</div>}
           </li>
         ))}
         {!events.length && <li className="dim">아직 이벤트가 없습니다</li>}
@@ -301,15 +342,24 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedKey) return;
-    api.plans(selectedKey).then(setPlans).catch(() => setPlans({}));
-    api.analysis(selectedKey).then((a) => setIntent(a.intent)).catch(() => setIntent(null));
-    api.patch(selectedKey).then(setPatch).catch(() => setPatch({}));
+    let alive = true;
+    setPlans({});
+    setIntent(null);
+    setPatch({});
+    api.plans(selectedKey).then((value) => alive && setPlans(value)).catch(() => alive && setPlans({}));
+    api.analysis(selectedKey).then((a) => alive && setIntent(a.intent)).catch(() => alive && setIntent(null));
+    api.patch(selectedKey).then((value) => alive && setPatch(value)).catch(() => alive && setPatch({}));
+    return () => { alive = false; };
   }, [selectedKey, selectedStatus]);
 
   const choose = (id) => {
     setProjectId(id);
     setSelectedId(null);
     setDeployments([]);
+    setPlans({});
+    setPatch({});
+    setIntent(null);
+    setEvents([]);
     save("projectId", id ?? "");
   };
   const act = async (fn, id = selected?.id) => {
@@ -329,7 +379,7 @@ export default function App() {
     <div className="app">
       <header>
         <h1>InfraMorph 조종실</h1>
-        <select value={projectId ?? ""} onChange={(e) => choose(e.target.value || null)}>
+        <select value={projectId ?? ""} onChange={(e) => choose(e.target.value)}>
           <option value="">+ 새 프로젝트</option>
           {projects.map((p) => (
             <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch}</option>

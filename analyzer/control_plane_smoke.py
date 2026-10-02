@@ -26,7 +26,7 @@ SCENARIOS = {"v1-recovered": ("v1", False), "v2-recovered": ("v2", False),
 @contextmanager
 def isolated_environment():
     original = dict(os.environ)
-    clean = environment() | {"INFRAMORPH_ANALYZER_ROOT": str(ROOT), "INFRAMORPH_ANALYZER_LIVE": "0",
+    clean = environment() | {"INFRAMORPH_MODULES_ROOT": str(ROOT), "INFRAMORPH_ANALYZER_LIVE": "0",
                              "GITHUB_WEBHOOK_SECRET": uuid.uuid4().hex}
     os.environ.clear()
     os.environ.update(clean)
@@ -67,9 +67,9 @@ def run_scenario(name, output, model_results=None):
     app = None
     client = None
     try:
-        def analyzer(deployment):
+        def analyzer(deployment, folder):
             if name != "analysis-failed":
-                return fixture_analyzer(deployment)
+                return fixture_analyzer(deployment, folder)
             # Actual C process fails commit binding; no model API is called.
             invalid = mapping.model_copy(update={"commit": "0" * 40})
             path = output / "invalid-repo-map.json"
@@ -77,7 +77,8 @@ def run_scenario(name, output, model_results=None):
             run_analyzer(ROOT, path, fixture / "snapshot", fixture / "replay.json")
             raise AssertionError("invalid_source_was_accepted")
 
-        def deployer_cmd(deployment_id, target):
+        def deployer_cmd(deployment, target, folder):
+            deployment_id = deployment["id"]
             if target != "local" or name == "analysis-failed":
                 raise AssertionError("unexpected_deployer_call")
             report["deployer_calls"] += 1
@@ -99,7 +100,8 @@ def run_scenario(name, output, model_results=None):
             return cmd
 
         db_path = output / "control-plane.db"
-        app = create_app(db_path=db_path, analyzer=analyzer, deployer_cmd=deployer_cmd)
+        app = create_app(db_path=db_path, analyzer=analyzer, deployer_cmd=deployer_cmd,
+                         patcher=lambda *args: None, builder=lambda *args: {})
         client = TestClient(app)
         response = client.post("/api/projects", json={"repo_url": REPO_URL, "branch": "main", "targets": ["local"]})
         assert response.status_code == 201
@@ -134,7 +136,7 @@ def run_scenario(name, output, model_results=None):
         assert deployment["targets"]["local"]["status"] == expected_status
         assert analysis["metrics"]["backend"] == "replay" and analysis["metrics"]["api_calls"] == 0
         if name == "analysis-failed":
-            assert report["deployer_calls"] == 0 and not events and not plans and analysis["intent"] is None
+            assert report["deployer_calls"] == 0 and all(e["event"]["step"] == "analyze" and e["event"]["status"] == "fail" for e in events) and not plans and analysis["intent"] is None
             assert analysis["metrics"]["error"]
             report["analysis_failure_prevents_deployer"] = True
         else:
@@ -144,11 +146,13 @@ def run_scenario(name, output, model_results=None):
             for item in events:
                 checked = DeployEvent.model_validate(item["event"])
                 assert checked.deployment_id == deployment_id and checked.target.value == "local"
-            assert events[0]["event"]["status"] == "started"
-            final_detail = json.loads(events[-1]["event"]["detail"])
+            # D now records analyze/policy and direct URL checks around the worker.
+            recovery_events = [e for e in events if '"retry_attempt":' in (e["event"].get("detail") or "")]
+            final_event = recovery_events[-1]["event"]
+            final_detail = json.loads(final_event["detail"])
             assert final_detail["code"] == ("second_local_failure" if fail_again else "retry_recovered")
-            assert events[-1]["event"]["status"] == ("fail" if fail_again else "ok")
-            assert fail_again or not any(e["event"]["status"] == "fail" for e in events)
+            assert final_event["status"] == ("fail" if fail_again else "ok")
+            assert fail_again or not any(e["event"]["status"] == "fail" for e in recovery_events)
             docker_report = json.loads((output / "docker" / case / "report.json").read_text())
             assert docker_report["status"] == "passed" and not docker_report["cleanup_errors"]
             assert docker_report["pipeline_context_provided"] and docker_report["restart_does_not_retry_again"]
@@ -158,7 +162,7 @@ def run_scenario(name, output, model_results=None):
             report["retry_attempts"] = state["attempts"]
             report["docker_checks_passed"] = True
             if not fail_again:
-                assert deployment["targets"]["local"]["url"] == events[-1]["event"]["url"]
+                assert deployment["targets"]["local"]["url"] == final_event["url"]
                 report["target_url_saved"] = True
         stream = client.get(f"/api/deployments/{deployment_id}/events")
         streamed, terminal = read_sse(stream.text)
@@ -174,7 +178,8 @@ def run_scenario(name, output, model_results=None):
         client.close()
         client = None
         app.state.store.close()
-        app = create_app(db_path=db_path, analyzer=analyzer, deployer_cmd=deployer_cmd)
+        app = create_app(db_path=db_path, analyzer=analyzer, deployer_cmd=deployer_cmd,
+                         patcher=lambda *args: None, builder=lambda *args: {})
         client = TestClient(app)
         assert client.get(f"/api/deployments/{deployment_id}").json() == deployment
         assert client.get(f"/api/deployments/{deployment_id}/analysis").json() == analysis
