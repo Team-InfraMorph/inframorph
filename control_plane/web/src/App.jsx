@@ -134,9 +134,10 @@ function AnalysisCard({ deployment, intent, repoMap, patch, plans, targets, repo
           <span className="mono">{repo.replace("https://github.com/", "")}</span>
           {repoMap?.commit && <span className="dim mono"> @{repoMap.commit.slice(0, 7)}</span>}
         </h2>
-        <span className="dim">부품마다 AI가 찾은 코드 근거와, Local·AWS에서 각각 무엇이 되는지</span>
+        <span className="dim">AI가 코드에서 앱의 부품을 찾고, 대상마다 맞는 인프라로 바꿔 배포합니다</span>
       </div>
-      <AppCode repoMap={repoMap} intent={intent} patch={patch} plans={plans} targets={targets} />
+      <AppCode repoMap={repoMap} intent={intent} patch={patch} plans={plans} targets={targets}
+               urls={Object.fromEntries(targets.map((t) => [t, deployment.targets[t]?.url]))} />
       <Usage deployment={deployment} metrics={deployment.analysis_metrics} />
     </div>
     </>
@@ -159,30 +160,52 @@ function Section({ n, title, why, children }) {
   );
 }
 
+function ago(iso) {
+  const sec = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  return sec < 60 ? "방금" : sec < 3600 ? `${Math.floor(sec / 60)}분 전` : sec < 86400 ? `${Math.floor(sec / 3600)}시간 전` : `${Math.floor(sec / 86400)}일 전`;
+}
+
+function took(d) {
+  if (!TERMINAL.includes(d.status) || !d.updated_at) return null;
+  const s = Math.round((Date.parse(d.updated_at) - Date.parse(d.created_at)) / 1000);
+  return s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`;
+}
+
+const TRIGGER_LONG = { manual: "수동 배포", push: "git push", rollback: "되돌리기" };
+
+/** 배포 기록: 최신이 위인 타임라인. 점 색 = 결과, 대상별 결과, 걸린 시간, 다시 한 범위. */
 function History({ deployments, selectedId, onSelect, onRollback }) {
+  const canRollback = deployments.slice(1).some((x) => x.status === "LIVE");
   return (
-    <div className="card">
-      <table className="history">
-        <thead><tr><th>시각</th><th>계기</th><th>커밋</th><th>다시 한 범위</th><th>결과</th><th /></tr></thead>
-        <tbody>
-          {deployments.map((d, i) => (
-            <tr key={d.id} className={d.id === selectedId ? "selected" : ""} onClick={() => onSelect(d.id)}>
-              <td>{new Date(d.created_at).toLocaleTimeString()}</td>
-              <td>{TRIGGER[d.triggered_by] ?? d.triggered_by}</td>
-              <td className="mono">{d.commit_sha ? d.commit_sha.slice(0, 7) : "—"}</td>
-              <td title={d.change_reasons.join("\n")}>{MODE[d.analysis_mode] ?? (d.triggered_by === "rollback" ? "이전 버전 재배포" : "전체 (처음부터)")}</td>
-              <td><Badge status={d.status} /></td>
-              <td>
-                {i === 0 && deployments.slice(1).some((x) => x.status === "LIVE") && TERMINAL.includes(d.status) && (
-                  <button className="small secondary" onClick={(e) => { e.stopPropagation(); onRollback(d.id); }}>
-                    이전 버전으로
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="card hist">
+      {!deployments.length && <p className="dim">아직 배포 기록이 없습니다</p>}
+      <ol className="hlist">
+        {deployments.map((d, i) => (
+          <li key={d.id} className={`hitem hs-${d.status}${d.id === selectedId ? " sel" : ""}`} onClick={() => onSelect(d.id)}>
+            <span className="hdot" />
+            <div className="hmain">
+              <div className="hline1">
+                <strong>{TRIGGER_LONG[d.triggered_by] ?? d.triggered_by}</strong>
+                <code className="hcommit">{d.commit_sha ? d.commit_sha.slice(0, 7) : "커밋 미정"}</code>
+                <Badge status={d.status} />
+                {i === 0 && <span className="hlatest">최신</span>}
+              </div>
+              <div className="hline2">
+                <span title={new Date(d.created_at).toLocaleString()}>{ago(d.created_at)}</span>
+                {took(d) && <span>걸린 시간 {took(d)}</span>}
+                <span>{MODE[d.analysis_mode] ?? (d.triggered_by === "rollback" ? "이전 버전 재배포" : "전체 (처음부터)")}</span>
+                {Object.entries(d.targets ?? {}).map(([t, v]) => (
+                  <span key={t} className={`htgt ht-${v.status}`}>{TARGETS[t]?.split(" ")[0] ?? t} {v.status === "LIVE" ? "✓" : v.status === "FAILED" ? "✗" : "…"}</span>
+                ))}
+              </div>
+              {d.change_reasons?.length > 0 && <div className="hwhy">{d.change_reasons.join(" · ")}</div>}
+            </div>
+            {i === 0 && canRollback && TERMINAL.includes(d.status) && (
+              <button className="small secondary" onClick={(e) => { e.stopPropagation(); onRollback(d.id); }}>직전 정상 버전으로 되돌리기</button>
+            )}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
@@ -339,7 +362,7 @@ export default function App() {
           )}
 
           {selected && (
-            <Section n="3" title="배포할 앱 구조">
+            <Section n="3" title="앱이 이렇게 바뀌어 배포됩니다">
               <AnalysisCard deployment={selected} intent={intent} repoMap={repoMap} patch={patch} plans={plans} targets={targets} repo={project.repo_url} />
             </Section>
           )}
