@@ -1,7 +1,8 @@
 # D API · C 분석/복구 · E 실제 Local 연결
 
 `LocalRuntime`을 `create_app(runtime=...)`에 전달하면 D의 수동 배포·서명된 push·승인·롤백이 실제
-E Policy Gate → Builder → Local Adapter를 실행한다. 서버는 localhost만 사용하며 AWS·공개 터널·팀 모델 API를 호출하지 않는다.
+E Policy Gate → Builder → Local Adapter를 실행한다. Control Plane은 localhost에만 바인딩한다. 기본값은 비공개 Local 실행이며 AWS·팀 모델 API를 호출하지 않는다.
+운영자가 `--publish`를 지정하면 E가 검증한 앱의 web 서비스만 cloudflared로 공개한다. 이 옵션은 Plan·레포·모델 입력에서 받지 않는다.
 
 ## 실행
 
@@ -135,3 +136,13 @@ B와 모델 응답은 fixture이며 실제 C/E 실행과 구분해 summary.json�
 
 `control_plane.app:app`은 최신 D의 일반 모듈 연결을 사용하며 사용 가능한 C/E 모듈을 자동 인식한다.
 C의 한 번 복구·검증된 패치 이력·엄격한 source policy를 함께 검증할 때는 위의 `control_plane.runtime` 진입점을 사용한다.
+
+## E 연결 및 공개 URL 검증
+
+```sh
+.venv/bin/python -m control_plane.runtime --demo --publish --root .local/e-public --port 8000
+```
+
+`publish`는 비공개 실행 컨텍스트를 통해 C/E worker로 전달하며, 기본값은 false다. D는 E가 실제 검증한 공개 URL을 다시 확인한다.
+공개 URL 시험은 `scripts/verify_e_public_runtime.py`로 재현한다. 상세 범위와 제약은 [E_INTEGRATION.md](../E_INTEGRATION.md)에 기록한다.
+일반 `control_plane.app:app`의 fixture/가짜 배포는 `INFRAMORPH_DEMO_MODE=1`에서만 허용한다.

@@ -1,7 +1,7 @@
 """D API with C analysis/recovery and actual E Local deployment.
 
-Use --demo explicitly for fixture B and response replay. Live team model API,
-AWS and public tunnels are not enabled by this entry point.
+Use --demo explicitly for fixture B and response replay. This entry point does
+not call the team model API or AWS. --publish exposes only the verified Local app.
 """
 import argparse
 import asyncio
@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import sys
 
+from pydantic import StrictBool
 from schemas import Intent, Plan, RepoMap
 from schemas.common import ContractModel
 from analyzer.backend import ReplayBackend
@@ -43,6 +44,7 @@ class LocalContext(ContractModel):
     output_dir: str
     fault: str = "none"
     demo: bool = False
+    publish: StrictBool = False
     planner_command: list[str] | None = None
 
 
@@ -57,11 +59,14 @@ def private_json(path, data):
 
 
 class LocalRuntime:
-    def __init__(self, *, root, b_modules, replay=None, fault="none"):
+    def __init__(self, *, root, b_modules, replay=None, fault="none", publish=False):
         self.root = Path(root).absolute()
         if any(p.is_symlink() for p in (self.root, *self.root.parents)):
             raise ValueError("runtime_state_symlink")
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if type(publish) is not bool:
+            raise ValueError("invalid_publish_option")
+        self.publish = publish
         self.b = b_modules
         self.replay = replay
         self.fault = fault
@@ -118,7 +123,7 @@ class LocalRuntime:
             context = LocalContext(deployment_id=deployment["id"], project_id=project["project_id"],
                 snapshot=str(mapped.snapshot), repo_map=mapped.repo_map, intent=intent, plan=plan,
                 metrics=stats, replay=str(replay), state_root=str(self.root / "projects"),
-                output_dir=str(folder), fault=self.fault, demo=isinstance(self.b, DemoModules),
+                output_dir=str(folder), fault=self.fault, demo=isinstance(self.b, DemoModules), publish=self.publish,
                 planner_command=None if isinstance(self.b, DemoModules) else self.b.planner_command)
             private_json(folder / "context.json", context.model_dump(mode="json"))
             return {"commit_sha": mapped.repo_map.commit, "repo_map": mapped.repo_map.model_dump(mode="json"),
@@ -152,6 +157,7 @@ def main(argv=None):
     parser.add_argument("--mapper-command", help="Operator-owned argv as a JSON list; request arrives on stdin")
     parser.add_argument("--planner-command", help="Operator-owned argv as a JSON list; request arrives on stdin")
     parser.add_argument("--replay", type=Path)
+    parser.add_argument("--publish", action="store_true", help="Publish only the Local app via cloudflared; never the control plane")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -160,7 +166,7 @@ def main(argv=None):
         parser.error("B commands and an explicit replay are required; --demo is a separate opt-in mode")
     modules = DemoModules() if args.demo else BCommands(mapper_command=json.loads(args.mapper_command),
                                                        planner_command=json.loads(args.planner_command))
-    runtime = LocalRuntime(root=args.root / "runtime", b_modules=modules, replay=args.replay)
+    runtime = LocalRuntime(root=args.root / "runtime", b_modules=modules, replay=args.replay, publish=args.publish)
     from .app import create_app
     import uvicorn
     app = create_app(db_path=args.root / "control-plane.db", runtime=runtime)

@@ -11,7 +11,7 @@ import sys
 
 from schemas import DeployEvent, Plan
 from analyzer.backend import ReplayBackend
-from analyzer.e_runtime import EConnector, run_worker
+from analyzer.e_runtime import EConnector, EWorkerError, run_worker
 from analyzer.feedback import PatchReference
 from analyzer.recovery import Approval, PatchedCandidate, _assert_patch, _check_plan, fingerprint, recover_local
 from analyzer.retry_store import RetryStore
@@ -89,7 +89,7 @@ async def deploy(context, store):
     connector = EConnector(snapshot=context.snapshot, repo_map=context.repo_map,
         state_root=context.state_root, runtime_name="cp-" + context.project_id,
         deployment_id=context.deployment_id, make_plan=make_plan,
-        worker=fault_worker if context.fault != "none" else None)
+        worker=fault_worker if context.fault != "none" else None, publish=context.publish)
     stage = "policy"
     try:
         snapshot = Snapshot(Path(context.snapshot), context.repo_map.tree, Limits(), Redactor())
@@ -148,9 +148,9 @@ async def deploy(context, store):
         finish_run(store, context.deployment_id, "interrupted")
         emit(context, stage, "fail", "local_pipeline_interrupted")
         raise
-    except Exception:
+    except Exception as error:
         finish_run(store, context.deployment_id, "failed")
-        emit(context, stage, "fail", "local_pipeline_failed")
+        emit(context, stage, "fail", str(error) if isinstance(error, EWorkerError) else "local_pipeline_failed")
         return 1
 
 

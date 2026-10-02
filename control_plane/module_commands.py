@@ -16,7 +16,7 @@ import json
 import os
 import sys
 
-from .analysis import module_root
+from .analysis import module_root, StageFailed
 
 ADAPTERS = {"local": "adapters/local", "aws": "adapters/aws"}
 # AWS Adapter는 실제 계정을 바꾸므로 --execute 없이는 거부한다. 이 명령은 조종실 승인을 거친 뒤에만 실행된다.
@@ -31,6 +31,8 @@ def _fake_env(name, target, default=None):
 
 def fake_deployer_cmd(deployment, target, folder=None):
     """실제 배포기가 없는 대상에 쓰는 명령. 환경 변수로 지연·fixture·종료 코드를 대상별로 바꿀 수 있다."""
+    if os.environ.get("INFRAMORPH_DEMO_MODE") != "1":
+        raise StageFailed("deployment_inputs_or_adapter_missing", step="start")
     cmd = [sys.executable, "-m", "control_plane.fake_deployer", "--deployment-id", deployment["id"],
            "--target", target,
            "--delay", _fake_env("DELAY", target, "1"),
@@ -49,11 +51,15 @@ def build_cmds(deployment, plans, folder):
     """실제 배포기가 있는 대상만 E Builder 명령을 만든다. {target: (작업 위치, 명령)}. 빌드할 게 없으면 빈 dict."""
     root = module_root("builder")
     if root is None or not (folder / "snapshot").exists():
+        if os.environ.get("INFRAMORPH_DEMO_MODE") != "1":
+            raise StageFailed("builder_or_snapshot_missing", step="build")
         return {}
     cmds = {}
     for target in plans:
         bundle, plan_path = folder / "patched" / target, folder / f"plan.{target}.json"
         if _adapter_root(target) is None or not bundle.exists() or not plan_path.exists():
+            if os.environ.get("INFRAMORPH_DEMO_MODE") != "1":
+                raise StageFailed("build_inputs_or_adapter_missing", step="build")
             continue
         cmds[target] = (root, [sys.executable, "-m", "builder", "--snapshot", str(folder / "snapshot"),
                                "--bundle", str(bundle), "--plan", str(plan_path),

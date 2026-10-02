@@ -8,9 +8,15 @@ on:
       - 'builder/**'
       - 'adapters/local/**'
       - 'schemas/**'
+      - 'analyzer/**'
+      - 'code_patch/**'
+      - 'control_plane/**'
+      - 'adapters/aws/**'
       - 'tests/**'
       - 'requirements.txt'
       - 'scripts/verify_e_*.py'
+      - 'scripts/redteam_boundaries.py'
+      - 'validation/redteam-source.json'
       - '.github/workflows/e-runtime.yml'
   workflow_dispatch:
 
@@ -20,7 +26,9 @@ permissions:
 jobs:
   e-runtime:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    env:
+      INFRAMORPH_REDTEAM_CORPUS: ${{ github.workspace }}/.local/redteam-corpus
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -32,7 +40,30 @@ jobs:
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
+      - name: Read reviewed redteam revision
+        id: corpus
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          pin = json.load(open('validation/redteam-source.json'))
+          assert pin['repository'] == 'Team-InfraMorph/redteam-repo'
+          assert re.fullmatch('[0-9a-f]{40}', pin['revision'])
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('revision=' + pin['revision'] + '\n')
+          PY
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: Team-InfraMorph/redteam-repo
+          ref: ${{ steps.corpus.outputs.revision }}
+          path: .local/redteam-corpus
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
       - name: Test gates, contracts and recovery without cloud credentials
         run: |
           node --version
           .venv/bin/python -m unittest discover -s tests -v
+          .venv/bin/python -m unittest discover -s adapters/aws/tests -v
+      - name: Verify all redteam host boundaries with actual C and E modules
+        run: .venv/bin/python scripts/verify_e_redteam.py --corpus "$INFRAMORPH_REDTEAM_CORPUS" --output .local/redteam-result.json

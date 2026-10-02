@@ -27,3 +27,5 @@
 ## E 로컬 구현
 
 Policy Gate, Builder, Local Adapter의 실행법·검증 근거·남은 통합 범위는 [E_VALIDATION.md](E_VALIDATION.md)를 확인하세요.
+
+최신 main 기준 C/E 연결, redteam 25개 호스트 경계 검사, 공개 URL 검증은 [E_INTEGRATION.md](E_INTEGRATION.md)를 확인하세요.

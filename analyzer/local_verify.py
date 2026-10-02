@@ -113,7 +113,7 @@ def child_environment() -> dict[str, str]:
     # Preserve sign-in location, never copy auth tokens or load .env. Do not
     # inherit API keys, alternate API endpoints, app RPC settings or proxies.
     allowed = {"HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "CODEX_HOME",
-               "SSL_CERT_FILE", "SSL_CERT_DIR", "CODEX_CA_CERTIFICATE"}
+               "SSL_CERT_FILE", "SSL_CERT_DIR", "CODEX_CA_CERTIFICATE", "USER", "LOGNAME"}
     return {key: value for key, value in os.environ.items() if key in allowed}
 
 

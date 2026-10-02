@@ -45,7 +45,7 @@ class EConnectorTests(unittest.IsolatedAsyncioTestCase):
         payload = worker.call_args.args[0]
         self.assertEqual(payload["plan"]["app"], "c-e-isolated")
         self.assertEqual(self.plan.app, "demo-app")
-        self.assertNotIn("publish", payload)
+        self.assertFalse(payload["publish"])
         self.assertEqual(payload["artifact"]["source_revision"], self.mapping.commit)
 
     async def test_real_gate_failure_cannot_become_an_approval_receipt(self):

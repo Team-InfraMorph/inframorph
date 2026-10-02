@@ -1,5 +1,7 @@
 # E 구현 및 검증 기록
 
+> 초기 E 단독 구현의 기록입니다. 최신 통합 상태·redteam 연결 범위는 [E_INTEGRATION.md](E_INTEGRATION.md)를 참조하세요.
+
 범위: Intent Gate (#6), Patch Gate (#9), Builder (#10), Local Adapter (#11), 외부 검증 중 Local 부분 (#15), redteam 연동.
 이 문서는 구현 사용법과 검증 근거이며, 팀 설계의 원본은 기존 합의 문서입니다.
 

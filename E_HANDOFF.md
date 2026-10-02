@@ -1,5 +1,7 @@
 # E 인계: 공개 범위·차단 사례·연결 계약
 
+> 초기 E 단독 구현의 기록입니다. 최신 통합 상태·redteam 연결 범위는 [E_INTEGRATION.md](E_INTEGRATION.md)를 참조하세요.
+
 ## 공개 범위
 
 - 지원 앱: 승인된 Node 22 / Express / Prisma demo-app v1·v2.

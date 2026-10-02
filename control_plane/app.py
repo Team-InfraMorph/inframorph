@@ -97,6 +97,9 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
                     rollback or (patched(deployment, folder) and built(deployment, folder))):
                 try:
                     cmds = {t: deployer_cmd(deployment, t, folder) for t in deployment["targets"]}
+                except StageFailed as exc:
+                    stage_event(deployment_id, deployment["targets"], exc.step, "fail", exc.code)
+                    store.fail(deployment_id)
                 except Exception:
                     store.fail(deployment_id)
                 else:
@@ -182,7 +185,13 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         """검사·빌드(구간 8~9, E Builder). 대상마다 차례로 빌드한다(같은 app:<sha> 태그를 동시에 만들지 않게)."""
         if runtime is not None:
             return True
-        for target, (cwd, cmd) in builder(deployment, store.get_plans(deployment["id"]), folder).items():
+        try:
+            commands = builder(deployment, store.get_plans(deployment["id"]), folder)
+        except StageFailed as exc:
+            stage_event(deployment["id"], deployment["targets"], "build", "fail", exc.code)
+            store.fail(deployment["id"])
+            return False
+        for target, (cwd, cmd) in commands.items():
             exit_code, events, _ = run_module(store, deployment["id"], target, cmd, BUILD_TIMEOUT_S, cwd)
             if exit_code != 0 or any(e.status == "fail" for e in events):
                 if not any(e.status == "fail" for e in events):

@@ -4,4 +4,5 @@ import tempfile
 
 NO_MODULES = tempfile.mkdtemp(prefix="inframorph-no-modules-")
 os.environ["INFRAMORPH_MODULES_ROOT"] = NO_MODULES
+os.environ["INFRAMORPH_DEMO_MODE"] = "1"  # Explicit test-only fake modules
 os.environ["INFRAMORPH_VERIFY_ATTEMPTS"] = "1"  # 테스트에서는 직접 확인을 한 번만 시도한다

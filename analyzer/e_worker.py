@@ -39,10 +39,13 @@ def perform(data):
         validate_demo_plan(plan.model_copy(update={"app": "demo-app"}), mapping)
         if plan.app != name or plan.source_revision != mapping.commit:
             raise ValueError("runtime_binding_mismatch")
-        result = deploy(plan, data["artifact"], state, publish=False,
+        publish = data.get("publish", False)
+        if type(publish) is not bool:
+            raise ValueError("invalid_publish_option")
+        result = deploy(plan, data["artifact"], state, publish=publish,
                         deployment_id=data["deployment_id"])
         # Keep paths/passwords/payloads private. Only return runtime identifiers.
-        return {"ok": True, "deployment": {"url": result["url"], "image_id": result["image_id"]}}
+        return {"ok": True, "deployment": {"url": result["public_url"] or result["url"], "image_id": result["image_id"]}}
     if action == "cleanup":
         configs = sorted(state.glob("*/compose.json"))
         if configs:
