@@ -344,14 +344,20 @@ function TargetResult({ target, deployment, stage, onRecheck }) {
   const blocked = !deploy && Object.values(stage).some((s) => s.status === "fail");
   const failure = deploy?.events.find((e) => e.status === "fail") ?? (status === "FAILED" ? stage.verify?.events.find((e) => e.status === "fail") : null);
   const rows = changes(target, deploy, failure);
+  // 배포기 보고(LIVE)와 조종실 직접 확인을 따로 본다. 둘이 다르면 '정상'이라고 말하지 않는다.
+  const check = state?.verification?.status;
+  const unverified = status === "LIVE" && check === "fail";
+  const fake = check === "skipped";
   return (
-    <div className={`card result r-${blocked ? "BLOCKED" : status}`}>
+    <div className={`card result r-${blocked ? "BLOCKED" : unverified ? "UNVERIFIED" : status}`}>
       <div className="row between">
         <h2>{TARGETS[target]}</h2>
         <Badge status={status} />
       </div>
       <p className="headline">
-        {blocked ? "앞 단계에서 멈춰 배포하지 않음" : failure && status === "DEPLOYING" ? "배포 실패 · 정리 중" : HEADLINE[status] ?? status}
+        {blocked ? "앞 단계에서 멈춰 배포하지 않음" : failure && status === "DEPLOYING" ? "배포 실패 · 정리 중"
+          : unverified ? "배포기는 완료라고 했지만 접속이 안 됩니다" : HEADLINE[status] ?? status}
+        {fake && <span className="fake">시험용 가짜 배포 · 실제 아님</span>}
       </p>
       {state?.url && <a className="url" href={state.url} target="_blank" rel="noreferrer">{state.url}</a>}
       <Verification check={state?.verification} onRecheck={onRecheck} />
