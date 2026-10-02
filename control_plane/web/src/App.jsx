@@ -171,6 +171,29 @@ function AnalysisCard({ deployment, intent }) {
   );
 }
 
+const ACTION = { add: "추가", modify: "수정" };
+
+function PatchCard({ patch }) {
+  const [first] = Object.values(patch);
+  if (!first) return null;
+  const same = Object.values(patch).every((p) => JSON.stringify(p) === JSON.stringify(first));
+  return (
+    <div className="card">
+      <h2>코드를 이렇게 고쳤다 {same && <span className="dim">· Local·AWS 동일, 실행 때 환경변수로 저장소 선택</span>}</h2>
+      {first.files.map((f) => (
+        <details key={f.path} className="patch-file">
+          <summary><span className="mono">{f.path}</span> <span className="dim">{ACTION[f.action] ?? f.action}</span></summary>
+          {f.diff == null ? <p className="dim">잠금 파일이라 내용은 생략</p> : (
+            <pre className="diff">{f.diff.split("\n").map((line, i) => (
+              <span key={i} className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""}>{line}{"\n"}</span>
+            ))}</pre>
+          )}
+        </details>
+      ))}
+    </div>
+  );
+}
+
 function PlanCompare({ plans, targets }) {
   if (!targets.every((t) => plans[t])) return null;
   return (
@@ -256,6 +279,7 @@ export default function App() {
   const [events, setEvents] = useState([]);
   const [plans, setPlans] = useState({});
   const [intent, setIntent] = useState(null);
+  const [patch, setPatch] = useState({});
   const [error, setError] = useState("");
 
   const project = projects.find((p) => p.project_id === projectId);
@@ -297,8 +321,10 @@ export default function App() {
     let alive = true;
     setPlans({});
     setIntent(null);
+    setPatch({});
     api.plans(selectedKey).then((value) => alive && setPlans(value)).catch(() => alive && setPlans({}));
     api.analysis(selectedKey).then((a) => alive && setIntent(a.intent)).catch(() => alive && setIntent(null));
+    api.patch(selectedKey).then((value) => alive && setPatch(value)).catch(() => alive && setPatch({}));
     return () => { alive = false; };
   }, [selectedKey, selectedStatus]);
 
@@ -366,6 +392,8 @@ export default function App() {
           {selected && <AnalysisCard deployment={selected} intent={intent} />}
 
           <PlanCompare plans={plans} targets={targets} />
+
+          <PatchCard patch={patch} />
 
           <div className="targets">
             {targets.map((t) => (

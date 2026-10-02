@@ -111,7 +111,8 @@ class Store:
     def __init__(self, path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        # 연결 하나를 API 스레드·배포기 스레드가 같이 쓰므로 읽기도 쓰기와 같은 잠금 안에서만 한다.
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         with self._lock, self._conn:
@@ -124,6 +125,14 @@ class Store:
             for name, ddl in DEPLOYMENT_COLUMNS.items():
                 if name not in existing:
                     self._conn.execute(f"ALTER TABLE deployments ADD COLUMN {name} {ddl}")
+
+    def _one(self, sql, params=()):
+        with self._lock:
+            return self._conn.execute(sql, params).fetchone()
+
+    def _all(self, sql, params=()):
+        with self._lock:
+            return self._conn.execute(sql, params).fetchall()
 
     def close(self):
         self._conn.close()
@@ -154,13 +163,13 @@ class Store:
         return {"project_id": project_id, "deployment_id": deployment_id, "status": Status.CREATED.value}
 
     def get_project(self, project_id):
-        row = self._conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        row = self._one("SELECT * FROM projects WHERE id=?", (project_id,))
         if row is None:
             return None
-        latest = self._conn.execute(
+        latest = self._one(
             "SELECT id FROM deployments WHERE project_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
             (project_id,),
-        ).fetchone()
+        )
         return {
             "project_id": row["id"],
             "repo_url": row["repo_url"],
@@ -171,13 +180,13 @@ class Store:
         }
 
     def list_projects(self):
-        rows = self._conn.execute("SELECT id FROM projects ORDER BY created_at DESC, rowid DESC").fetchall()
+        rows = self._all("SELECT id FROM projects ORDER BY created_at DESC, rowid DESC")
         return [self.get_project(r["id"]) for r in rows]
 
     def find_projects(self, repo_key, branch):
-        rows = self._conn.execute(
+        rows = self._all(
             "SELECT id FROM projects WHERE repo_key=? AND branch=? ORDER BY created_at", (repo_key, branch)
-        ).fetchall()
+        )
         return [r["id"] for r in rows]
 
     def _deployment(self, row):
@@ -185,20 +194,20 @@ class Store:
         for key in ("change_reasons", "approval_reasons"):
             data[key] = json.loads(data[key]) if data.get(key) else []
         data["analysis_metrics"] = json.loads(data["analysis_metrics"]) if data.get("analysis_metrics") else None
-        targets = self._conn.execute(
+        targets = self._all(
             "SELECT target, status, url FROM deployment_targets WHERE deployment_id=? ORDER BY target", (row["id"],)
-        ).fetchall()
+        )
         data["targets"] = {t["target"]: {"status": t["status"], "url": t["url"]} for t in targets}
         return data
 
     def get_deployment(self, deployment_id):
-        row = self._conn.execute("SELECT * FROM deployments WHERE id=?", (deployment_id,)).fetchone()
+        row = self._one("SELECT * FROM deployments WHERE id=?", (deployment_id,))
         return self._deployment(row) if row else None
 
     def list_deployments(self, project_id):
-        rows = self._conn.execute(
+        rows = self._all(
             "SELECT * FROM deployments WHERE project_id=? ORDER BY created_at DESC, rowid DESC", (project_id,)
-        ).fetchall()
+        )
         return [self._deployment(r) for r in rows]
 
     def create_push_deployment(self, project_id, commit_sha, mode, reasons):
@@ -236,19 +245,19 @@ class Store:
             )
 
     def get_analysis(self, project_id, commit_sha):
-        row = self._conn.execute(
+        row = self._one(
             "SELECT repo_map, intent FROM analyses WHERE project_id=? AND commit_sha=?", (project_id, commit_sha)
-        ).fetchone()
+        )
         if row is None:
             return None
         return {"repo_map": json.loads(row["repo_map"]),
                 "intent": json.loads(row["intent"]) if row["intent"] else None}
 
     def has_queued(self, project_id):
-        latest = self._conn.execute(
+        latest = self._one(
             "SELECT status FROM deployments WHERE project_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
             (project_id,),
-        ).fetchone()
+        )
         return latest is not None and latest["status"] == Status.CREATED.value
 
     def begin_deploy(self, project_id):
@@ -258,14 +267,14 @@ class Store:
         대상(local·aws)마다 상태 행을 만든다.
         """
         with self._lock, self._conn:
-            if self._conn.execute(
+            if self._one(
                 "SELECT 1 FROM deployments WHERE project_id=? AND status IN (?, ?)", (project_id, *BLOCKING)
-            ).fetchone():
+            ):
                 raise ConflictError(project_id)
-            latest = self._conn.execute(
+            latest = self._one(
                 "SELECT id, status FROM deployments WHERE project_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 (project_id,),
-            ).fetchone()
+            )
             now = _now()
             if latest and latest["status"] == Status.CREATED.value:
                 deployment_id = latest["id"]
@@ -283,8 +292,8 @@ class Store:
                 "UPDATE deployments SET status=?, updated_at=? WHERE id=?",
                 (Status.DEPLOYING.value, now, deployment_id),
             )
-            targets = json.loads(self._conn.execute(
-                "SELECT targets FROM projects WHERE id=?", (project_id,)).fetchone()["targets"])
+            targets = json.loads(self._one(
+                "SELECT targets FROM projects WHERE id=?", (project_id,))["targets"])
             self._conn.executemany(
                 "INSERT OR REPLACE INTO deployment_targets VALUES (?, ?, ?, NULL)",
                 [(deployment_id, target, Status.DEPLOYING.value) for target in targets],
@@ -362,7 +371,7 @@ class Store:
             )
 
     def get_plans(self, deployment_id):
-        rows = self._conn.execute("SELECT target, plan FROM plans WHERE deployment_id=?", (deployment_id,)).fetchall()
+        rows = self._all("SELECT target, plan FROM plans WHERE deployment_id=?", (deployment_id,))
         return {r["target"]: json.loads(r["plan"]) for r in rows}
 
     def last_live(self, project_id, before_deployment_id, with_plans=False):
@@ -371,11 +380,11 @@ class Store:
         with_plans=True면 plan이 있는 것만 본다(승인 비교 기준 = 지금 돌고 있는 구조).
         """
         has_plans = " AND EXISTS (SELECT 1 FROM plans p WHERE p.deployment_id=d.id)" if with_plans else ""
-        row = self._conn.execute(
+        row = self._one(
             "SELECT d.* FROM deployments d, deployments ref WHERE ref.id=? AND d.project_id=? AND d.status=? "
             "AND d.rowid < ref.rowid" + has_plans + " ORDER BY d.rowid DESC LIMIT 1",
             (before_deployment_id, project_id, Status.LIVE.value),
-        ).fetchone()
+        )
         return self._deployment(row) if row else None
 
     def await_approval(self, deployment_id, reasons):
@@ -426,10 +435,10 @@ class Store:
             return cur.lastrowid
 
     def list_events(self, deployment_id, after_seq=0):
-        rows = self._conn.execute(
+        rows = self._all(
             "SELECT seq, payload FROM events WHERE deployment_id=? AND seq>? ORDER BY seq",
             (deployment_id, after_seq),
-        ).fetchall()
+        )
         return [{"seq": r["seq"], "event": json.loads(r["payload"])} for r in rows]
 
     def record_delivery(self, delivery_id):

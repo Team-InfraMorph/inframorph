@@ -45,6 +45,8 @@ GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --po
 | GET | `/api/projects/{id}/deployments` | 배포 이력(최신순, 수동/push/롤백, 재처리 깊이, 대상별 상태) |
 | GET | `/api/deployments/{id}` | 배포 상태, 대상별 상태·URL, 판정 근거, 승인 사유 |
 | GET | `/api/deployments/{id}/plans` | 대상별 plan(B Planner 출력) |
+| GET | `/api/deployments/{id}/analysis` | 이 커밋의 intent와 AI 사용량 |
+| GET | `/api/deployments/{id}/patch` | 대상별 코드 수정 내역(변경 파일·diff, lockfile diff는 생략) |
 | GET | `/api/deployments/{id}/events` | SSE 타임라인. `Last-Event-ID`로 이어 받기 |
 | POST | `/api/deployments/{id}/approve` | 인프라 변경 승인 → 배포 계속. 승인 대기가 아니면 409 |
 | POST | `/api/deployments/{id}/reject` | 인프라 변경 거절 → FAILED |
@@ -54,23 +56,36 @@ GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --po
 상태: `CREATED → DEPLOYING → LIVE | FAILED | ROLLED_BACK`, 인프라 변경 시 `AWAITING_APPROVAL`,
 시작 전에 더 새 요청이 와서 건너뛴 작업은 `SUPERSEDED`.
 
-## 모듈 연결 지점 (A·B·C·E)
+## 배포 한 번의 단계와 모듈 연결 지점 (A·B·C·E)
 
-`create_app(deployer_cmd=..., analyzer=...)` 두 곳만 바꾸면 실제 모듈이 붙는다.
+```
+분석·설계(analyzer) → 승인 게이트 → 코드 수정(patcher) → [검사·빌드: E 자리] → 배포기 동시 실행(deployer_cmd)
+```
 
-- `deployer_cmd(deployment_id, target) -> list[str]`: 대상별 배포기 명령. Local(E)과 AWS(A)를 **동시에** 실행한다.
-  stdout은 `schemas.events.DeployEvent` JSONL 전용, 진단은 stderr, 종료 코드 0이 성공(schemas/README.md).
+`create_app(analyzer=..., patcher=..., deployer_cmd=...)` 세 곳에 실제 모듈이 붙는다. 조종실은 모듈을 import하지 않고
+명령으로 실행한다(`control_plane/analysis.py`).
+
+| 연결 지점 | 지금 | 실제 모듈 |
+|---|---|---|
+| `analyzer(deployment)` → `{commit_sha, repo_map, intent, plans, metrics}` | C Analyzer 실행 + B는 fixture | B Repo Mapper·Planner 명령이 오면 교체 |
+| `patcher(deployment, plans, workdir)` → `{target: manifest}` | C Code Patch 실행 | 연결 완료(#22) |
+| `deployer_cmd(deployment_id, target)` → 명령 | 가짜 배포기 | A(AWS)·E(Local) 명령이 오면 교체 |
+
+- C 모듈 위치: `INFRAMORPH_ANALYZER_ROOT`(없으면 #22 병합 후 레포 루트를 자동 인식). Analyzer는 기본 replay(비용 0),
+  `INFRAMORPH_ANALYZER_LIVE=1`이면 실제 모델 호출. `rebuild_only`면 Analyzer를 부르지 않는다.
+- Code Patch는 대상별로 `<INFRAMORPH_HOME>/<deployment_id>/patched/<target>/`(source/·patch.diff·manifest.json)을 만든다.
+  C 모듈은 심볼릭 링크가 낀 경로를 거부하므로 작업 폴더는 실제 경로로 바꿔 넘긴다(macOS `/tmp` → `/private/tmp`).
+- E의 Policy Gate·Builder는 코드 수정 다음, 배포기 앞에 들어간다. 입력은 위 manifest(원본·결과·diff 해시)와 `source/`다.
+  명령이 정해지면 `patched()` 뒤에 같은 방식으로 붙인다.
+- 롤백은 이전 이미지를 다시 띄우므로 분석·코드 수정을 건너뛴다.
+- 배포기 stdout은 `schemas.events.DeployEvent` JSONL 전용, 진단은 stderr, 종료 코드 0이 성공(schemas/README.md).
   줄마다 스키마를 검증하고, 다른 배포 ID나 **다른 target**의 줄은 버린다. `detail`의 비밀값은 저장 전에 가린다.
-- `analyzer(deployment) -> {commit_sha, repo_map, intent, plans} | None`: 스냅샷·지도·분석·설계(구간 2~7).
-  `deployment["analysis_mode"]`가 `rebuild_only`면 AI 분석을 건너뛰고 캐시된 intent를 쓴다.
-  결과는 커밋 단위 분석 캐시와 배포 작업의 plan으로 저장된다.
+  조종실이 직접 하는 단계(코드 수정)도 같은 DeployEvent로 타임라인에 남긴다.
 
 대상별 최종 상태: `rollback ok` 이벤트면 ROLLED_BACK, 종료 코드가 0이 아니거나 `fail` 이벤트면 FAILED,
 아니면 LIVE. 전체 상태는 하나라도 FAILED면 FAILED, 롤백이 있으면 ROLLED_BACK, 모두 LIVE면 LIVE.
-서버가 재시작되면 진행 중이던 배포는 FAILED로 표시한다.
-
-지금은 `control_plane.fake_deployer`가 이벤트 fixture를 재생하고, `fake_analyzer`가
-`schemas/fixtures/v1·v2`를 커밋에 맞춰 돌려준다(커밋이 없는 수동 배포는 v1).
+서버가 재시작되면 진행 중이던 배포는 FAILED로 표시한다. 저장소 연결 하나를 API·배포기 스레드가 같이 쓰므로
+읽기·쓰기 모두 같은 잠금 안에서 한다.
 
 ## git push 재배포 (구간 15)
 

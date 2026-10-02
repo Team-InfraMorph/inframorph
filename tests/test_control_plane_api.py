@@ -87,7 +87,8 @@ class ControlPlaneApiTest(unittest.TestCase):
 
         with self.client.stream("GET", f"/api/deployments/{deployment_id}/events") as stream:
             body = "".join(stream.iter_text())
-        expected = 2 * len((FIXTURES / "happy_path.jsonl").read_text().splitlines())  # local + aws
+        # local + aws 각각: 코드 수정(시작·완료) 2줄 + 배포기 이벤트
+        expected = 2 * (2 + len((FIXTURES / "happy_path.jsonl").read_text().splitlines()))
         self.assertEqual(body.count("event: deploy"), expected)
         self.assertIn("event: end", body)
         self.assertIn(deployment_id, body)

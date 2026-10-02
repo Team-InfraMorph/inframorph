@@ -79,8 +79,8 @@ def put_initial(store, deployment_id, value):
 
 
 def get_result(store, deployment_id):
-    row = store._conn.execute("SELECT initial_payload,current_payload FROM deployment_analysis WHERE deployment_id=?",
-                             (deployment_id,)).fetchone()
+    row = store._one("SELECT initial_payload,current_payload FROM deployment_analysis WHERE deployment_id=?",
+                     (deployment_id,))
     if row is None:
         return None
     return {"initial": json.loads(row[0]), **json.loads(row[1])}
