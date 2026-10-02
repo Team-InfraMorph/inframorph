@@ -14,7 +14,7 @@ from control_plane.b_bridge import BCommands, DemoModules, call_json
 from control_plane.db import Store
 from control_plane.local_deploy import load_context
 from control_plane.orchestrator import run_deployment
-from control_plane.runtime import LocalRuntime
+from control_plane.runtime import LocalRuntime, record_analysis_diagnostics
 from analyzer.source_policy import validate_demo_plan, SourcePolicyError
 from analyzer.backend import ReplayBackend, Reply
 from control_plane.analysis import AnalysisFailed
@@ -131,7 +131,12 @@ class RuntimeTests(unittest.TestCase):
         unclear["unknowns"] = ["Upload directory deployment location needs review"]
         injected = copy.deepcopy(unclear)
         injected["config"] = {"EXECUTE": "private-injected-config-canary"}
+        misnamed = copy.deepcopy(unclear)
+        misnamed["app"] = "private-model-app-canary"
+        named_correction = copy.deepcopy(self.initial["intent"])
+        named_correction["app"] = "another-invented-app"
         for name, first, second in (("corrected", unclear, self.initial["intent"]),
+                                    ("metadata", misnamed, named_correction),
                                     ("unresolved", unclear, unclear), ("injected", injected, None)):
             with self.subTest(case=name):
                 runtime = LocalRuntime(root=self.root / name / "runtime", b_modules=DemoModules())
@@ -140,10 +145,13 @@ class RuntimeTests(unittest.TestCase):
                     transcript.append({"text": json.dumps(second)})
                 backend = ReplayBackend([Reply(**item) for item in transcript])
                 with patch("control_plane.runtime.analysis_backend", return_value=backend):
-                    if name == "corrected":
+                    if name in {"corrected", "metadata"}:
                         result = runtime.analyze(self.store, self.store.get_deployment(self.did))
                         self.assertEqual(result["intent"]["unknowns"], [])
+                        self.assertEqual(result["intent"]["app"], "demo-app")
                         self.assertEqual(result["metrics"]["validation_retries"], 1)
+                        self.assertEqual(result["metrics"]["source_clarifications"], 1)
+                        self.assertEqual(result["metrics"]["app_name_corrections"], 2 if name == "metadata" else 0)
                         self.assertEqual(result["metrics"]["model_calls"], 6)
                         load_context(runtime.context_file(self.did))
                     else:
@@ -160,6 +168,41 @@ class RuntimeTests(unittest.TestCase):
                         self.assertNotIn("private-injected-config-canary", json.dumps(error.metrics))
                         self.assertEqual(self.store.get_analysis(self.project["project_id"],
                             self.initial["repo_map"]["commit"])["intent"], self.initial["intent"])
+                    report_path = runtime.context_file(self.did).parent / "analysis-diagnostics.json"
+                    report = json.loads(report_path.read_text())
+                    self.assertEqual(report_path.stat().st_mode & 0o777, 0o600)
+                    self.assertEqual(report["status"], "passed" if name in {"corrected", "metadata"} else "failed")
+                    self.assertEqual(report["attempts"][0]["unknowns_count"], 1)
+                    self.assertEqual(report["attempts"][0]["clarification_requested"], name != "injected")
+                    for hidden in ("Upload directory deployment location", "private-model-app-canary",
+                                   "private-injected-config-canary", "another-invented-app"):
+                        self.assertNotIn(hidden, report_path.read_text())
+
+    def test_diagnostic_file_never_overwrites_a_previous_report_or_follows_a_symlink(self):
+        report = self.root / "existing.json"
+        report.write_text("preserve")
+        self.assertFalse(record_analysis_diagnostics(report, {}, [], status="failed", stage="analyzer"))
+        link = self.root / "linked.json"
+        link.symlink_to(report)
+        self.assertFalse(record_analysis_diagnostics(link, {}, [], status="failed", stage="analyzer"))
+        self.assertEqual(report.read_text(), "preserve")
+
+    def test_source_package_rename_does_not_bypass_the_reviewed_profile(self):
+        class RenamedSource(DemoModules):
+            def map(inner, project, deployment, output):
+                mapped = super().map(project, deployment, output)
+                path = mapped.snapshot / "package.json"
+                package = json.loads(path.read_text())
+                package["name"] = "unreviewed-identity"
+                path.write_text(json.dumps(package))
+                return mapped
+        runtime = LocalRuntime(root=self.root / "renamed/runtime", b_modules=RenamedSource())
+        with patch.object(runtime.b, "plan") as planner:
+            with self.assertRaises(AnalysisFailed) as raised:
+                runtime.analyze(self.store, self.store.get_deployment(self.did))
+        planner.assert_not_called()
+        self.assertEqual(raised.exception.code, "unreviewed_runtime_source")
+        self.assertFalse(runtime.context_file(self.did).exists())
 
     def test_plan_cannot_inject_node_execution_options(self):
         plan = Plan.model_validate(self.initial["plans"]["local"])

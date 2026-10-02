@@ -66,7 +66,7 @@ def validate_demo_intent(value, source, mapping):
                               ("persistent_files", None, None, "uploads")])
     mismatches = {
         "source_revision": intent.source_revision != mapping.commit,
-        "app": intent.app != "demo-app",
+        "app": intent.app != package["name"],
         "unknowns": bool(intent.unknowns),
         "workloads": sorted(actual) != sorted(workloads),
         "state": states != expected_states,

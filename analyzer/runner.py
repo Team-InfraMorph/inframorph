@@ -1,6 +1,7 @@
 """Bounded source-exploration loop and schema/evidence validation."""
 import asyncio
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+import hashlib
 import json
 from pathlib import Path
 import time
@@ -8,7 +9,7 @@ from typing import Callable
 
 from pydantic import ValidationError
 from schemas import Intent, RepoMap
-from schemas.common import parse_evidence
+from schemas.common import check_name, parse_evidence
 
 from .backend import Backend, BackendError
 from .config import MODEL, Limits, estimated_cost
@@ -61,6 +62,8 @@ class Metrics:
     api_calls: int = 0
     tool_calls: int = 0
     validation_retries: int = 0
+    app_name_corrections: int = 0
+    source_clarifications: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     estimated_usd: float = 0
@@ -73,22 +76,36 @@ class Metrics:
 class AnalysisResult:
     intent: Intent
     metrics: Metrics
+    diagnostics: list[dict] = field(default_factory=list)
 
 
 class AnalysisError(RuntimeError):
-    def __init__(self, code: str, metrics: Metrics):
+    def __init__(self, code: str, metrics: Metrics, diagnostics=None):
         super().__init__(code)
         self.code = code
         self.metrics = metrics
+        self.diagnostics = list(diagnostics or [])
 
     def as_dict(self):
         return {"error": self.code, "metrics": asdict(self.metrics)}
 
 
-def _validate(text: str, repo_map: RepoMap, snapshot: Snapshot) -> Intent:
+def _source_app(snapshot):
+    # Metadata is data, never an instruction. The deployment source policy still
+    # independently reviews package scripts/dependencies and all executable files.
+    package = json.loads("\n".join(snapshot.files.get("package.json", [])))
+    if not isinstance(package, dict) or not isinstance(package.get("name"), str):
+        raise ValueError("source_app_name_unavailable")
+    return check_name(package["name"])
+
+
+def _validate(text: str, repo_map: RepoMap, snapshot: Snapshot, *, source_app=None) -> Intent:
     if snapshot.redactor.contains_secret(text):
         raise ValueError("secret_in_output")
-    intent = Intent.model_validate_json(text)
+    value = json.loads(text)
+    if not isinstance(value, dict):
+        raise ValueError("invalid_intent")
+    intent = Intent.model_validate(value if source_app is None else value | {"app": source_app})
     if intent.source_revision != repo_map.commit:
         raise ValueError("revision_mismatch")
     if set(intent.config) & set(intent.secrets) or any(SECRET_NAME.search(key) for key in intent.config):
@@ -103,6 +120,20 @@ def _validate(text: str, repo_map: RepoMap, snapshot: Snapshot) -> Intent:
     return intent
 
 
+def _record_candidate(text, intent, stats, diagnostics):
+    value = json.loads(text)
+    corrected = value.get("app") != intent.app
+    stats.app_name_corrections += int(corrected)
+    # Keep only counts and hashes, never rejected model text, source, secret
+    # values, or exception messages. This survives the temporary Codex reply.
+    digest = lambda item: hashlib.sha256(json.dumps(item, sort_keys=True).encode()).hexdigest()
+    diagnostics.append({"attempt": stats.model_calls, "status": "candidate",
+        "app_name_source": "package.json", "app_name_corrected": corrected,
+        "model_app_sha256": digest(value.get("app")), "source_app_sha256": digest(intent.app),
+        "unknowns_count": len(intent.unknowns), "unknowns_sha256": digest(intent.unknowns),
+        "clarification_requested": False})
+
+
 async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend,
                   limits: Limits | None = None, *, feedback: AnalysisFeedback | None = None,
                   clarify_requirements: Callable[[Intent], bool] | None = None) -> AnalysisResult:
@@ -112,10 +143,12 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
     Validation here checks the revision in the response, not Git authenticity.
     Policy Gate still owns semantic evidence checks and deployment authorization.
     An operator-owned clarification check may use the same single correction slot
-    as schema validation. It never supplies answers or changes the returned Intent.
+    as schema validation. App identity comes from snapshot package.json; all
+    operational fields still require model evidence and independent policy review.
     """
     limits = limits or Limits()
     stats = Metrics(backend=backend.name, model=getattr(backend, "model", MODEL))
+    diagnostics = []
     started = time.monotonic()
     try:
         async with asyncio.timeout(limits.timeout_seconds):
@@ -193,8 +226,9 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
                                         "output": data_message("snapshot_tool", result, redactor)})
                     continue
                 try:
-                    intent = _validate(reply.text, mapping, snapshot)
+                    intent = _validate(reply.text, mapping, snapshot, source_app=_source_app(snapshot))
                 except (ValidationError, ValueError):
+                    diagnostics.append({"attempt": stats.model_calls, "status": "schema_rejected"})
                     if stats.validation_retries:
                         raise AnalysisError("invalid_intent", stats) from None
                     stats.validation_retries = 1
@@ -204,9 +238,12 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
                         "preserve the commit, use observed evidence, and include no secrets. "
                         "Use Read/Grep first if evidence was not observed. Follow the original schema."})
                     continue
+                _record_candidate(reply.text, intent, stats, diagnostics)
                 if (not stats.validation_retries and intent.unknowns and clarify_requirements is not None
                         and clarify_requirements(intent)):
                     stats.validation_retries = 1
+                    stats.source_clarifications = 1
+                    diagnostics[-1]["clarification_requested"] = True
                     # No rejected model text, expected fixture or source value is
                     # copied into the correction request. All original limits apply.
                     history.append({"role": "user", "content":
@@ -218,17 +255,18 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
                         "deployment inputs. Preserve genuine uncertainty in unknowns; never invent facts or "
                         "remove unknowns just to pass. Return Intent JSON with observed source evidence."})
                     continue
-                return AnalysisResult(intent=intent, metrics=stats)
+                return AnalysisResult(intent=intent, metrics=stats, diagnostics=diagnostics)
             raise AnalysisError("model_turn_limit", stats)
-    except AnalysisError:
+    except AnalysisError as error:
+        error.diagnostics = diagnostics
         raise
     except TimeoutError:
-        raise AnalysisError("analysis_timeout", stats) from None
+        raise AnalysisError("analysis_timeout", stats, diagnostics) from None
     except BackendError as error:
-        raise AnalysisError(str(error), stats) from None
+        raise AnalysisError(str(error), stats, diagnostics) from None
     except SnapshotError as error:
-        raise AnalysisError(str(error), stats) from None
+        raise AnalysisError(str(error), stats, diagnostics) from None
     except (ValidationError, OSError, ValueError):
-        raise AnalysisError("invalid_analysis_input", stats) from None
+        raise AnalysisError("invalid_analysis_input", stats, diagnostics) from None
     finally:
         stats.duration_ms = round((time.monotonic() - started) * 1000)

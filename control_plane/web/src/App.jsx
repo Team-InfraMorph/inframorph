@@ -111,6 +111,8 @@ function Usage({ deployment, metrics }) {
   if (metrics.usage_complete === false) parts.push("사용량 집계 미완료");
   if (metrics.tool_calls != null) parts.push(`파일 탐색 ${metrics.tool_calls}회`);
   if (metrics.validation_retries) parts.push(`분석 보정 ${metrics.validation_retries}회`);
+  if (metrics.app_name_corrections) parts.push(`소스에서 앱 이름 확정 ${metrics.app_name_corrections}회`);
+  if (metrics.source_clarifications) parts.push(`미확인 요구사항 재검토 ${metrics.source_clarifications}회`);
   if (metrics.input_tokens || metrics.output_tokens) parts.push(`토큰 ${metrics.input_tokens}/${metrics.output_tokens}`);
   if (metrics.backend === "codex-cli") parts.push("ChatGPT 사용량 사용 · 팀 API 비용 $0");
   else if (metrics.estimated_usd != null) parts.push(`예상 $${Number(metrics.estimated_usd).toFixed(3)}`);

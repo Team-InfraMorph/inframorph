@@ -4,7 +4,7 @@ No implicit approvals and no default Builder/Local Adapter. Model/log output
 never becomes a shell command. Existing common schemas are left unchanged.
 """
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -101,6 +101,7 @@ class RecoveryResult:
     patch: PatchedCandidate | None = None
     final_failure_code: str | None = None
     reanalysis_metrics: Metrics | None = None
+    reanalysis_diagnostics: list[dict] = field(default_factory=list)
 
 
 class RecoveryStop(ValueError):
@@ -170,7 +171,8 @@ async def recover_local(*, deployment_id: str, repo_map: RepoMap, snapshot_dir: 
                         failure: LocalFailure, backend: Backend, hooks: RecoveryHooks,
                         store: RetryStore, output_dir: Path, limits: Limits | None = None,
                         previous_metrics: Metrics | None = None, timeout_seconds: float = 300,
-                        emit: Callable[[DeployEvent], None] | None = None) -> RecoveryResult:
+                        emit: Callable[[DeployEvent], None] | None = None,
+                        clarify_requirements: Callable[[Intent], bool] | None = None) -> RecoveryResult:
     """Recover ONE failed local deployment or return a terminal/not-retried result.
 
     Caller routes initial retryable failure here BEFORE a terminal fail event.
@@ -254,8 +256,10 @@ async def recover_local(*, deployment_id: str, repo_map: RepoMap, snapshot_dir: 
                     raise RecoveryStop("analysis_budget_exhausted")
                 budget = replace(limits, max_estimated_usd=limits.max_estimated_usd - spent)
             result.analysis = await step("analyze", "intent", lambda: analyze(
-                mapping, source, backend, budget, feedback=feedback))
+                mapping, source, backend, budget, feedback=feedback,
+                clarify_requirements=clarify_requirements))
             result.reanalysis_metrics = result.analysis.metrics
+            result.reanalysis_diagnostics = result.analysis.diagnostics
             if result.analysis.metrics.snapshot_digest != snapshot.digest:
                 raise RecoveryStop("source_changed_during_recovery")
             event("analyze", "ok", "intent_reanalyzed")
@@ -321,6 +325,7 @@ async def recover_local(*, deployment_id: str, repo_map: RepoMap, snapshot_dir: 
             code = "recovery_timeout"
         elif isinstance(error, AnalysisError):
             result.reanalysis_metrics = error.metrics
+            result.reanalysis_diagnostics = error.diagnostics
             code = "reanalysis_failed"
         else:
             code = "recovery_dependency_failed"

@@ -113,6 +113,38 @@ class AnalyzerTests(unittest.IsolatedAsyncioTestCase):
             self.replies[:-1] + [Reply(text=json.dumps(result))]))
         self.assertEqual(analyzed.intent.unknowns, result["unknowns"])
 
+    async def test_app_identity_comes_from_snapshot_without_an_extra_model_call(self):
+        for invented in ("inframorph-demo", "private-model-name-canary", None, "Invalid Name"):
+            with self.subTest(invented=invented):
+                answer = deepcopy(self.expected)
+                answer["app"] = invented
+                result = await analyze(self.mapping, self.snapshot, ReplayBackend(
+                    self.replies[:-1] + [Reply(text=json.dumps(answer))]))
+                self.assertEqual(result.intent.model_dump(mode="json"), self.expected)
+                self.assertEqual(result.metrics.model_calls, len(self.replies))
+                self.assertEqual(result.metrics.app_name_corrections, 1)
+                self.assertEqual(result.metrics.validation_retries, 0)
+                self.assertEqual(result.metrics.source_clarifications, 0)
+                self.assertNotIn("private-model-name-canary", json.dumps(result.diagnostics))
+                self.assertTrue(result.diagnostics[-1]["app_name_corrected"])
+
+    async def test_source_name_is_validated_and_secret_output_is_not_masked_by_normalization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            shutil.copytree(self.snapshot, source)
+            package = json.loads((source / "package.json").read_text())
+            package["name"] = "../../escape"
+            (source / "package.json").write_text(json.dumps(package))
+            error, _ = await self.failure(self.replies[:-1] + [self.replies[-1]] * 2,
+                                          "invalid_intent", snapshot=source)
+            self.assertEqual(error.metrics.app_name_corrections, 0)
+        answer = deepcopy(self.expected)
+        answer["app"] = "sk-proj-" + "a" * 50
+        error, _ = await self.failure(self.replies[:-1] + [Reply(text=json.dumps(answer))] * 2,
+                                     "invalid_intent")
+        self.assertEqual(error.metrics.app_name_corrections, 0)
+        self.assertNotIn(answer["app"], json.dumps(error.diagnostics))
+
     async def test_requirements_clarification_is_bounded_and_does_not_echo_rejected_output(self):
         unclear = deepcopy(self.expected)
         canary = "private-unresolved-output-canary"
@@ -124,6 +156,9 @@ class AnalyzerTests(unittest.IsolatedAsyncioTestCase):
                 result = await analyze(self.mapping, self.snapshot, backend, clarify_requirements=lambda intent: True)
                 self.assertEqual(result.intent.unknowns, corrected["unknowns"])
                 self.assertEqual(result.metrics.validation_retries, 1)
+                self.assertEqual(result.metrics.source_clarifications, 1)
+                self.assertEqual(result.diagnostics[0]["unknowns_count"], 1)
+                self.assertTrue(result.diagnostics[0]["clarification_requested"])
                 self.assertEqual(result.metrics.model_calls, 6)
                 self.assertEqual(result.metrics.tool_calls, 4)
                 self.assertNotIn(canary, json.dumps(backend.requests))
@@ -143,6 +178,7 @@ class AnalyzerTests(unittest.IsolatedAsyncioTestCase):
         result = await analyze(self.mapping, self.snapshot, backend, clarify_requirements=no_second_correction)
         self.assertEqual(result.intent.unknowns, unclear["unknowns"])
         self.assertEqual(result.metrics.validation_retries, 1)
+        self.assertEqual(result.metrics.source_clarifications, 0)
         backend = RecordingBackend(self.replies[:-1] + [Reply(text=json.dumps(unclear)), Reply(text="{}")])
         with self.assertRaises(AnalysisError) as raised:
             await analyze(self.mapping, self.snapshot, backend, clarify_requirements=lambda intent: True)

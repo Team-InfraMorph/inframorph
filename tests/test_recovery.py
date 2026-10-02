@@ -94,6 +94,23 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             DeployEvent.model_validate_json(event.jsonl())
         self.assertEqual(self.store.inspect("d-test")["status"], "recovered")
 
+    async def test_reanalysis_uses_source_identity_and_the_same_bounded_clarification(self):
+        from control_plane.runtime import requirements_clarifier
+        answer = self.intent.model_dump(mode="json")
+        answer["app"] = "invented-recovery-app"
+        answer["unknowns"] = ["private-recovery-requirement-canary"]
+        rows = self.transcript[:-1] + [{"text": json.dumps(answer)}, self.transcript[-1]]
+        result = await self.run_recovery(backend=ReplayBackend([Reply(**row) for row in rows]),
+            clarify_requirements=requirements_clarifier(self.source, self.mapping))
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(result.analysis.intent.app, self.intent.app)
+        self.assertEqual(result.reanalysis_metrics.app_name_corrections, 1)
+        self.assertEqual(result.reanalysis_metrics.source_clarifications, 1)
+        self.assertEqual(result.reanalysis_metrics.validation_retries, 1)
+        self.assertTrue(result.reanalysis_diagnostics[0]["clarification_requested"])
+        self.assertNotIn("private-recovery-requirement-canary", json.dumps(result.reanalysis_diagnostics))
+        self.assertEqual(self.calls, ["intent_policy", "plan", "patch_policy", "build", "local"])
+
     async def test_second_local_failure_stops_and_preserves_actual_code(self):
         async def fail(artifact, plan):
             self.calls.append("local")

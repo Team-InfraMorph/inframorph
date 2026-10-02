@@ -28,6 +28,7 @@ from analyzer.source_policy import SourcePolicyError, validate_demo_intent, vali
 from policy_gate.gate import validate_intent
 from .analysis import AnalysisFailed
 from .b_bridge import BCommands, DemoModules
+from .results import metrics as checked_metrics
 # Preserve D module command imports while the C Local worker uses an explicit runtime.
 from .module_commands import build_cmds, deployer_cmd, fake_deployer_cmd  # noqa: F401
 
@@ -87,6 +88,34 @@ def private_json(path, data):
         json.dump(data, file)
 
 
+def record_analysis_diagnostics(path, stats, attempts, *, status, stage, fields=()):
+    """Persist host summaries, never model answers or exception/source text.
+
+    Failure to record diagnostics must preserve the original gate outcome. An
+    existing/symlinked file is never overwritten, and cannot authorize execution.
+    """
+    from analyzer.source_policy import POLICY_FIELDS
+    try:
+        private_json(path, {"schema_version": 1, "status": status, "stage": stage,
+            "policy_fields": [name for name in POLICY_FIELDS if name in fields],
+            "metrics": checked_metrics(stats), "attempts": attempts})
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def requirements_clarifier(source, mapping):
+    def clarify(candidate):
+        try:
+            validate_demo_intent(candidate, source, mapping)
+        except SourcePolicyError as error:
+            return error.code == "intent_source_mismatch" and error.fields == ("unknowns",)
+        except Exception:
+            return False  # The final policy reports the failure.
+        return False
+    return clarify
+
+
 class LocalRuntime:
     def __init__(self, *, root, b_modules, replay=None, fault="none", publish=False,
                  codex=False, model=LOCAL_MODEL, aws_config=None):
@@ -127,8 +156,11 @@ class LocalRuntime:
         folder = self.context_file(deployment["id"]).parent
         project = store.get_project(deployment["project_id"])
         stats, stage = {}, "mapper"
+        attempts, report_fields = [], ()
+        folder_created, report_status = False, "failed"
         try:
             folder.mkdir(parents=True, exist_ok=False, mode=0o700)
+            folder_created = True
             mapped = self.b.map(project, deployment, folder)
             stage = "snapshot"
             replay = (None if self.analysis_backend == "codex-cli" else
@@ -150,19 +182,11 @@ class LocalRuntime:
                 stage = "analyzer"
                 backend = analysis_backend(self.analysis_backend, self.analysis_model, replay)
 
-                def clarify_requirements(candidate):
-                    try:
-                        validate_demo_intent(candidate, mapped.snapshot, mapped.repo_map)
-                    except SourcePolicyError as error:
-                        return error.code == "intent_source_mismatch" and error.fields == ("unknowns",)
-                    except Exception:
-                        return False  # The downstream policy reports this failure.
-                    return False
-
                 result = asyncio.run(analyze(mapped.repo_map, mapped.snapshot, backend,
                                             analysis_limits(self.analysis_backend),
-                                            clarify_requirements=clarify_requirements))
+                                            clarify_requirements=requirements_clarifier(mapped.snapshot, mapped.repo_map)))
                 intent, stats = result.intent, asdict(result.metrics)
+                attempts = result.diagnostics
             stage = "intent_policy"
             validate_demo_intent(intent, mapped.snapshot, mapped.repo_map)
             stage = "intent_gate"
@@ -189,17 +213,24 @@ class LocalRuntime:
                 analysis_backend=self.analysis_backend, analysis_model=self.analysis_model,
                 targets=list(deployment["targets"]), aws_plan=aws_plan)
             private_json(folder / "context.json", context.model_dump(mode="json"))
+            report_status = "passed"
             return {"commit_sha": mapped.repo_map.commit, "repo_map": mapped.repo_map.model_dump(mode="json"),
                     "intent": intent.model_dump(mode="json"), "plans": context_plans(context), "metrics": stats, "intent_checked": True}
         except AnalysisError as error:
-            raise AnalysisFailed(error.code, asdict(error.metrics) | {"blocked_stage": stage}) from None
+            stats, attempts = asdict(error.metrics), error.diagnostics
+            raise AnalysisFailed(error.code, stats | {"blocked_stage": stage}) from None
         except SourcePolicyError as error:
+            report_fields = error.fields
             raise AnalysisFailed(error.code, stats | {"blocked_stage": stage,
                                  "policy_fields": list(error.fields)}) from None
         except Exception:
             # A downstream gate/Planner failure must not discard consumed usage
             # or publish the rejected Intent/Plan. Stage names are host constants.
             raise AnalysisFailed("local_pipeline_analysis_failed", stats | {"blocked_stage": stage}) from None
+        finally:
+            if folder_created:
+                record_analysis_diagnostics(folder / "analysis-diagnostics.json", stats, attempts,
+                    status=report_status, stage=stage, fields=report_fields)
 
     def command(self, store, deployment_id, target):
         if target not in {"local", "aws"} or (target == "aws" and self.aws_config is None):
