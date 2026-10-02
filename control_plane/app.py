@@ -7,6 +7,8 @@ import json
 import os
 import re
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
@@ -16,9 +18,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from schemas.common import Target
+from schemas.events import DeployEvent
 
 from . import webhook
-from .analysis import AnalysisFailed, fixture_analyzer
+from .analysis import StageFailed, fixture_analyzer, fixture_patcher, read_patch
 from .db import TERMINAL, ConflictError, Status, Store
 from .change_detector import plan_diff, plan_redeploy
 from .orchestrator import run_deployment
@@ -81,15 +84,19 @@ def _sse(event, data, seq=None):
     return f"{head}event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_analyzer):
+def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_analyzer, patcher=fixture_patcher):
     store = Store(db_path or DEFAULT_DB)
     store.recover_interrupted()
+    # 배포별 작업 폴더: <INFRAMORPH_HOME>/<deployment_id>/. C 모듈은 심볼릭 링크가 낀 경로를 거부하므로
+    # macOS의 /tmp(→ /private/tmp) 같은 링크를 풀어 실제 경로로 넘긴다.
+    workdir = store.path.parent.resolve()
 
     def execute(project_id, deployment_id):
         """분석·승인 확인 후 대상별 배포기를 동시에 돌리고, 끝나면 대기 중인 최신 요청을 이어서 실행한다."""
         while deployment_id:
             deployment = store.get_deployment(deployment_id)
-            if deployment["approved_at"] or deployment["triggered_by"] == "rollback" or ready(deployment):
+            rollback = deployment["triggered_by"] == "rollback"  # 이전 이미지를 다시 띄우므로 수정·빌드 생략
+            if (deployment["approved_at"] or rollback or ready(deployment)) and (rollback or patched(deployment)):
                 targets = deployment["targets"]
                 run_deployment(store, deployment_id, {t: deployer_cmd(deployment_id, t) for t in targets})
             elif store.get_deployment(deployment_id)["status"] == Status.AWAITING_APPROVAL.value:
@@ -105,7 +112,7 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
         """분석·설계(구간 2~7)를 하고 승인이 필요 없으면 True. 분석 실패면 FAILED, 구조 변경이면 승인 대기."""
         try:
             result = analyzer(deployment)
-        except AnalysisFailed as exc:
+        except StageFailed as exc:
             store.set_analysis_metrics(deployment["id"], {**exc.metrics, "error": exc.code})
             store.fail(deployment["id"])
             return False
@@ -121,6 +128,34 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
         if changes:
             store.await_approval(deployment["id"], changes)
         return not changes
+
+    def stage_event(deployment_id, target, step, status, detail=None, duration_ms=None):
+        """조종실이 직접 진행한 단계(코드 수정 등)도 배포기와 같은 DeployEvent로 타임라인에 남긴다."""
+        event = DeployEvent(deployment_id=deployment_id, ts=datetime.now(timezone.utc), target=target, step=step,
+                            status=status, detail=detail, duration_ms=duration_ms)
+        store.add_event(deployment_id, event.model_dump(mode="json", exclude_none=True))
+
+    def patched(deployment):
+        """코드 수정(구간 7~8, C Code Patch). 성공하면 True. E의 Policy Gate·Builder는 이 결과를 받아 이어진다."""
+        plans = store.get_plans(deployment["id"])
+        targets = list(plans) or deployment["targets"]
+        for target in targets:
+            stage_event(deployment["id"], target, "patch", "started")
+        started = time.monotonic()
+        try:
+            manifests = patcher(deployment, plans, workdir / deployment["id"])
+        except StageFailed as exc:
+            for target in targets:
+                stage_event(deployment["id"], target, "patch", "fail", f"코드 수정 실패: {exc.code}")
+            store.fail(deployment["id"])
+            return False
+        elapsed = int((time.monotonic() - started) * 1000)
+        for target in targets:
+            manifest = (manifests or {}).get(target)
+            detail = (f"파일 {len(manifest['changes'])}개 수정" if manifest and manifest["status"] == "patched"
+                      else "수정할 코드 없음" if manifest else "코드 수정 모듈 없음 · 원본 그대로")
+            stage_event(deployment["id"], target, "patch", "ok", detail, elapsed)
+        return True
 
     def deployment_or_404(deployment_id):
         deployment = store.get_deployment(deployment_id)
@@ -199,6 +234,13 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
         deployment = deployment_or_404(deployment_id)
         cached = store.get_analysis(deployment["project_id"], deployment["commit_sha"]) if deployment["commit_sha"] else None
         return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"]}
+
+    @app.get("/api/deployments/{deployment_id}/patch")
+    def get_patch(deployment_id: str):
+        """대상별 코드 수정 내역(C Code Patch 결과). 화면의 '코드를 이렇게 고쳤다'에 쓴다."""
+        deployment = deployment_or_404(deployment_id)
+        folder = workdir / deployment_id / "patched"
+        return {t: patch for t in deployment["targets"] if (patch := read_patch(folder / t))}
 
     @app.post("/api/deployments/{deployment_id}/approve", status_code=202)
     def approve(deployment_id: str, background: BackgroundTasks):
