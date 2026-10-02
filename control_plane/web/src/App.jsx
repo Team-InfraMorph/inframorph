@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
-import { Badge, Pipeline, TARGETS, TERMINAL } from "./Pipeline.jsx";
+import { Badge, LiveFeed, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
 import { Structure } from "./Structure.jsx";
 
 const TRIGGER = { manual: "수동", push: "git push", rollback: "롤백" };
@@ -366,15 +366,25 @@ export default function App() {
 
       {project && (
         <>
-          <div className="row between toolbar">
-            <div>
-              <strong>{project.repo_url.replace("https://github.com/", "")}</strong>
+          <div className="toolbar">
+            <div className="toolbar-main">
+              <strong className="repo">{project.repo_url.replace("https://github.com/", "")}</strong>
               <span className="dim"> · {project.branch}</span>
+              {selected && (
+                <span className="meta">
+                  {TRIGGER[selected.triggered_by]} · <span className="mono">{selected.commit_sha?.slice(0, 7) ?? "커밋 미정"}</span>
+                  {selected.analysis_mode && ` · ${MODE[selected.analysis_mode]}`}
+                </span>
+              )}
+              {selected && <Badge status={selected.status} />}
             </div>
             <button disabled={running} onClick={() => act(api.deploy, project.project_id)}>
               {!running ? "배포" : selected.status === "AWAITING_APPROVAL" ? "승인 대기 중" : "배포 중…"}
             </button>
           </div>
+          {selected?.change_reasons.length > 0 && (
+            <p className="dim reasons">push 판정 근거: {selected.change_reasons.join(" / ")}</p>
+          )}
 
           {selected?.status === "AWAITING_APPROVAL" && <ApprovalBanner deployment={selected} onAct={act} />}
           {selected?.status === "FAILED" && intent && <p>
@@ -382,30 +392,22 @@ export default function App() {
             <span className="dim"> 검증된 동일 커밋의 분석을 재사용하고 소스와 배포 조건을 다시 검사합니다.</span>
           </p>}
 
-          {selected && (
-            <div className="row between summary">
-              <span>
-                {TRIGGER[selected.triggered_by]} · {selected.commit_sha?.slice(0, 7) ?? "커밋 미정"}
-                {selected.analysis_mode && ` · ${MODE[selected.analysis_mode]}`}
-              </span>
-              <Badge status={selected.status} />
+          {selected && <Pipeline deployment={selected} events={events} targets={targets} ctx={{ intent, patch, plans }} />}
+
+          <div className="board">
+            <div className="main-col">
+              {selected && (
+                <Results deployment={selected} events={events} targets={targets}
+                         onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
+              )}
+              {selected && <AnalysisCard deployment={selected} intent={intent} />}
+              <PlanCompare plans={plans} targets={targets} />
+              <PatchCard patch={patch} />
             </div>
-          )}
-          {selected?.change_reasons.length > 0 && (
-            <p className="dim reasons">판정 근거: {selected.change_reasons.join(" / ")}</p>
-          )}
-
-          {selected && (
-            <Pipeline deployment={selected} events={events} targets={targets} ctx={{ intent, patch, plans }}
-                      onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
-          )}
-
-          {selected && <AnalysisCard deployment={selected} intent={intent} />}
-
-          <PlanCompare plans={plans} targets={targets} />
-
-          <PatchCard patch={patch} />
-
+            <aside className="side-col">
+              {selected && <LiveFeed events={events} running={running} />}
+            </aside>
+          </div>
 
           <History deployments={deployments} selectedId={selected?.id}
                    onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)}
