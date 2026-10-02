@@ -1,0 +1,54 @@
+{
+  "implementation_commit": "ee294d4b44619785bfe676c3f04db014d37f89cd",
+  "unit_tests_passed": 302,
+  "aws_unit_tests_passed": 34,
+  "new_regression_tests": 5,
+  "redteam": {
+    "passed": 25,
+    "failed": 0,
+    "not_run": 0,
+    "live_model_behavior": "not_measured"
+  },
+  "public_runtime": {
+    "status": "passed",
+    "phone_verified": false,
+    "aws_called": false,
+    "b_modules": "fixtures",
+    "model": "replay",
+    "runtime": "actual D/C/E and public HTTPS",
+    "denied_paths": [
+      {
+        "path": "/.env",
+        "status": 404
+      },
+      {
+        "path": "/.git/config",
+        "status": 404
+      },
+      {
+        "path": "/package.json",
+        "status": 404
+      },
+      {
+        "path": "/prisma/schema.prisma",
+        "status": 404
+      }
+    ],
+    "bound_services": [
+      "db",
+      "tunnel",
+      "web"
+    ],
+    "public_adapter_rollback_verified": true,
+    "verified_patch_applied": true,
+    "public_redeploy_data_preserved": true,
+    "d_verified_public_https": true,
+    "owned_test_resources_cleaned": true
+  },
+  "limitations": [
+    "Actual B/model integration remains unverified",
+    "No live AWS deployment",
+    "No physical phone verification",
+    "Policy v2 semantics deferred"
+  ]
+}
