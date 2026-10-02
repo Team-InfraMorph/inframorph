@@ -1,53 +1,55 @@
 :root {
-  --bg: #f2f5fb;
+  --bg: #f4f6f9;
   --card: #ffffff;
-  --text: #0f172a;
-  --dim: #64748b;
-  --line: #e2e8f0;
-  --rail: #dbe3ef;
-  --accent: #2563eb;
-  --blue: #2563eb;
-  --blue-dim: #93b4f5;
-  --blue-glow: #2563eb66;
-  --cyan: #0891b2;
-  --ok: #059669;
-  --ok-2: #10b981;
-  --ok-bg: #d1fae5;
-  --fail: #e11d48;
-  --fail-bg: #ffe4e6;
-  --warn: #b45309;
-  --warn-bg: #fef3c7;
-  --run: #2563eb;
-  --run-bg: #e0ebff;
-  --done: #2563eb;
-  --muted-bg: #eef2f8;
+  --text: #1b2230;
+  --dim: #667085;
+  --line: #e3e8ef;
+  --rail: #d9e0ea;
+  --accent: #3b6fd8;      /* 진행·선택: 차분한 파랑 */
+  --blue: #3b6fd8;
+  --blue-dim: #a9c0ee;
+  --cyan: #3b6fd8;        /* (옛 이름) 강조 = 파랑으로 통일 */
+  --ok: #2f8f5b;          /* 완료: 진한 초록 */
+  --ok-2: #3fa36b;
+  --ok-bg: #e3f3ea;
+  --fail: #c9433a;
+  --fail-bg: #fbe9e7;
+  --warn: #a8680d;
+  --warn-bg: #fbf0dc;
+  --run: #3b6fd8;
+  --run-bg: #e8effc;
+  --done: #3b6fd8;
+  --muted-bg: #f0f3f7;
+  --env-local: #4f7fd9;   /* Local 고유색: 파랑 */
+  --env-aws: #c97d1e;     /* AWS 고유색: 주황(AWS 계열, 채도 낮춤) */
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  /* 거의 검정에 가까운 남색 바탕, 카드는 한 단계 밝게 */
+  /* 순검정 대신 아주 어두운 회청색 바탕, 순백 대신 회백 글자, 채도 낮춘 색 (다크 모드 접근성 가이드) */
   :root {
-    --bg: #04060b;
-    --card: #0a0e16;
-    --text: #e6ebf3;
-    --dim: #7b879c;
-    --line: #161d2a;
-    --rail: #1b2433;
-    --accent: #3b82f6;
-    --blue: #3b82f6;
-    --blue-dim: #24406f;
-    --blue-glow: #3b82f699;
-    --cyan: #22d3ee;
-    --ok: #34d399;
-    --ok-2: #6ee7b7;
-    --ok-bg: #062a1f;
-    --fail: #fb7185;
-    --fail-bg: #2a0a12;
-    --warn: #fbbf24;
-    --warn-bg: #2a1d05;
-    --run: #60a5fa;
-    --run-bg: #0b1730;
-    --done: #3b82f6;
-    --muted-bg: #0f1520;
+    --bg: #0d1014;
+    --card: #14181e;
+    --text: #e4e7ec;
+    --dim: #8a93a3;
+    --line: #232933;
+    --rail: #2a313c;
+    --accent: #6f9cf0;
+    --blue: #6f9cf0;
+    --blue-dim: #2d3f60;
+    --cyan: #6f9cf0;
+    --ok: #4cb27f;
+    --ok-2: #6cc394;
+    --ok-bg: #15291f;
+    --fail: #e0695f;
+    --fail-bg: #2c1615;
+    --warn: #d6a24a;
+    --warn-bg: #2a2112;
+    --run: #6f9cf0;
+    --run-bg: #16213a;
+    --done: #6f9cf0;
+    --muted-bg: #191e25;
+    --env-local: #7d9fe6;
+    --env-aws: #d99a4a;
   }
 }
 
@@ -181,15 +183,15 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .node .link i { position: absolute; inset: 0; border-radius: inherit; transform-origin: left; transform: scaleX(0); transition: transform 0.6s ease; }
 .node.n-ok .link i { transform: scaleX(1); background: linear-gradient(90deg, var(--ok), var(--ok-2)); }
 .node.n-started .link i, .node.flowing .link i {
-  transform: none; width: 46px; background: linear-gradient(90deg, transparent, var(--cyan), var(--blue));
-  box-shadow: 0 0 10px var(--cyan); animation: comet 1.3s cubic-bezier(.4, 0, .2, 1) infinite;
+  transform: none; width: 46px; background: linear-gradient(90deg, transparent, var(--accent));
+  animation: comet 1.3s cubic-bezier(.4, 0, .2, 1) infinite;
 }
 .node.n-fail .link { background: var(--fail-bg); }
 
 .node .dot {
   position: relative; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 6px;
-  font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--blue);
-  background: var(--card); border: 2px solid var(--blue-dim); transition: background 0.4s, border-color 0.4s, color 0.4s, box-shadow 0.4s;
+  font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--dim);
+  background: var(--card); border: 2px solid var(--rail); transition: background 0.4s, border-color 0.4s, color 0.4s, box-shadow 0.4s;
 }
 .node .label { font-weight: 600; font-size: 13px; color: var(--text); }
 .node .time { font-size: 12px; color: var(--dim); min-height: 16px; font-variant-numeric: tabular-nums; }
@@ -199,20 +201,20 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 /* 대기: 번호가 적힌 파란 테두리 */
 .node.n-pending .label { color: var(--dim); font-weight: 500; }
 /* 진행 중: 파랑→청록 그라데이션 고리가 돈다 */
-.node.n-started .dot { border-color: transparent; color: var(--cyan); background: var(--card); box-shadow: 0 0 16px -2px var(--blue-glow); }
+.node.n-started .dot { border-color: transparent; color: var(--accent); background: var(--card); }
 .node.n-started .dot::before {
   content: ""; position: absolute; inset: -2px; border-radius: 50%; padding: 2px;
-  background: conic-gradient(var(--cyan), var(--blue), transparent 70%, var(--cyan));
+  background: conic-gradient(var(--accent), transparent 70%, var(--accent));
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
   animation: spin 1s linear infinite;
 }
-.node.n-started .dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+.node.n-started .dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .node.n-started .label { color: var(--cyan); }
 .node.n-started .time { color: var(--cyan); font-weight: 600; }
 /* 완료: 초록으로 채운 원 + 체크 */
-.node.n-ok .dot { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); box-shadow: 0 0 12px -4px var(--ok); }
+.node.n-ok .dot { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
 /* 실패 */
-.node.n-fail .dot { background: var(--fail); border-color: var(--fail); color: #fff; box-shadow: 0 0 0 4px var(--fail-bg), 0 0 18px -4px var(--fail); }
+.node.n-fail .dot { background: var(--fail); border-color: var(--fail); color: #fff; box-shadow: 0 0 0 4px var(--fail-bg); }
 .node.n-fail .label { color: var(--fail); }
 /* 기록 없는 긴 구간: 칸 대신 선 위에 작게 */
 .node .link-note { position: absolute; left: 44px; top: -4px; font-size: 10px; color: var(--dim); white-space: nowrap; }
@@ -340,3 +342,56 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .patch-file summary { display: flex; align-items: center; gap: 10px; }
 .patch-file summary .tree-git { margin: 0; width: 12px; }
 .patch-file summary .dim { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* ── 배포 지도 ─────────────────────────────── */
+.deploy-map { padding: 6px 14px 0; overflow-x: auto; border-bottom: 1px solid var(--line); }
+.deploy-map svg { display: block; width: 100%; min-width: 640px; height: auto; max-height: 260px; }
+.leg-rail { fill: none; stroke: var(--rail); stroke-width: 2; }
+.leg-line { fill: none; stroke: var(--leg); stroke-width: 2.5; stroke-dasharray: 0 1; opacity: 0; transition: opacity 0.4s; }
+.leg-done .leg-line { opacity: 1; stroke-dasharray: none; stroke: var(--ok); }
+.leg-active .leg-line { opacity: 0.55; stroke-dasharray: 6 6; animation: march 0.8s linear infinite; }
+.leg-fail .leg-line { opacity: 0.8; stroke: var(--fail); stroke-dasharray: 4 6; }
+.packet { fill: var(--leg); }
+@keyframes march { to { stroke-dashoffset: -12; } }
+.mnode rect { fill: var(--card); stroke: var(--line); stroke-width: 1.5; transition: stroke 0.4s; }
+.mnode .mtitle { fill: var(--text); font: 700 16px "Pretendard Variable", Pretendard, system-ui, sans-serif; }
+.mnode .msub { fill: var(--dim); font: 500 13px "Pretendard Variable", Pretendard, system-ui, sans-serif; }
+.mnode .mdot { fill: var(--rail); }
+.mt-local .mdot { fill: var(--env-local); }
+.mt-aws .mdot { fill: var(--env-aws); }
+.mn-active rect { stroke: var(--accent); }
+.mn-active .msub { fill: var(--accent); }
+.mn-done rect { stroke: color-mix(in srgb, var(--ok) 55%, var(--line)); }
+.mn-done .msub { fill: var(--ok); }
+.mn-fail rect { stroke: var(--fail); }
+.mn-fail .msub { fill: var(--fail); }
+.mn-notrun { opacity: 0.45; }
+
+/* ── 환경 변환 지도: Local ← 필요한 것 → AWS ── */
+.xmap { display: grid; grid-template-columns: minmax(130px, 1fr) 48px minmax(240px, 1.4fr) 48px minmax(130px, 1fr); align-items: center; row-gap: 10px; }
+.xm-row { display: contents; }
+.xm-head { font-size: 12px; font-weight: 600; color: var(--dim); padding-bottom: 2px; }
+.xm-head:last-child, .xmap > .xm-head:nth-child(5) { text-align: left; }
+.xm-center { text-align: center; }
+.xh { display: inline-flex; align-items: center; gap: 6px; }
+.xh::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.xe-local { color: var(--env-local); }
+.xe-aws { color: var(--env-aws); }
+.xm-env { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; font-size: 14px; font-weight: 500;
+  color: var(--text); background: var(--muted-bg); border: 1px solid var(--line); }
+.xm-env.xe-local { border-left: 3px solid var(--env-local); }
+.xm-env.xe-aws { border-left: 3px solid var(--env-aws); }
+.xm-dot { display: none; }
+.xm-link { height: 2px; position: relative; }
+.xm-link.xl-local { background: linear-gradient(90deg, var(--env-local), var(--rail)); }
+.xm-link.xl-aws { background: linear-gradient(90deg, var(--rail), var(--env-aws)); }
+.xm-link.xl-l::before { content: ""; position: absolute; left: -2px; top: -4px; border: 5px solid transparent; border-right: 7px solid var(--env-local); border-left: 0; }
+.xm-link.xl-r::after { content: ""; position: absolute; right: -2px; top: -4px; border: 5px solid transparent; border-left: 7px solid var(--env-aws); border-right: 0; }
+.xm-need { padding: 10px 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); text-align: center; }
+.xm-title { display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 4px 8px; font-size: 15px; }
+.xm-title span { font-size: 12px; color: var(--dim); }
+.xm-cite { display: inline-block; margin-top: 4px; font-size: 11.5px; color: var(--dim); background: var(--muted-bg); padding: 1px 6px; border-radius: 5px; }
+.xm-fix { margin-top: 4px; font-size: 12px; color: var(--ok); }
+@media (max-width: 760px) { .xmap { grid-template-columns: 1fr 20px 1.4fr 20px 1fr; } .xm-env { font-size: 12px; padding: 8px; } }
+.tree-box { margin-top: 14px; }
+.tree-box summary { cursor: pointer; font-size: 13px; font-weight: 600; margin-bottom: 8px; }

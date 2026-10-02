@@ -100,35 +100,49 @@ function rowsOf(intent, plans, targets) {
   return rows;
 }
 
-function Translation({ intent, plans, targets }) {
+/** 환경 변환 지도: 가운데 = 앱이 필요로 하는 것(코드 근거), 왼쪽 = Local, 오른쪽 = AWS. 표 대신 선으로 잇는다. */
+function XlateMap({ intent, plans, targets }) {
   const shown = targets.filter((t) => plans[t]);
   if (!intent || !shown.length) return null;
+  const [left, right] = shown.length > 1 ? shown : [null, shown[0]];
+  const Side = ({ t, r }) => (t
+    ? <div className={`xm-env xe-${t}`}><span className="xm-dot" />{r.to[t]}</div>
+    : <div />);
+  const Link = ({ t, dir }) => (t ? <div className={`xm-link xl-${t} xl-${dir}`} /> : <div />);
   return (
-    <table className="xlate">
-      <thead>
-        <tr><th>앱이 필요로 하는 것 <span className="dim">· AI가 찾은 근거</span></th>{shown.map((t) => <th key={t}>{TARGET[t]}</th>)}</tr>
-      </thead>
-      <tbody>
-        {rowsOf(intent, plans, shown).map((r) => (
-          <tr key={r.need + (r.detail ?? "")}>
-            <td>
-              <div className="need"><strong>{r.need}</strong>{r.detail && <span className="dim"> {r.detail}</span>}</div>
-              {r.evidence && <div className="cite">{r.evidence}</div>}
-              {r.fix && <div className="fix">{r.fix}</div>}
-            </td>
-            {shown.map((t) => <td key={t} className={`to to-${t}`}>{r.to[t]}</td>)}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="xmap">
+      <div className="xm-head">{left && <span className={`xh xe-${left}`}>{TARGET[left]} · 내 노트북</span>}</div>
+      <div />
+      <div className="xm-head xm-center">앱이 필요로 하는 것 <span className="dim">· AI가 코드에서 찾은 근거</span></div>
+      <div />
+      <div className="xm-head">{right && <span className={`xh xe-${right}`}>{TARGET[right]} · 서울</span>}</div>
+      {rowsOf(intent, plans, shown).map((r) => (
+        <div key={r.need + (r.detail ?? "")} className="xm-row">
+          <Side t={left} r={r} />
+          <Link t={left} dir="l" />
+          <div className="xm-need">
+            <div className="xm-title"><strong>{r.need}</strong>{r.detail && <span>{r.detail}</span>}</div>
+            {r.evidence && <code className="xm-cite">{r.evidence}</code>}
+            {r.fix && <div className="xm-fix">{r.fix}</div>}
+          </div>
+          <Link t={right} dir="r" />
+          <Side t={right} r={r} />
+        </div>
+      ))}
+    </div>
   );
 }
 
 export function AppCode({ repoMap, intent, patch, plans, targets }) {
   return (
-    <div className="appcode">
-      {repoMap && <CodeTree repoMap={repoMap} intent={intent} patch={patch} />}
-      <Translation intent={intent} plans={plans} targets={targets} />
-    </div>
+    <>
+      <XlateMap intent={intent} plans={plans} targets={targets} />
+      {repoMap && (
+        <details className="tree-box">
+          <summary>코드 트리 보기 <span className="dim">· AI가 근거로 든 파일과 패치한 파일</span></summary>
+          <CodeTree repoMap={repoMap} intent={intent} patch={patch} />
+        </details>
+      )}
+    </>
   );
 }

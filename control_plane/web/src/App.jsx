@@ -363,7 +363,8 @@ export default function App() {
 
           {selected && (
             <Section n="1" title="배포 과정" why="각 단계 끝에 검사가 있고, 통과해야 다음으로 갑니다. 실패하면 그 자리에서 멈추고 이유를 보여 줍니다. 칸을 누르면 기록이 열립니다.">
-              <Pipeline deployment={selected} events={events} targets={targets} ctx={{ intent, patch, plans }} />
+              <Pipeline deployment={selected} events={events} targets={targets}
+                        ctx={{ intent, patch, plans, repo: project.repo_url, commit: selected.commit_sha ?? repoMap?.commit }} />
             </Section>
           )}
 
