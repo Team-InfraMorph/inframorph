@@ -38,6 +38,9 @@ mkdir -p .local/code-patch
 대체하지 않는다. Plan·RepoMap의 revision이 같아야 하고 실제 커밋의 불변 스냅샷을
 만들고 인증하는 책임은 Repo Mapper에 있다.
 
+Local 실패 후 원본에서 새 패치를 만들고 다시 검증·빌드하는 연결은
+[1회 복구 문서](../analyzer/RECOVERY.md)를 따른다.
+
 ```python
 from pathlib import Path
 from code_patch import patch_snapshot
@@ -128,8 +131,10 @@ Gate나 제품 Builder/Local Adapter 구현이 아니며, 이 모듈들을 연�
 S3는 command 대역 테스트와 실제 SDK + loopback HTTP 대역 서버까지 확인한다.
 실제 AWS/S3 호환 서비스, IAM 권한, 버킷 생성은 미검증이다.
 
-현재 Python 자동 테스트 84개(Node 저장 모듈 테스트 3개 실행 포함)와
+현재 Python 자동 테스트 112개(Node 저장 모듈 테스트 3개 실행 포함)와
 v1·v2 로컬 smoke는 모두 통과했다. 최신 통합 테스트 결과는
 `.local/code-patch-smoke/persistence-and-sdk/summary.json`에 보관했다.
 두 사례 모두 앱 컨테이너 재생성·DB 재시작 후 메모와 PNG 바이트가 유지됐고,
 v2 worker도 동일 이미지로 DB를 읽고 정상 종료했다. 이 경로의 결과는 Git에 포함하지 않는다.
+복구 및 C/D CLI 연결을 포함한 최신 자동 테스트 보고서는
+`.local/control-plane-verification/unit-tests.json`에 있다.
