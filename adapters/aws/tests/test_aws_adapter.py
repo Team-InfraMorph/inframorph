@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from adapters.aws.aws_api import AwsApi
-from adapters.aws.cli import build_parser
+from adapters.aws.cli import _resolve_state_paths, _save_inputs, build_parser
+from adapters.aws.errors import AdapterError
 from adapters.aws.contracts import BuildArtifact, FoundationOutputs, Plan, validate_contracts
 from adapters.aws.errors import CommandError, ContractError, DeploymentError
 from adapters.aws.events import EventEmitter
@@ -512,6 +513,73 @@ class InconsistentStateStopsBeforeChangeTests(unittest.TestCase):
         self.assertEqual(events[-1]["status"], "fail")
         self.assertFalse(publisher.published)
         self.assertNotIn("push", [event["step"] for event in events])
+
+
+def control_plane_environment():
+    """What the Control Plane process has: shared inputs only; per-deploy paths come as arguments."""
+    environment = adapter_environment()
+    for key in ("INFRAMORPH_PLAN", "INFRAMORPH_BUILD_ARTIFACT", "INFRAMORPH_DEPLOYMENT_RECORD",
+                "INFRAMORPH_AWS_WORK_DIR", "INFRAMORPH_DEPLOYMENT_ID"):
+        environment.pop(key)
+    return environment
+
+
+class ControlPlaneStateDirTests(unittest.TestCase):
+    def test_deploy_with_state_dir_derives_record_and_work_dir(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", control_plane_environment(), clear=True):
+            state = Path(temp) / "state" / "demo-app"
+            args = build_parser().parse_args([
+                "deploy", "--plan", "/tmp/p.json", "--artifact", "/tmp/a.json",
+                "--state-dir", str(state), "--execute", "--deployment-id", "dep-1",
+            ])
+            _resolve_state_paths(args)
+            self.assertEqual(args.record, state / "aws-deployment.json")
+            self.assertEqual(args.work_dir, state / "aws-work")
+            self.assertTrue(state.is_dir())
+            self.assertTrue(args.execute)
+
+    def test_deploy_without_state_dir_or_record_is_rejected(self):
+        with patch.dict("os.environ", control_plane_environment(), clear=True):
+            args = build_parser().parse_args(["deploy", "--plan", "/tmp/p.json", "--artifact", "/tmp/a.json",
+                                              "--deployment-id", "dep-1"])
+            with self.assertRaisesRegex(AdapterError, "--record and --work-dir required"):
+                _resolve_state_paths(args)
+
+    def test_rollback_needs_only_state_dir_and_deployment_id(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", control_plane_environment(), clear=True):
+            state = Path(temp)
+            (state / "plan.aws.json").write_text(json.dumps(plan_data()), encoding="utf-8")
+            (state / "build.aws.json").write_text(json.dumps(artifact_data()), encoding="utf-8")
+            args = build_parser().parse_args(
+                ["rollback", "--state-dir", str(state), "--execute", "--deployment-id", "dep-2"]
+            )
+            _resolve_state_paths(args)
+            self.assertEqual(args.plan, state / "plan.aws.json")
+            self.assertEqual(args.artifact, state / "build.aws.json")
+            self.assertEqual(args.record, state / "aws-deployment.json")
+
+    def test_rollback_without_saved_inputs_explains_why(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", control_plane_environment(), clear=True):
+            args = build_parser().parse_args(["rollback", "--state-dir", temp, "--execute", "--deployment-id", "d"])
+            with self.assertRaisesRegex(AdapterError, "none were saved"):
+                _resolve_state_paths(args)
+
+    def test_successful_deploy_keeps_inputs_for_rollback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            plan_file, artifact_file = work / "plan.aws.json.src", work / "build.aws.json.src"
+            plan_file.write_text(json.dumps(plan_data()), encoding="utf-8")
+            artifact_file.write_text(json.dumps(artifact_data()), encoding="utf-8")
+            state = work / "state"
+            state.mkdir()
+            args = build_parser().parse_args([
+                "deploy", "--plan", str(plan_file), "--artifact", str(artifact_file), "--state-dir", str(state),
+                "--deployment-id", "d", "--account-id", "111122223333", "--foundation", "/tmp/f.json",
+                "--state-bucket", "b",
+            ])
+            _save_inputs(args)
+            self.assertEqual(json.loads((state / "plan.aws.json").read_text())["app"], "demo-app")
+            self.assertEqual(json.loads((state / "build.aws.json").read_text())["platform"], "linux/amd64")
 
 
 if __name__ == "__main__":

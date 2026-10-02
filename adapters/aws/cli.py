@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
@@ -19,6 +20,12 @@ from .terraform import TerraformManager, expected_resource_categories, terraform
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODULE = ROOT / "terraform" / "app"
+
+# Control Plane contract: one state folder per Plan.app (<INFRAMORPH_HOME>/state/<app>), same as the Local Adapter.
+STATE_RECORD = "aws-deployment.json"
+STATE_WORK_DIR = "aws-work"
+STATE_PLAN = "plan.aws.json"
+STATE_ARTIFACT = "build.aws.json"
 
 
 def _env(name: str) -> Optional[str]:
@@ -45,9 +52,9 @@ def _argument_from_env(
     )
 
 
-def _common(parser: argparse.ArgumentParser) -> None:
-    _argument_from_env(parser, "--plan", "INFRAMORPH_PLAN", required=True, type=Path)
-    _argument_from_env(parser, "--artifact", "INFRAMORPH_BUILD_ARTIFACT", required=True, type=Path)
+def _common(parser: argparse.ArgumentParser, contracts_required: bool = True) -> None:
+    _argument_from_env(parser, "--plan", "INFRAMORPH_PLAN", required=contracts_required, type=Path)
+    _argument_from_env(parser, "--artifact", "INFRAMORPH_BUILD_ARTIFACT", required=contracts_required, type=Path)
     _argument_from_env(
         parser,
         "--foundation",
@@ -61,6 +68,57 @@ def _common(parser: argparse.ArgumentParser) -> None:
         default=_env("AWS_REGION") or _env("AWS_DEFAULT_REGION") or "ap-northeast-2",
         help="AWS region (environment: AWS_REGION or AWS_DEFAULT_REGION)",
     )
+
+
+def _state_dir_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=None,
+        help="per-app state folder from the Control Plane; holds the record, work dir and last Plan/Artifact",
+    )
+
+
+def _resolve_state_paths(args: argparse.Namespace) -> None:
+    """--state-dir decides record/work-dir (and rollback inputs) so the Control Plane passes one folder only."""
+    state_dir = getattr(args, "state_dir", None)
+    if state_dir is not None:
+        if hasattr(args, "record"):
+            args.record = state_dir / STATE_RECORD
+        if hasattr(args, "work_dir"):
+            args.work_dir = state_dir / STATE_WORK_DIR
+        if args.command == "rollback":
+            args.plan = args.plan or state_dir / STATE_PLAN
+            args.artifact = args.artifact or state_dir / STATE_ARTIFACT
+        if args.command in ("deploy", "rollback"):
+            state_dir.mkdir(parents=True, exist_ok=True)
+    if args.command not in ("deploy", "rollback"):
+        return
+    missing = [
+        option for option, name in (("--record", "record"), ("--work-dir", "work_dir"))
+        if getattr(args, name) is None
+    ]
+    if missing:
+        raise AdapterError("{} required (or pass --state-dir)".format(" and ".join(missing)))
+    if args.plan is None or args.artifact is None:
+        raise AdapterError("--plan and --artifact are required (rollback can read them from --state-dir)")
+    if args.command == "rollback" and not (args.plan.exists() and args.artifact.exists()):
+        raise AdapterError(
+            "rollback needs the Plan and BuildArtifact of the last successful deployment; "
+            "none were saved in {}".format(state_dir)
+        )
+
+
+def _save_inputs(args: argparse.Namespace) -> None:
+    """Keep the inputs of a successful deploy next to its record so a later rollback needs only --state-dir."""
+    for source, name in ((args.plan, STATE_PLAN), (args.artifact, STATE_ARTIFACT)):
+        target = args.state_dir / name
+        if source.resolve() == target.resolve():
+            continue
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        shutil.copyfile(str(source), str(temporary))
+        os.chmod(str(temporary), 0o600)
+        temporary.replace(target)
 
 
 def _contracts(args: argparse.Namespace) -> Tuple[Plan, BuildArtifact, FoundationOutputs]:
@@ -80,6 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     _argument_from_env(preview, "--state-bucket", "INFRAMORPH_TF_STATE_BUCKET")
     _argument_from_env(preview, "--work-dir", "INFRAMORPH_AWS_WORK_DIR", type=Path)
     preview.add_argument("--terraform-plan", action="store_true")
+    _state_dir_argument(preview)
     preview.add_argument("--module-dir", type=Path, default=DEFAULT_MODULE)
 
     deploy = commands.add_parser("deploy", help="execute ECR publish and App deployment")
@@ -87,20 +146,9 @@ def build_parser() -> argparse.ArgumentParser:
     _argument_from_env(deploy, "--deployment-id", "INFRAMORPH_DEPLOYMENT_ID", required=True)
     _argument_from_env(deploy, "--migration-command", "INFRAMORPH_MIGRATION_COMMAND")
     _argument_from_env(deploy, "--state-bucket", "INFRAMORPH_TF_STATE_BUCKET", required=True)
-    _argument_from_env(
-        deploy,
-        "--work-dir",
-        "INFRAMORPH_AWS_WORK_DIR",
-        required=True,
-        type=Path,
-    )
-    _argument_from_env(
-        deploy,
-        "--record",
-        "INFRAMORPH_DEPLOYMENT_RECORD",
-        required=True,
-        type=Path,
-    )
+    _argument_from_env(deploy, "--work-dir", "INFRAMORPH_AWS_WORK_DIR", type=Path)
+    _argument_from_env(deploy, "--record", "INFRAMORPH_DEPLOYMENT_RECORD", type=Path)
+    _state_dir_argument(deploy)
     deploy.add_argument(
         "--timeout-seconds",
         type=int,
@@ -112,23 +160,12 @@ def build_parser() -> argparse.ArgumentParser:
     deploy.add_argument("--execute", action="store_true")
 
     rollback = commands.add_parser("rollback", help="restore a recorded successful digest via Terraform")
-    _common(rollback)
+    _common(rollback, contracts_required=False)
     _argument_from_env(rollback, "--deployment-id", "INFRAMORPH_DEPLOYMENT_ID", required=True)
-    _argument_from_env(
-        rollback,
-        "--record",
-        "INFRAMORPH_DEPLOYMENT_RECORD",
-        required=True,
-        type=Path,
-    )
+    _argument_from_env(rollback, "--record", "INFRAMORPH_DEPLOYMENT_RECORD", type=Path)
     _argument_from_env(rollback, "--state-bucket", "INFRAMORPH_TF_STATE_BUCKET", required=True)
-    _argument_from_env(
-        rollback,
-        "--work-dir",
-        "INFRAMORPH_AWS_WORK_DIR",
-        required=True,
-        type=Path,
-    )
+    _argument_from_env(rollback, "--work-dir", "INFRAMORPH_AWS_WORK_DIR", type=Path)
+    _state_dir_argument(rollback)
     rollback.add_argument(
         "--timeout-seconds",
         type=int,
@@ -144,6 +181,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     contracts_loaded = False
     try:
+        _resolve_state_paths(args)
         plan, artifact, foundation = _contracts(args)
         contracts_loaded = True
         identity = AppIdentity.from_app(plan.app)
@@ -209,6 +247,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             with AppLock(args.record.with_suffix(args.record.suffix + ".lock")):
                 record = orchestrator.deploy(request)
+            if args.state_dir is not None:
+                _save_inputs(args)
             # stdout stays DeployEvent JSONL only; the human-readable result goes to stderr.
             print("AWS Adapter: {} deploy complete: {}".format(record.deploy_mode, record.url), file=sys.stderr)
             return 0
