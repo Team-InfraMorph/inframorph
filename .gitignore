@@ -17,3 +17,6 @@ dist/
 .terraform/
 *.tfstate
 *.tfstate.*
+
+# E local execution reports and private runtime state
+.local/
