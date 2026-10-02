@@ -120,6 +120,10 @@ class Store:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
+            from .results import DDL
+            self._conn.executescript(DDL)
+            from .patch_reviews import DDL as PATCH_DDL
+            self._conn.executescript(PATCH_DDL)
             existing = {row[1] for row in self._conn.execute("PRAGMA table_info(deployments)")}
             for name, ddl in DEPLOYMENT_COLUMNS.items():
                 if name not in existing:
@@ -138,7 +142,20 @@ class Store:
             return self._conn.execute(sql, params).fetchall()
 
     def close(self):
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
+
+    def save_validated_patch(self, deployment_id, candidate, mapping, approval, phase):
+        from .patch_reviews import save
+        return save(self, deployment_id, candidate, mapping, approval, phase)
+
+    def mark_patch_applied(self, deployment_id, phase):
+        from .patch_reviews import applied
+        return applied(self, deployment_id, phase)
+
+    def get_runtime_patches(self, deployment_id):
+        from .patch_reviews import get
+        return get(self, deployment_id)
 
     def recover_interrupted(self):
         """서버가 꺼질 때 진행 중이던 배포는 결과를 알 수 없으므로 FAILED로 둔다."""
@@ -334,6 +351,22 @@ class Store:
                 "UPDATE deployments SET analysis_metrics=? WHERE id=?",
                 (json.dumps(metrics) if metrics is not None else None, deployment_id),
             )
+
+    def save_initial_analysis(self, deployment_id, result):
+        from .results import put_initial
+        return put_initial(self, deployment_id, result)
+
+    def get_deployment_analysis(self, deployment_id):
+        from .results import get_result
+        return get_result(self, deployment_id)
+
+    def apply_recovery_analysis(self, deployment_id, result):
+        from .results import apply_recovery
+        return apply_recovery(self, deployment_id, result)
+
+    def claim_runtime_run(self, deployment_id, revision):
+        from .results import claim_run
+        return claim_run(self, deployment_id, revision)
 
     def fail(self, deployment_id):
         with self._lock, self._conn:

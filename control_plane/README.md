@@ -8,6 +8,10 @@ git push가 오면 다시 실행할 범위와 승인 필요 여부를 판단한�
 
 ## 실행
 
+실제 C 분석·복구와 E Docker 배포를 연결한 로컬 모드는 [LOCAL_RUNTIME.md](LOCAL_RUNTIME.md)를 따른다.
+`--demo`는 B fixture와 저장된 모델 응답을 명시적으로 선택한다. 실제 B 구현은 아직 연결 전이다.
+아래 실행 방식은 사용 가능한 팀 모듈을 자동 연결한다. 모듈이 없는 대상은 가짜 배포기를 사용한다.
+
 레포 최상위에서 실행한다. 화면을 한 번 빌드해 두면 API와 같은 주소(8000)에서 화면이 열린다.
 
 ```sh
@@ -44,6 +48,7 @@ GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --po
 | GET | `/api/deployments/{id}/analysis` | 이 커밋의 intent와 AI 사용량 |
 | GET | `/api/deployments/{id}/patch` | 대상별 코드 수정 내역(변경 파일·diff, lockfile diff는 생략) |
 | GET | `/api/deployments/{id}/events` | SSE 타임라인. `Last-Event-ID`로 이어 받기 |
+| POST | `/api/deployments/{id}/verify` | 배포 URL의 health를 직접 다시 확인 |
 | POST | `/api/deployments/{id}/approve` | 인프라 변경 승인 → 배포 계속. 승인 대기가 아니면 409 |
 | POST | `/api/deployments/{id}/reject` | 인프라 변경 거절 → FAILED |
 | POST | `/api/deployments/{id}/rollback` | 직전 LIVE의 커밋·plan으로 다시 배포. 기준점이 없으면 409 |
@@ -60,7 +65,7 @@ GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --po
 ```
 
 `create_app(analyzer=, patcher=, builder=, deployer_cmd=)` 네 자리에 모듈이 붙는다. 조종실은 모듈을 import하지 않고
-각 모듈의 checkout에서 명령으로 실행한다(`control_plane/analysis.py`, `control_plane/runtime.py` 위쪽 표 참고).
+각 모듈의 checkout에서 명령으로 실행한다(`control_plane/analysis.py`, `control_plane/module_commands.py` 위쪽 표 참고).
 
 | 단계 | 담당 | 지금 |
 |---|---|---|

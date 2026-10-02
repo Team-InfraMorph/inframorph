@@ -7,6 +7,8 @@ import os
 import re
 import subprocess
 import threading
+import queue
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -15,6 +17,7 @@ from pydantic import ValidationError
 from schemas.events import DeployEvent
 
 from .db import Status
+from analyzer.local_verify import child_environment
 
 log = logging.getLogger("control_plane.orchestrator")
 
@@ -67,13 +70,50 @@ def stream_events(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S, 
     """
     rejected, events = 0, []
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1, cwd=cwd)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, env=child_environment(), cwd=cwd)
     except OSError as exc:
         log.error("%s command failed to start: %s", target, exc)
         return None, events, rejected
 
+    inbox = queue.Queue(maxsize=64)
+    stopped = threading.Event()
+
+    def put(value):
+        while not stopped.is_set():
+            try:
+                inbox.put(value, timeout=0.1)
+                return
+            except queue.Full:
+                pass
+
+    def read_lines():
+        try:
+            while not stopped.is_set():
+                line = proc.stdout.readline(65_537)
+                if not line:
+                    break
+                put(line)
+                if len(line) > 65_536:
+                    break
+        finally:
+            put(None)
+
+    reader = threading.Thread(target=read_lines, daemon=True)
+    reader.start()
+    deadline = time.monotonic() + timeout
     try:
-        for line in proc.stdout:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            try:
+                line = inbox.get(timeout=remaining)
+            except queue.Empty:
+                raise subprocess.TimeoutExpired(cmd, timeout) from None
+            if line is None:
+                break
+            if len(line) > 65_536 or len(events) + rejected >= 2048:
+                raise subprocess.TimeoutExpired(cmd, timeout)
             line = line.strip()
             if not line:
                 continue
@@ -91,14 +131,22 @@ def stream_events(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S, 
                 event = event.model_copy(update={"detail": mask_secrets(event.detail)})
             store.add_event(deployment_id, event.model_dump(mode="json", exclude_none=True))
             events.append(event)
-        exit_code = proc.wait(timeout=timeout)
+        exit_code = proc.wait(timeout=max(0.01, deadline - time.monotonic()))
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+        # C's SIGTERM handler cancels E and stops only its Compose namespace.
+        proc.terminate()
+        try:
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
         exit_code = None
         log.error("%s command timed out after %ss", target, timeout)
     finally:
-        proc.stdout.close()
+        stopped.set()
+        reader.join(timeout=1)
+        if not reader.is_alive():
+            proc.stdout.close()
     return exit_code, events, rejected
 
 

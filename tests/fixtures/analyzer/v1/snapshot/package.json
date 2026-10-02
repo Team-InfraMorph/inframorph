@@ -1,0 +1,32 @@
+{
+  "name": "demo-app",
+  "version": "1.0.0",
+  "description": "개발을 시작하기 전에 [협업 규칙 및 Git 훅 설치](CONTRIBUTING.md)를 확인하세요.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node src/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Team-InfraMorph/demo-app.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Team-InfraMorph/demo-app/issues"
+  },
+  "homepage": "https://github.com/Team-InfraMorph/demo-app#readme",
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "dotenv": "16.6.1",
+    "express": "4.22.3"
+  },
+  "devDependencies": {
+    "prisma": "6.19.3"
+  }
+}

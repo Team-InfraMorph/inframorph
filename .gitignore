@@ -29,3 +29,6 @@ crash.*.log
 foundation-outputs.json
 *-foundation-outputs.json
 
+
+# Private runtime state and validation reports
+.local/

@@ -1,0 +1,20 @@
+{
+  "shared": {
+    "src/images.js": [
+      "1804feff4814858f128b5b89ea0da32602f572a0eca910f8ab55b800310731e4"
+    ],
+    "prisma/schema.prisma": [
+      "eaf50f27b33e838a559239fef9a16eaeffdd08081a02d615e03d343f0dc5656c"
+    ]
+  },
+  "server": [
+    "ff776443cc6ec306c4277121be3a2c61fe3fcb4ebae01cd326732c8b0339ba7e"
+  ],
+  "worker": "e6b96775860ada2804b00b60d1d07da553f935e63e4079737fc846bfffef290e",
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "dotenv": "16.6.1",
+    "express": "4.22.3"
+  },
+  "scope": "Reviewed demo-app v1/v2 runtime bytes; no automatic approval for arbitrary apps"
+}

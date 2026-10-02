@@ -1,0 +1,38 @@
+name: E runtime tests
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    paths:
+      - 'policy_gate/**'
+      - 'builder/**'
+      - 'adapters/local/**'
+      - 'schemas/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - 'scripts/verify_e_*.py'
+      - '.github/workflows/e-runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate actual PR body
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/repo_policy.py --event "$GITHUB_EVENT_PATH"
+      - name: Install Python dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+      - name: Test gates, contracts and recovery without cloud credentials
+        run: |
+          node --version
+          .venv/bin/python -m unittest discover -s tests -v

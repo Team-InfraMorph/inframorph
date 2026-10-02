@@ -1,82 +1,171 @@
-"""빌드·배포 단계(구간 8~12)의 명령. 조종실은 이 명령을 실행해 stdout의 DeployEvent JSONL을 받는다.
+"""D API with C analysis/recovery and actual E Local deployment.
 
-| 단계 | 담당 | 명령 |
-|---|---|---|
-| 검사·빌드 | E Builder | `python -m builder --snapshot --bundle --plan --output --deployment-id` (BuildArtifact를 --output에) |
-| Local 배포 | E Local Adapter | `python -m adapters.local deploy --plan --artifact --state-dir --deployment-id [--publish]` |
-| Local 롤백 | E Local Adapter | `python -m adapters.local rollback --state-dir --deployment-id` |
-| AWS 배포 | A AWS Adapter | `python -m adapters.aws deploy --plan --artifact --state-dir --execute --deployment-id` |
-| AWS 롤백 | A AWS Adapter | `python -m adapters.aws rollback --state-dir --execute --deployment-id` |
-
-빌드는 실제 배포기가 있는 대상만 한다(가짜 배포기는 이미지가 필요 없다). 배포 작업 폴더 구조:
-<INFRAMORPH_HOME>/<deployment_id>/{snapshot, patched/<target>, plan.<target>.json, build.<target>.json}
-E Local Adapter의 상태 폴더는 앱마다 하나: <INFRAMORPH_HOME>/state/<plan.app> (E 계약: 폴더 이름 = plan.app).
+Use --demo explicitly for fixture B and response replay. Live team model API,
+AWS and public tunnels are not enabled by this entry point.
 """
+import argparse
+import asyncio
+from dataclasses import asdict
 import json
 import os
+from pathlib import Path
 import sys
 
-from .analysis import module_root
-
-ADAPTERS = {"local": "adapters/local", "aws": "adapters/aws"}
-# AWS Adapter는 실제 계정을 바꾸므로 --execute 없이는 거부한다. 이 명령은 조종실 승인을 거친 뒤에만 실행된다.
-EXECUTE = {"aws": ["--execute"]}
-NO_BUILD_NOTE = "새 커밋의 코드가 없어 다시 빌드하지 않음 (B Repo Mapper 연결 전) · 기존 버전 유지"
-
-
-def _fake_env(name, target, default=None):
-    """INFRAMORPH_FAKE_<NAME>_<TARGET>이 있으면 그 대상에만, 없으면 INFRAMORPH_FAKE_<NAME>을 쓴다."""
-    return os.environ.get(f"INFRAMORPH_FAKE_{name}_{target.upper()}", os.environ.get(f"INFRAMORPH_FAKE_{name}", default))
-
-
-def fake_deployer_cmd(deployment, target, folder=None):
-    """실제 배포기가 없는 대상에 쓰는 명령. 환경 변수로 지연·fixture·종료 코드를 대상별로 바꿀 수 있다."""
-    cmd = [sys.executable, "-m", "control_plane.fake_deployer", "--deployment-id", deployment["id"],
-           "--target", target,
-           "--delay", _fake_env("DELAY", target, "1"),
-           "--exit-code", _fake_env("EXIT_CODE", target, "0")]
-    if fixture := _fake_env("FIXTURE", target):
-        cmd += ["--fixture", fixture]
-    return cmd
+from schemas import Intent, Plan, RepoMap
+from schemas.common import ContractModel
+from analyzer.backend import ReplayBackend
+from analyzer.config import Limits
+from analyzer.runner import AnalysisError, analyze
+from analyzer.snapshot import Snapshot
+from analyzer.redaction import Redactor
+from analyzer.recovery import _check_plan
+from analyzer.source_policy import validate_demo_intent, validate_demo_plan
+from policy_gate.gate import validate_intent
+from .analysis import AnalysisFailed
+from .b_bridge import BCommands, DemoModules
+# Preserve D module command imports while the C Local worker uses an explicit runtime.
+from .module_commands import build_cmds, deployer_cmd, fake_deployer_cmd  # noqa: F401
 
 
-def _adapter_root(target):
-    package = ADAPTERS.get(target)
-    return module_root(package) if package else None
+ROOT = Path(__file__).resolve().parents[1]
 
 
-def build_cmds(deployment, plans, folder):
-    """실제 배포기가 있는 대상만 E Builder 명령을 만든다. {target: (작업 위치, 명령)}. 빌드할 게 없으면 빈 dict."""
-    root = module_root("builder")
-    if root is None or not (folder / "snapshot").exists():
-        return {}
-    cmds = {}
-    for target in plans:
-        bundle, plan_path = folder / "patched" / target, folder / f"plan.{target}.json"
-        if _adapter_root(target) is None or not bundle.exists() or not plan_path.exists():
-            continue
-        cmds[target] = (root, [sys.executable, "-m", "builder", "--snapshot", str(folder / "snapshot"),
-                               "--bundle", str(bundle), "--plan", str(plan_path),
-                               "--output", str(folder / f"build.{target}.json"),
-                               "--deployment-id", deployment["id"]])
-    return cmds
+class LocalContext(ContractModel):
+    deployment_id: str
+    project_id: str
+    snapshot: str
+    repo_map: RepoMap
+    intent: Intent
+    plan: Plan
+    metrics: dict
+    replay: str
+    state_root: str
+    output_dir: str
+    fault: str = "none"
+    demo: bool = False
+    planner_command: list[str] | None = None
 
 
-def deployer_cmd(deployment, target, folder):
-    """대상별 배포 명령. 실제 배포기와 그 입력(plan·빌드 결과)이 있으면 실제, 아니면 가짜 배포기. (작업 위치, 명령)"""
-    root = _adapter_root(target)
-    plan_path = folder / f"plan.{target}.json"
-    if root is not None and plan_path.exists():
-        state = folder.parent / "state" / json.loads(plan_path.read_text())["app"]
-        base = [sys.executable, "-m", ADAPTERS[target].replace("/", "."), "--deployment-id", deployment["id"]]
-        execute = EXECUTE.get(target, [])
-        if deployment["triggered_by"] == "rollback":
-            return root, base[:3] + ["rollback", "--state-dir", str(state)] + execute + base[3:]
-        artifact = folder / f"build.{target}.json"
-        if artifact.exists():
-            publish = ["--publish"] if target == "local" and os.environ.get("INFRAMORPH_LOCAL_PUBLISH") == "1" else []
-            return root, base[:3] + ["deploy", "--plan", str(plan_path), "--artifact", str(artifact),
-                                     "--state-dir", str(state)] + publish + execute + base[3:]
-    if root is not None:  # 실제 배포기는 있는데 넘길 빌드 결과가 없다 = 이 커밋의 코드가 없다. 가짜 성공을 보이지 않는다.
-        return None, fake_deployer_cmd(deployment, target, folder) + ["--note", NO_BUILD_NOTE]
-    return None, fake_deployer_cmd(deployment, target, folder)
+def private_json(path, data):
+    path = Path(path)
+    if any(p.is_symlink() for p in (path, *path.parents)):
+        raise ValueError("runtime_state_symlink")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as file:
+        json.dump(data, file)
+
+
+class LocalRuntime:
+    def __init__(self, *, root, b_modules, replay=None, fault="none"):
+        self.root = Path(root).absolute()
+        if any(p.is_symlink() for p in (self.root, *self.root.parents)):
+            raise ValueError("runtime_state_symlink")
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.b = b_modules
+        self.replay = replay
+        self.fault = fault
+        if fault not in {"none", "first", "always"} or fault != "none" and not isinstance(b_modules, DemoModules):
+            raise ValueError("fault_injection_requires_demo")
+        if not isinstance(b_modules, DemoModules) and replay is None:
+            raise ValueError("explicit_analysis_replay_required")
+
+    def context_file(self, deployment_id):
+        if not __import__("re").fullmatch(r"[A-Za-z0-9-]{1,100}", deployment_id):
+            raise ValueError("invalid_deployment_id")
+        return self.root / "deployments" / deployment_id / "context.json"
+
+    def analyze(self, store, deployment):
+        if set(deployment["targets"]) != {"local"}:
+            raise AnalysisFailed("local_runtime_only")
+        folder = self.context_file(deployment["id"]).parent
+        project = store.get_project(deployment["project_id"])
+        stats, stage = {}, "mapper"
+        try:
+            folder.mkdir(parents=True, exist_ok=False, mode=0o700)
+            mapped = self.b.map(project, deployment, folder)
+            stage = "snapshot"
+            replay = Path(self.replay or self.b.replay(mapped.repo_map)).absolute()
+            snapshot = Snapshot(mapped.snapshot, mapped.repo_map.tree, Limits(), Redactor())
+            if deployment.get("analysis_mode") == "rebuild_only" or deployment.get("triggered_by") == "rollback":
+                stage = "cached_intent"
+                cached = store.get_analysis(project["project_id"], mapped.repo_map.commit)
+                if cached is None and deployment.get("analysis_mode") == "rebuild_only":
+                    base = store.last_live(project["project_id"], deployment["id"])
+                    cached = store.get_analysis(project["project_id"], base["commit_sha"]) if base else None
+                if cached is None or cached["intent"] is None:
+                    raise ValueError("cached_intent_unavailable")
+                intent = Intent.model_validate(cached["intent"] | {"source_revision": mapped.repo_map.commit})
+                stats = {"backend": "replay", "model_calls": 0, "api_calls": 0,
+                         "snapshot_digest": snapshot.digest, "usage_complete": True}
+            else:
+                stage = "analyzer"
+                result = asyncio.run(analyze(mapped.repo_map, mapped.snapshot, ReplayBackend.from_file(replay)))
+                intent, stats = result.intent, asdict(result.metrics)
+            stage = "intent_policy"
+            validate_demo_intent(intent, mapped.snapshot, mapped.repo_map)
+            stage = "intent_gate"
+            validate_intent(intent, mapped.snapshot, mapped.repo_map.commit)
+            stage = "planner"
+            if deployment.get("triggered_by") == "rollback":
+                plan = Plan.model_validate(store.get_plans(deployment["id"])["local"])
+            else:
+                plan = self.b.plan(intent)
+            stage = "plan_policy"
+            _check_plan(intent, plan, mapped.repo_map.commit)
+            validate_demo_plan(plan, mapped.repo_map)
+            stage = "context"
+            context = LocalContext(deployment_id=deployment["id"], project_id=project["project_id"],
+                snapshot=str(mapped.snapshot), repo_map=mapped.repo_map, intent=intent, plan=plan,
+                metrics=stats, replay=str(replay), state_root=str(self.root / "projects"),
+                output_dir=str(folder), fault=self.fault, demo=isinstance(self.b, DemoModules),
+                planner_command=None if isinstance(self.b, DemoModules) else self.b.planner_command)
+            private_json(folder / "context.json", context.model_dump(mode="json"))
+            return {"commit_sha": mapped.repo_map.commit, "repo_map": mapped.repo_map.model_dump(mode="json"),
+                    "intent": intent.model_dump(mode="json"), "plans": {"local": plan.model_dump(mode="json")}, "metrics": stats, "intent_checked": True}
+        except AnalysisError as error:
+            raise AnalysisFailed(error.code, asdict(error.metrics) | {"blocked_stage": stage}) from None
+        except Exception:
+            # A downstream gate/Planner failure must not discard consumed usage
+            # or publish the rejected Intent/Plan. Stage names are host constants.
+            raise AnalysisFailed("local_pipeline_analysis_failed", stats | {"blocked_stage": stage}) from None
+
+    def command(self, store, deployment_id, target):
+        if target != "local":
+            raise ValueError("local_runtime_only")
+        path = self.context_file(deployment_id)
+        if not path.exists():
+            # D's rollback path skips ready(); use the explicitly authorized old
+            # revision/Plan and cached Intent without a new model inference.
+            deployment = store.get_deployment(deployment_id)
+            result = self.analyze(store, deployment)
+            store.set_analysis_metrics(deployment_id, result["metrics"])
+            store.save_initial_analysis(deployment_id, result)
+        return [sys.executable, "-m", "control_plane.local_deploy", "--context", str(path),
+                "--database", str(store.path.absolute())]
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--demo", action="store_true", help="Explicit fixture Mapper/Planner and stored model responses")
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--mapper-command", help="Operator-owned argv as a JSON list; request arrives on stdin")
+    parser.add_argument("--planner-command", help="Operator-owned argv as a JSON list; request arrives on stdin")
+    parser.add_argument("--replay", type=Path)
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args(argv)
+    if not 1 <= args.port <= 65535:
+        parser.error("invalid port")
+    if not args.demo and (not args.mapper_command or not args.planner_command or not args.replay):
+        parser.error("B commands and an explicit replay are required; --demo is a separate opt-in mode")
+    modules = DemoModules() if args.demo else BCommands(mapper_command=json.loads(args.mapper_command),
+                                                       planner_command=json.loads(args.planner_command))
+    runtime = LocalRuntime(root=args.root / "runtime", b_modules=modules, replay=args.replay)
+    from .app import create_app
+    import uvicorn
+    app = create_app(db_path=args.root / "control-plane.db", runtime=runtime)
+    uvicorn.run(app, host="127.0.0.1", port=args.port)
+
+
+if __name__ == "__main__":
+    main()
