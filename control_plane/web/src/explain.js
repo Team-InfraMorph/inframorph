@@ -28,6 +28,12 @@ const CODES = {
   analyzer_bad_output: ["AI 분석 결과를 읽을 수 없습니다", "분석을 다시 실행하세요."],
   intent_gate_timeout: ["근거 검사가 시간 안에 끝나지 않았습니다", null],
   patch_timeout: ["코드 수정이 시간 안에 끝나지 않았습니다", null],
+  // #30 AWS 배포 경로: 상세 원인은 화면에 내보내지 않고 조종실 서버의 비공개 기록에 남긴다
+  aws_pipeline_failed: ["AWS 배포 단계를 완료하지 못했습니다", "원인은 보안상 화면에 표시하지 않습니다. 조종실 서버의 배포 작업 폴더에 있는 failure.json을 확인하세요."],
+  aws_adapter_failed: ["AWS 배포 단계를 완료하지 못했습니다", "원인은 보안상 화면에 표시하지 않습니다. 조종실 서버의 배포 작업 폴더에 있는 failure.json을 확인하세요."],
+  local_pipeline_failed: ["Local 배포 단계를 완료하지 못했습니다", null],
+  mapper_planner_not_connected: ["레포 지도·배포 설계(B)가 연결되지 않았습니다", "데모 모드(control_plane.runtime --demo)로 실행하거나 B Mapper/Planner 명령을 연결하세요."],
+  runtime_source_changed: ["분석한 뒤에 소스가 바뀌었습니다", "같은 소스로 다시 분석하고 배포하세요."],
   // E Builder · Local Adapter
   image_tag_collision: ["같은 이름의 이미지가 이미 있습니다", null],
   state_app_mismatch: ["배포 상태 폴더가 앱 이름과 맞지 않습니다", null],

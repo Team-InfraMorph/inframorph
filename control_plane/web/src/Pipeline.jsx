@@ -15,7 +15,7 @@ const SHARED = [
 ];
 const STAGE_LABEL = { ...Object.fromEntries(SHARED), deploy: "배포", verify: "직접 확인" };
 const DEPLOY_STEPS = {
-  push: "이미지 업로드", infra: "인프라", start: "실행", health: "상태 확인",
+  plan: "변경 미리보기", push: "이미지 업로드", infra: "인프라", start: "실행", health: "상태 확인",
   url: "주소 발급", smoke: "외부 접속 테스트", rollback: "롤백",
 };
 const MARK = { ok: "✓", fail: "✗", started: "", wait: "!", skip: "–", pending: "" };
@@ -225,25 +225,24 @@ function json(text) {
 function changes(target, deploy, failure) {
   if (target !== "aws") return []; // Local 배포기는 아직 바뀐 것 요약을 남기지 않는다
   const rows = [];
-  let mode = null, plan = null;
+  let mode = null, applied = null, preview = null;
   for (const e of deploy?.events ?? []) {
     const d = json(e.detail);
     if (d?.mode) mode = d;
-    if (d?.stage_plan) plan = d.stage_plan;
+    if (d?.stage_plan) applied = d.stage_plan; // Terraform apply 결과
+    if (d?.changes) preview = d.changes; // #30: apply 전 Terraform plan 미리보기
   }
-  const pushed = deploy?.events.some((e) => e.step === "push" && e.status === "ok");
-  const infraTried = deploy?.events.some((e) => e.step === "infra");
-  if (mode) rows.push(["배포 방식", AWS_MODE[mode.mode] ?? mode.mode]);
-  if (pushed) rows.push(["이미지", "새 이미지를 저장소(ECR)에 올림"]);
-  if (plan) {
-    const parts = [["추가", plan.create], ["변경", plan.update], ["교체", plan.replace], ["삭제", plan.delete]]
+  const count = (c) => {
+    const parts = [["추가", c.create], ["변경", c.update], ["교체", c.replace], ["삭제", c.delete]]
       .filter(([, n]) => n).map(([w, n]) => `${w} ${n}`);
-    rows.push(["클라우드 자원", parts.length ? parts.join(" · ") : "바뀐 것 없음 (그대로)"]);
-  } else if (failure && infraTried) {
-    rows.push(["클라우드 자원", "반영 완료 전에 멈춤"]);
-  } else if (failure && pushed) {
-    rows.push(["클라우드 자원", "건드리지 않음"]);
-  }
+    return parts.length ? parts.join(" · ") : "바뀐 것 없음 (그대로)";
+  };
+  if (mode) rows.push(["배포 방식", AWS_MODE[mode.mode] ?? mode.mode]);
+  if (deploy?.events.some((e) => e.step === "push" && e.status === "ok")) rows.push(["이미지", "새 이미지를 저장소(ECR)에 올림"]);
+  if (applied) rows.push(["클라우드 자원", count(applied)]);
+  else if (preview) rows.push(["클라우드 자원", `예정: ${count(preview)}${failure ? " · 반영 완료 전에 멈춤" : ""}`]);
+  else if (failure?.step === "infra") rows.push(["클라우드 자원", "반영 완료 전에 멈춤"]);
+  else if (failure) rows.push(["클라우드 자원", "건드리지 않음 (적용 전에 멈춤)"]);
   return rows;
 }
 
