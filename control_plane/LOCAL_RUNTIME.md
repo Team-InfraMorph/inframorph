@@ -43,10 +43,41 @@ B 구현이 도착하면 다음 두 **운영자가 지정한 argv**를 등록한
 Mapper는 `output_dir/snapshot`에 선택한 커밋의 읽기 전용 소스를 생성한다. `source_revision=null`이면
 브랜치를 resolve하고 실제 full SHA를 RepoMap.commit에 넣는다. SHA가 지정되면 정확히 그 커밋을 가져와야 한다.
 경로 이탈·symlink·다른 SHA·스키마 오류·명령 실패는 배포를 중단한다. 원격 레포와 SHA의 일치 확인은 Mapper의 책임이다.
-명령은 stdout JSON 전용, 오류는 stderr, 종료 코드 0을 사용한다. 현재 응답 상한은 120 KB, 명령 시간 제한은 90초다.
+명령은 stdout JSON 전용, 오류는 stderr, 종료 코드 0을 사용한다. 요청·응답 상한은 각각 120 KB, 명령 시간 제한은 90초다.
+응답 크기는 읽는 동안 검사하며 크기 초과·시간 초과·종료 시 해당 명령의 자식 프로세스도 종료한다.
+stdout이 먼저 닫혀도 명령의 종료 기한을 유지한다. 비정상 종료·잘못된 JSON·중복 JSON 키·비유한 수치는
+고정 오류 코드로 거부하고 원문 출력이나 stderr를 공개하지 않는다. 팀 API 키와 `.env`는 전달하지 않는다.
 
 현재 추가 source policy는 검토한 demo-app 런타임 코드만 실행한다. 임의 웹 앱에 대한 일반적인 의미 검증기는 아니다.
 B 연결 후에도 새로운 소스 형태는 검토된 정책/패치 지원을 먼저 추가해야 한다.
+
+## B가 도착하기 전 연결 계약 검증
+
+다음 명령은 명시적인 **명령형 테스트 대역**으로 v1/v2 계약을 확인한다. B 구현을 대신 완성하거나 검증하는 명령은 아니다.
+
+```sh
+.venv/bin/python -m control_plane.b_contract_verify --fixture-commands \
+  --output-dir .local/b-contract/check-001
+```
+
+Mapper stdin/stdout → 선택한 SHA의 snapshot → C의 실제 Read/Grep/Glob 분석 → 실제 E Intent Gate →
+Planner stdin/stdout → Plan의 revision·실행 정책 → C 패치 → 실제 E Patch Gate 순서로 검사한다.
+모델은 저장된 응답을 재생하며 새 모델 추론·팀 API·Docker 빌드·배포·AWS를 실행하지 않는다.
+
+B가 명령 계약을 구현하면 `--fixture-commands`를 빼고 실제 argv를 전달한다.
+
+```sh
+.venv/bin/python -m control_plane.b_contract_verify \
+  --mapper-command '["python", "-m", "repo_mapper.bridge"]' \
+  --planner-command '["python", "-m", "planner.bridge"]' \
+  --output-dir .local/b-contract/actual-b-001
+```
+
+위 모듈 이름은 예시다. 실제 B가 제공한 진입점으로 바꿔야 한다. 두 명령 중 하나라도 빠지면 중단하며 대역으로 자동 전환하지 않는다.
+출력 폴더는 매번 새 경로를 사용한다. `summary.json`의 `b_commands`로 대역/운영자 명령을 구분하고,
+각 case의 `report.json`에서 통과한 검사·실패 단계·고정 오류 코드를 확인한다. 검증된 Intent/Plan/패치만 저장하고
+명령 원문 출력은 저장하지 않는다. 현재 지원 범위는 fixture에 기록된 demo-app v1/v2 SHA다.
+이 검사는 원격 Git SHA와 소스의 진위나 B의 임의 레포 처리 정확성을 증명하지 않는다.
 
 ## 복구와 저장
 
