@@ -5,14 +5,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from adapters.aws.cli import build_parser
+from adapters.aws.aws_api import AwsApi
+from adapters.aws.cli import _resolve_state_paths, _save_inputs, build_parser
+from adapters.aws.errors import AdapterError
 from adapters.aws.contracts import BuildArtifact, FoundationOutputs, Plan, validate_contracts
-from adapters.aws.errors import ContractError, DeploymentError
+from adapters.aws.errors import CommandError, ContractError, DeploymentError
 from adapters.aws.events import EventEmitter
 from adapters.aws.image import ImagePublisher
 from adapters.aws.locking import AppLock
+from adapters.aws.mode import FIRST, REDEPLOY, RESUME, detect_mode
 from adapters.aws.naming import AppIdentity
 from adapters.aws.process import CommandResult
+from adapters.aws.records import DeploymentRecord
 from adapters.aws.terraform import expected_resource_categories, terraform_values
 
 
@@ -317,6 +321,265 @@ class ImagePublisherTests(unittest.TestCase):
         self.assertEqual(tag_call[2], "sha256:" + "b" * 64)
         self.assertIn("@sha256:", published.uri)
         self.assertNotIn(artifact.image + "@", published.uri)
+
+
+def load_foundation():
+    with tempfile.TemporaryDirectory() as temp:
+        path = Path(temp) / "foundation.json"
+        path.write_text(json.dumps(foundation_data()), encoding="utf-8")
+        return FoundationOutputs.from_file(path, "111122223333")
+
+
+def sample_record(**overrides):
+    value = {
+        "deployment_id": "deploy-old",
+        "app_id": "demo-app",
+        "source_revision": SHA,
+        "local_image_id": "sha256:" + "b" * 64,
+        "image_digest_uri": "111122223333.dkr.ecr.ap-northeast-2.amazonaws.com/inframorph/apps@sha256:" + "c" * 64,
+        "task_definitions": {"web": "td-web:1"},
+        "service_names": {"web": "im-demo-app-52926082-web"},
+        "target_group_arn": "tg-arn",
+        "url": "https://demo-app.apps.example.com",
+        "state_key": "apps/demo-app/terraform.tfstate",
+        "terraform_values": {},
+    }
+    value.update(overrides)
+    return DeploymentRecord(**value)
+
+
+class DeployModeTests(unittest.TestCase):
+    STATE = "apps/demo-app/terraform.tfstate"
+
+    def test_first_deploy_when_nothing_exists(self):
+        mode = detect_mode("demo-app", None, False, {}, self.STATE)
+        self.assertEqual(mode.mode, FIRST)
+        self.assertTrue(mode.new_url)
+        self.assertEqual(json.loads(mode.detail())["url"], "new")
+
+    def test_redeploy_when_record_and_state_exist(self):
+        mode = detect_mode("demo-app", sample_record(), True, {"im-demo-app-52926082-web": 1}, self.STATE)
+        self.assertEqual(mode.mode, REDEPLOY)
+        detail = json.loads(mode.detail(action="x"))
+        self.assertEqual(detail["previous_deployment_id"], "deploy-old")
+        self.assertEqual(detail["url"], "same")
+        self.assertEqual(detail["action"], "x")
+
+    def test_resume_after_unfinished_first_attempt(self):
+        mode = detect_mode("demo-app", None, True, {}, self.STATE)
+        self.assertEqual(mode.mode, RESUME)
+        self.assertTrue(mode.new_url)
+
+    def test_live_app_without_record_is_inconsistent(self):
+        with self.assertRaisesRegex(ContractError, "inconsistent state.*running"):
+            detect_mode("demo-app", None, True, {"im-demo-app-52926082-web": 1}, self.STATE)
+
+    def test_record_without_state_is_inconsistent(self):
+        with self.assertRaisesRegex(ContractError, "inconsistent state.*missing"):
+            detect_mode("demo-app", sample_record(), False, {}, self.STATE)
+
+    def test_old_record_without_mode_still_loads(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "record.json"
+            raw = dict(sample_record().__dict__)
+            raw.pop("deploy_mode")
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            self.assertEqual(DeploymentRecord.load(path).deploy_mode, "unknown")
+
+
+class ScriptedRunner:
+    """Returns queued results per AWS operation name (args[2])."""
+
+    def __init__(self, script):
+        self.script = {key: list(value) for key, value in script.items()}
+        self.calls = []
+
+    def _next(self, args):
+        self.calls.append(list(args))
+        item = self.script[args[2]].pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def json(self, args, **kwargs):
+        return self._next(args)
+
+    def run(self, args, **kwargs):
+        return self._next(args)
+
+
+class AwsApiStateTests(unittest.TestCase):
+    def api(self, script):
+        api = AwsApi(load_foundation(), ScriptedRunner(script))
+        api._sleep = lambda seconds: None
+        return api
+
+    def test_state_exists_true_false_and_error(self):
+        api = self.api({"head-object": [
+            CommandResult("{}", "", 0),
+            CommandResult("", "An error occurred (404) when calling the HeadObject operation: Not Found", 254),
+            CommandResult("", "An error occurred (403) when calling the HeadObject operation: Forbidden", 254),
+        ]})
+        self.assertTrue(api.state_exists("bucket", "apps/demo-app/terraform.tfstate"))
+        self.assertFalse(api.state_exists("bucket", "apps/demo-app/terraform.tfstate"))
+        with self.assertRaisesRegex(CommandError, "could not check Terraform state"):
+            api.state_exists("bucket", "apps/demo-app/terraform.tfstate")
+
+    def test_live_services_ignores_inactive_and_scaled_to_zero(self):
+        api = self.api({"describe-services": [{"services": [
+            {"serviceName": "a-web", "status": "ACTIVE", "desiredCount": 1, "runningCount": 1},
+            {"serviceName": "a-worker", "status": "ACTIVE", "desiredCount": 0, "runningCount": 0},
+            {"serviceName": "a-old", "status": "INACTIVE", "desiredCount": 1, "runningCount": 0},
+        ]}]})
+        self.assertEqual(api.live_services(["a-web", "a-worker", "a-old"]), {"a-web": 1})
+
+    def test_run_task_retries_while_new_role_propagates(self):
+        not_ready = CommandError("ClientException: ECS was unable to assume the role 'arn' that was provided")
+        stopped = {"tasks": [{"lastStatus": "STOPPED", "containers": [{"name": "migration", "exitCode": 0}]}]}
+        api = self.api({
+            "run-task": [not_ready, not_ready, {"tasks": [{"taskArn": "arn:aws:ecs:r:a:task/inframorph/abc123"}]}],
+            "describe-tasks": [stopped],
+        })
+        api.run_task("td", "sg", ["subnet-1"], "database migration", 30)
+        self.assertEqual(sum(1 for call in api.runner.calls if call[2] == "run-task"), 3)
+
+    def test_run_task_does_not_retry_other_errors(self):
+        api = self.api({"run-task": [CommandError("AccessDenied")]})
+        with self.assertRaisesRegex(CommandError, "AccessDenied"):
+            api.run_task("td", "sg", ["subnet-1"], "database migration", 30)
+
+    def test_task_failure_reports_reason_and_log_stream(self):
+        stopped = {"tasks": [{
+            "lastStatus": "STOPPED",
+            "stoppedReason": "Essential container in task exited",
+            "containers": [{"name": "migration", "exitCode": 255}],
+        }]}
+        api = self.api({
+            "run-task": [{"tasks": [{"taskArn": "arn:aws:ecs:r:a:task/inframorph/abc123"}]}],
+            "describe-tasks": [stopped],
+        })
+        with self.assertRaises(DeploymentError) as caught:
+            api.run_task("td", "sg", ["subnet-1"], "database migration", 30,
+                         log_group="/inframorph/apps/demo-app/data-tasks", log_prefix="migration")
+        message = str(caught.exception)
+        self.assertIn("exit=255", message)
+        self.assertIn("linux/amd64", message)
+        self.assertIn("Essential container in task exited", message)
+        self.assertIn("/inframorph/apps/demo-app/data-tasks migration/migration/abc123", message)
+
+
+class InconsistentStateStopsBeforeChangeTests(unittest.TestCase):
+    def test_live_app_without_record_fails_at_plan_step_without_push(self):
+        from adapters.aws.deployment import DeploymentOrchestrator, DeploymentRequest
+        from adapters.aws.image import LocalImage
+
+        class Publisher:
+            def __init__(self):
+                self.published = False
+
+            def inspect(self, artifact):
+                return LocalImage(artifact.image, "sha256:" + "b" * 64, "linux/amd64")
+
+            def publish(self, *args, **kwargs):
+                self.published = True
+                raise AssertionError("must not push")
+
+        class Aws:
+            def verify_caller(self):
+                pass
+
+            def ensure_listener_priority(self, priority, hostname):
+                pass
+
+            def state_exists(self, bucket, key):
+                return True
+
+            def live_services(self, names):
+                return {sorted(names)[0]: 1}
+
+        stream = io.StringIO()
+        publisher = Publisher()
+        orchestrator = DeploymentOrchestrator(
+            Plan.parse(plan_data()), BuildArtifact.parse(artifact_data()), load_foundation(),
+            terraform=None, publisher=publisher, aws=Aws(), events=EventEmitter("deploy-2", stream),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            request = DeploymentRequest("deploy-2", "bucket", "node src/migrate.js", 30, False,
+                                        Path(temp) / "work", Path(temp) / "record.json")
+            with self.assertRaisesRegex(ContractError, "inconsistent state"):
+                orchestrator.deploy(request)
+        events = [json.loads(line) for line in stream.getvalue().splitlines()]
+        self.assertEqual(events[-1]["step"], "plan")
+        self.assertEqual(events[-1]["status"], "fail")
+        self.assertFalse(publisher.published)
+        self.assertNotIn("push", [event["step"] for event in events])
+
+
+def control_plane_environment():
+    """What the Control Plane process has: shared inputs only; per-deploy paths come as arguments."""
+    environment = adapter_environment()
+    for key in ("INFRAMORPH_PLAN", "INFRAMORPH_BUILD_ARTIFACT", "INFRAMORPH_DEPLOYMENT_RECORD",
+                "INFRAMORPH_AWS_WORK_DIR", "INFRAMORPH_DEPLOYMENT_ID"):
+        environment.pop(key)
+    return environment
+
+
+class ControlPlaneStateDirTests(unittest.TestCase):
+    def test_deploy_with_state_dir_derives_record_and_work_dir(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", control_plane_environment(), clear=True):
+            state = Path(temp) / "state" / "demo-app"
+            args = build_parser().parse_args([
+                "deploy", "--plan", "/tmp/p.json", "--artifact", "/tmp/a.json",
+                "--state-dir", str(state), "--execute", "--deployment-id", "dep-1",
+            ])
+            _resolve_state_paths(args)
+            self.assertEqual(args.record, state / "aws-deployment.json")
+            self.assertEqual(args.work_dir, state / "aws-work")
+            self.assertTrue(state.is_dir())
+            self.assertTrue(args.execute)
+
+    def test_deploy_without_state_dir_or_record_is_rejected(self):
+        with patch.dict("os.environ", control_plane_environment(), clear=True):
+            args = build_parser().parse_args(["deploy", "--plan", "/tmp/p.json", "--artifact", "/tmp/a.json",
+                                              "--deployment-id", "dep-1"])
+            with self.assertRaisesRegex(AdapterError, "--record and --work-dir required"):
+                _resolve_state_paths(args)
+
+    def test_rollback_needs_only_state_dir_and_deployment_id(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", control_plane_environment(), clear=True):
+            state = Path(temp)
+            (state / "plan.aws.json").write_text(json.dumps(plan_data()), encoding="utf-8")
+            (state / "build.aws.json").write_text(json.dumps(artifact_data()), encoding="utf-8")
+            args = build_parser().parse_args(
+                ["rollback", "--state-dir", str(state), "--execute", "--deployment-id", "dep-2"]
+            )
+            _resolve_state_paths(args)
+            self.assertEqual(args.plan, state / "plan.aws.json")
+            self.assertEqual(args.artifact, state / "build.aws.json")
+            self.assertEqual(args.record, state / "aws-deployment.json")
+
+    def test_rollback_without_saved_inputs_explains_why(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", control_plane_environment(), clear=True):
+            args = build_parser().parse_args(["rollback", "--state-dir", temp, "--execute", "--deployment-id", "d"])
+            with self.assertRaisesRegex(AdapterError, "none were saved"):
+                _resolve_state_paths(args)
+
+    def test_successful_deploy_keeps_inputs_for_rollback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            plan_file, artifact_file = work / "plan.aws.json.src", work / "build.aws.json.src"
+            plan_file.write_text(json.dumps(plan_data()), encoding="utf-8")
+            artifact_file.write_text(json.dumps(artifact_data()), encoding="utf-8")
+            state = work / "state"
+            state.mkdir()
+            args = build_parser().parse_args([
+                "deploy", "--plan", str(plan_file), "--artifact", str(artifact_file), "--state-dir", str(state),
+                "--deployment-id", "d", "--account-id", "111122223333", "--foundation", "/tmp/f.json",
+                "--state-bucket", "b",
+            ])
+            _save_inputs(args)
+            self.assertEqual(json.loads((state / "plan.aws.json").read_text())["app"], "demo-app")
+            self.assertEqual(json.loads((state / "build.aws.json").read_text())["platform"], "linux/amd64")
 
 
 if __name__ == "__main__":

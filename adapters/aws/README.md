@@ -142,6 +142,34 @@ python3 -m adapters.aws rollback --execute
 DB migration 이후 자동 rollback을 허용하려면 migration의 backward compatibility를 별도로
 검토한 뒤 `--migration-backward-compatible`을 배포 명령에 추가한다.
 
+## Control Plane 연동
+
+Control Plane은 Local Adapter와 같은 형식으로 호출한다. 앱마다 하나인 상태 폴더(`<INFRAMORPH_HOME>/state/<plan.app>`)를 `--state-dir`로 넘기면 Adapter가 그 안에 배포 기록(`aws-deployment.json`), Terraform 작업 폴더(`aws-work/`), 마지막 성공 배포의 Plan·BuildArtifact 사본(`plan.aws.json`, `build.aws.json`)을 둔다.
+
+```sh
+python -m adapters.aws deploy --plan <plan.aws.json> --artifact <build.aws.json> --state-dir <state> --execute --deployment-id <id>
+python -m adapters.aws rollback --state-dir <state> --execute --deployment-id <id>
+```
+
+- `--execute`는 Control Plane 승인을 거친 실행에서만 붙는다.
+- `--state-dir`가 있으면 `--record`·`--work-dir`(및 해당 env)는 쓰지 않는다. Control Plane 프로세스 env에는 `INFRAMORPH_PLAN`·`INFRAMORPH_BUILD_ARTIFACT`·`INFRAMORPH_DEPLOYMENT_RECORD`·`INFRAMORPH_AWS_WORK_DIR`·`INFRAMORPH_DEPLOYMENT_ID`를 비워 둔다.
+- 계정·Foundation outputs·state bucket·migration 명령·대기 시간은 기존 `INFRAMORPH_*` env에서 읽는다.
+
+## 배포 모드와 실패 사유
+
+`deploy`는 AWS를 바꾸기 전에 배포 기록(`--record`)과 실제 AWS 상태(앱 Terraform state, ECS 서비스)를 대조해 모드를 정한다.
+
+| mode | 조건 | URL |
+|---|---|---|
+| `first` | 기록 없음 · state 없음 · 실행 중 서비스 없음 | 새 URL |
+| `resume` | 기록 없음 · 이전 미완료 시도의 state만 있음 · 실행 중 서비스 없음 | 새 URL |
+| `redeploy` | 이전 성공 기록 + state 있음 | 같은 URL 갱신 |
+| 불일치 | 실행 중인 앱인데 기록 없음, 또는 기록은 있는데 state 없음 | 변경 전에 `plan` 단계 실패 |
+
+- 모드는 `infra started`와 `url ok` 이벤트의 `detail`(JSON: `mode`, `reason`, `url`=`new`/`same`, 이전 배포 ID)에 담기고 배포 기록에도 저장된다. 완료 시 stderr에 `AWS Adapter: <mode> deploy complete: <url>`을 출력한다.
+- 새 IAM 역할이 ECS에 아직 보이지 않아 RunTask가 거부되면 10초 간격으로 최대 6회 다시 시도한다.
+- bootstrap/migration 태스크가 실패하면 종료 코드, 중지 사유, CloudWatch 로그 그룹과 스트림 이름을 실패 이벤트에 넣는다.
+
 ## 커밋하지 않는 파일과 값
 
 - `.env`
