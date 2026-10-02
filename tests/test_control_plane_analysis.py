@@ -40,7 +40,7 @@ def add_code_patch_stub(root, exit_code=0):
         out.mkdir()
         (out / "manifest.json").write_text(json.dumps({MANIFEST!r}))
         (out / "patch.diff").write_text({DIFF!r})
-        print(json.dumps({MANIFEST!r}))
+        print(json.dumps({MANIFEST!r}, indent=2))  # 실제 C 모듈처럼 여러 줄 JSON
     """))
 
 

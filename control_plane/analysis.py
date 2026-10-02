@@ -42,6 +42,11 @@ def module_root(package):
 
 
 def _last_json(text):
+    """출력 전체가 JSON이면(여러 줄 들여쓰기 포함) 그대로, 아니면 마지막 JSON 줄(로그 뒤에 결과를 찍는 모듈)."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
     for line in reversed(text.strip().splitlines()):
         try:
             return json.loads(line)
