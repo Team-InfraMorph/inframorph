@@ -1,20 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
+import { explain } from "./explain.js";
+import { Badge, Pipeline, TARGETS, TERMINAL } from "./Pipeline.jsx";
 import { Structure } from "./Structure.jsx";
 
-const TARGETS = { local: "Local (노트북 Docker)", aws: "AWS (서울)" };
-const STEPS = {
-  snapshot: "스냅샷", map: "레포 지도", analyze: "AI 분석", policy: "정책 검사", plan: "설계",
-  patch: "코드 수정", build: "빌드", push: "이미지 업로드", infra: "인프라", start: "실행",
-  health: "상태 확인", url: "주소 발급", smoke: "자동 테스트", rollback: "롤백",
-};
-const STATUS = {
-  CREATED: "대기", DEPLOYING: "배포 중", AWAITING_APPROVAL: "승인 대기", LIVE: "정상",
-  FAILED: "실패", ROLLED_BACK: "롤백됨", SUPERSEDED: "건너뜀",
-};
 const TRIGGER = { manual: "수동", push: "git push", rollback: "롤백" };
 const MODE = { full_analysis: "전체 분석", reanalyze: "재분석", rebuild_only: "빌드만 (AI 생략)" };
-const TERMINAL = ["LIVE", "FAILED", "ROLLED_BACK", "SUPERSEDED"];
 
 const STATE_KIND = { relational_db: "관계형 DB", persistent_files: "영구 파일" };
 const BACKEND = { replay: "저장된 응답 재생", "codex-cli": "로컬 Codex · ChatGPT 로그인", openai: "실제 모델 호출", fixture: "예시 분석 결과", mixed: "혼합" };
@@ -45,10 +36,6 @@ function load(key) {
 }
 function save(key, value) {
   try { localStorage.setItem(key, value); } catch { /* 저장 못 해도 화면은 동작 */ }
-}
-
-function Badge({ status }) {
-  return <span className={`badge s-${status}`}>{STATUS[status] ?? status}</span>;
 }
 
 function NewProject({ onCreated, awsEnabled }) {
@@ -121,7 +108,7 @@ function Usage({ deployment, metrics }) {
     .filter((name) => Object.hasOwn(POLICY_FIELD, name)).map((name) => POLICY_FIELD[name]);
   return <>
     {metrics.error && <p className="usage error">
-      AI 분석 실패: {ANALYSIS_ERROR[metrics.error] ?? "분석 처리를 완료하지 못했어요."}
+      AI 분석 실패: {ANALYSIS_ERROR[metrics.error] ?? explain(metrics.error)?.what ?? "분석 처리를 완료하지 못했어요."}
       {ANALYSIS_STAGE[metrics.blocked_stage] && <> 단계: {ANALYSIS_STAGE[metrics.blocked_stage]}.</>}
       {fields.length > 0 && <> 확인 항목: {fields.join(", ")}.</>}
       <span className="dim"> ({metrics.error})</span>
@@ -143,48 +130,6 @@ function Recovery({ metrics }) {
     {reason && <p>{reason}</p>}
     <p className="dim">초기 응답 {recovery.initial_metrics.model_calls ?? 0}회 · 재분석 응답 {recovery.retry_metrics.model_calls ?? 0}회 · 총 사용량은 아래에 합산돼요.</p>
   </div>;
-}
-
-function eventDetail(detail) {
-  const messages = {
-    image_build_waiting: "다른 배포에서 같은 이미지를 준비하고 있어 완료를 기다립니다.",
-    image_build_wait_timeout: "다른 배포의 이미지 빌드가 오래 걸려 대기 시간을 초과했습니다. 완료 후 다시 배포해 주세요.",
-    image_build_already_running: "다른 배포가 같은 이미지를 빌드하는 중입니다. 완료 후 다시 배포해 주세요.",
-    image_tag_collision: "같은 커밋의 이미지와 수정된 코드가 달라 이미지 검증에 실패했습니다.",
-    image_platform_mismatch: "이미지가 배포에 필요한 플랫폼과 일치하지 않습니다.",
-    image_provenance_mismatch: "이미지가 승인된 코드로 만들어졌는지 확인하지 못했습니다.",
-    untrusted_build_lock: "이미지 빌드 잠금 파일의 안전성을 확인하지 못했습니다.",
-    command_failed: "Docker 명령이 실패했습니다. Docker 실행 상태를 확인해 주세요.",
-    command_unavailable_or_timeout: "Docker 명령을 실행하지 못했거나 실행 시간을 초과했습니다.",
-    local_pipeline_failed: "Local 배포 단계를 완료하지 못했습니다.",
-    aws_intent_source_approved: "앱 소스와 분석 결과를 확인했습니다.",
-    aws_patch_started: "AWS에 맞게 DB와 저장소 코드를 수정합니다.",
-    aws_patch_approved: "AWS 코드 수정의 정책 검사를 통과했습니다.",
-    aws_adapter_failed: "AWS 배포 단계를 완료하지 못했습니다. 비공개 진단 기록을 확인해 주세요.",
-    "validating exact local linux/amd64 image": "승인된 이미지를 확인합니다.",
-    "publishing immutable ECR tag": "승인된 이미지를 ECR에 업로드합니다.",
-    "activating digest-pinned ECS services": "ECS 서비스를 실행합니다.",
-    "waiting for ALB target health": "로드밸런서에서 앱 상태를 확인합니다.",
-    "all registered public targets are healthy": "로드밸런서 상태 검사를 통과했습니다.",
-    "performing verified external HTTPS health request": "외부 HTTPS 접속을 확인합니다.",
-  };
-  if (messages[detail]) return messages[detail];
-  try {
-    const value = JSON.parse(detail);
-    if (messages[value.code]) return messages[value.code];
-    if (value.phase === "recoverable_failure") return "자동 테스트 실패를 확인해 한 번 재분석합니다.";
-    if (value.code === "retry_recovered") return "재시도 검증을 통과했습니다.";
-    if (value.code === "second_local_failure") return "재시도 후에도 실패해 자동 복구를 중단했습니다.";
-    if (value.retry_attempt != null) return `자동 복구 ${value.retry_attempt}/1회`;
-    if (typeof value.code === "string" && value.code.startsWith("initial_")) return "첫 배포 검증";
-    const changes = value.changes ?? value.stage_plan;
-    if (changes) return `앱 리소스 추가 ${changes.create} · 수정 ${changes.update} · 삭제 ${changes.delete} · 교체 ${changes.replace}`;
-    if (value.mode) return value.mode === "redeploy" ? "기존 앱과 같은 주소로 재배포합니다." : "이 프로젝트 전용 앱을 준비합니다.";
-    if (value.services) return `서비스 실행 완료: ${Object.keys(value.services).join(", ")}`;
-    if (value.digest) return "이미지를 업로드하고 배포에 사용할 버전을 고정했습니다.";
-    if (value.local_image_id) return "승인된 이미지와 커밋을 확인했습니다.";
-  } catch { /* E가 보내는 일반 문구도 표시 */ }
-  return detail;
 }
 
 function AnalysisCard({ deployment, intent }) {
@@ -279,44 +224,6 @@ function PlanCompare({ plans, targets }) {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function Verification({ check, onRecheck }) {
-  if (!check) return null;
-  const time = new Date(check.checked_at).toLocaleTimeString();
-  const text = check.status === "ok" ? `조종실이 직접 확인 · 응답 ${check.code} · ${(check.ms / 1000).toFixed(2)}초`
-    : check.status === "fail" ? `직접 확인 실패 · ${check.detail}` : check.detail;
-  return (
-    <div className={`verify v-${check.status}`}>
-      <span>{check.status === "ok" ? "✓" : check.status === "fail" ? "✗" : "–"} {text}</span>
-      <span className="dim"> · {time}</span>
-      {check.status !== "skipped" && <button className="small secondary" onClick={onRecheck}>다시 확인</button>}
-    </div>
-  );
-}
-
-function TargetColumn({ target, state, events, onRecheck }) {
-  return (
-    <div className="card target">
-      <div className="row between">
-        <h2>{TARGETS[target]}</h2>
-        {state && <Badge status={state.status} />}
-      </div>
-      {state?.url && <a className="url" href={state.url} target="_blank" rel="noreferrer">{state.url}</a>}
-      <Verification check={state?.verification} onRecheck={onRecheck} />
-      <ol className="timeline">
-        {events.map((e) => (
-          <li key={e.seq} className={`ev-${e.status}`}>
-            <span className="step">{STEPS[e.step] ?? e.step}</span>
-            <span className="mark">{e.status === "ok" ? "완료" : e.status === "fail" ? "실패" : "시작"}</span>
-            {e.duration_ms != null && <span className="dim">{(e.duration_ms / 1000).toFixed(1)}초</span>}
-            {e.detail && <div className="detail">{eventDetail(e.detail)}</div>}
-          </li>
-        ))}
-        {!events.length && <li className="dim">아직 이벤트가 없습니다</li>}
-      </ol>
     </div>
   );
 }
@@ -488,18 +395,17 @@ export default function App() {
             <p className="dim reasons">판정 근거: {selected.change_reasons.join(" / ")}</p>
           )}
 
+          {selected && (
+            <Pipeline deployment={selected} events={events} targets={targets}
+                      onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
+          )}
+
           {selected && <AnalysisCard deployment={selected} intent={intent} />}
 
           <PlanCompare plans={plans} targets={targets} />
 
           <PatchCard patch={patch} />
 
-          <div className="targets">
-            {targets.map((t) => (
-              <TargetColumn key={t} target={t} state={selected?.targets[t]} events={events.filter((e) => e.target === t)}
-                            onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
-            ))}
-          </div>
 
           <History deployments={deployments} selectedId={selected?.id}
                    onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)}

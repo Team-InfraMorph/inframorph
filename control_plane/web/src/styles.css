@@ -126,3 +126,56 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .verify.v-ok { color: var(--ok); }
 .verify.v-fail { color: var(--fail); }
 .verify.v-skipped { color: var(--dim); }
+
+/* 파이프라인 스테퍼: 공통 단계 → 동시 배포 */
+.stepper { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; padding: 0; }
+.stepper li {
+  position: relative; flex: 1 1 110px; display: grid; grid-template-columns: auto 1fr; column-gap: 8px;
+  align-items: center; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line);
+}
+.stepper .dot {
+  grid-row: span 2; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; background: var(--muted-bg); color: var(--dim);
+}
+.stepper .label { font-weight: 600; font-size: 13px; }
+.stepper .time { font-size: 12px; color: var(--dim); min-height: 18px; }
+.stepper .st-ok .dot { background: var(--ok-bg); color: var(--ok); }
+.stepper .st-fail { border-color: var(--fail); }
+.stepper .st-fail .dot { background: var(--fail); color: #fff; }
+.stepper .st-wait { border-color: var(--warn); }
+.stepper .st-wait .dot { background: var(--warn); color: #fff; }
+.stepper .st-skip { opacity: 0.55; }
+.stepper .st-started .dot { background: var(--run-bg); }
+.stepper .st-started .dot::after {
+  content: ""; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--run); border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+.stepper .current { border-color: var(--run); box-shadow: 0 0 0 3px var(--run-bg); }
+.stepper .fork { flex-basis: 160px; border-style: dashed; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .stepper .st-started .dot::after { animation: none; } }
+
+/* 대상별 결과 카드 */
+.result { border-top: 4px solid var(--line); }
+.result.r-LIVE { border-top-color: var(--ok); }
+.result.r-FAILED, .result.r-BLOCKED { border-top-color: var(--fail); }
+.result.r-DEPLOYING { border-top-color: var(--run); }
+.result.r-ROLLED_BACK { border-top-color: var(--warn); }
+.result .headline { font-size: 18px; font-weight: 700; margin: 2px 0 8px; }
+.result .url { font-size: 15px; font-weight: 600; }
+.chips { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; padding: 0; }
+.chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--muted-bg); color: var(--dim); }
+.chip.c-ok { background: var(--ok-bg); color: var(--ok); }
+.chip.c-fail { background: var(--fail-bg); color: var(--fail); }
+.chip.c-started { background: var(--run-bg); color: var(--run); }
+.log summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-top: 6px; }
+.log .timeline { margin-top: 8px; }
+
+/* 실패 설명: 무슨 일인지 + 다음에 할 일, 원문은 접어 둔다 */
+.explain { background: var(--fail-bg); color: var(--text); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+.explain strong { color: var(--fail); }
+.explain p { margin: 4px 0 0; font-size: 13px; }
+.explain summary { cursor: pointer; font-size: 12px; color: var(--dim); margin-top: 6px; }
+.explain pre { white-space: pre-wrap; word-break: break-all; margin: 6px 0 0; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.stop { border-color: var(--fail); }
+.stop h2 { color: var(--fail); }
