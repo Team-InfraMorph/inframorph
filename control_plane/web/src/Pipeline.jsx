@@ -69,7 +69,39 @@ function sharedStage(key, deployment, perTarget) {
   const first = Math.min(...found.map((s) => Date.parse(s.first)));
   const ms = status === "started" ? Date.now() - first : Math.max(...found.map((s) => s.ms));
   const failed = found.find((s) => s.status === "fail");
+  // 조종실이 '생략'·'미연결'을 남긴 단계는 ✓로 보이지 않게 그 문구를 그대로 쓴다.
+  const said = found.flatMap((s) => s.events).map((e) => e.detail).find((d) => d && /생략|미연결/.test(d));
+  if (status === "ok" && said) return { status: /생략/.test(said) ? "skip" : "ok", ms, note: said };
   return { status, ms, fail: failed?.events.find((e) => e.status === "fail") };
+}
+
+/** 단계가 남긴 결과 한 줄. 화면에 이미 있는 분석·수정·설계도 데이터만 쓴다(추측하지 않는다). */
+function stageNote(key, st, deployment, ctx) {
+  if (st.note) return st.note;
+  if (st.status === "skip") return "실행 안 함";
+  if (key === "approval") return st.status === "wait" ? "구조 변경 · 사람 확인 필요" : st.status === "ok" ? "승인됨" : null;
+  if (st.status !== "ok") return null;
+  if (key === "analyze") {
+    const i = ctx.intent;
+    return i ? `서비스 ${i.workloads.length} · 저장 ${i.state.length} · 비밀값 ${i.secrets.length}` : null;
+  }
+  if (key === "evidence" && ctx.intent) {
+    const n = [...ctx.intent.workloads, ...ctx.intent.state].reduce((sum, e) => sum + e.evidence.length, 0);
+    return `근거 ${n}곳 모두 실제 코드에 있음`;
+  }
+  if (key === "patch") {
+    const p = Object.values(ctx.patch)[0];
+    if (!p) return null;
+    if (p.status === "unchanged") return "고칠 것 없음 · 원본 그대로";
+    const added = p.files.filter((f) => f.action === "add").length;
+    return `파일 ${p.files.length}개 (추가 ${added} · 수정 ${p.files.length - added})`;
+  }
+  if (key === "patchcheck") return "허용 범위 안 · 위변조 없음";
+  if (key === "build") {
+    const tag = Object.values(ctx.plans)[0]?.image_tag;
+    return tag ? `새 이미지 ${tag.slice(0, 11)}` : null;
+  }
+  return null;
 }
 
 export function Badge({ status }) {
@@ -92,7 +124,7 @@ function Explained({ detail }) {
 }
 
 /** 위쪽 한 줄: 공통 단계 → (Local ∥ AWS) 배포 → 직접 확인. 지금 단계를 강조하고 걸린 시간을 붙인다. */
-function Stepper({ deployment, targets, stages }) {
+function Stepper({ deployment, targets, stages, ctx }) {
   const shared = SHARED.map(([key, label]) => [key, label, sharedStage(key, deployment, targets.map((t) => stages[t]))])
     .filter(([, , st]) => st);
   const running = !TERMINAL.includes(deployment.status);
@@ -105,7 +137,8 @@ function Stepper({ deployment, targets, stages }) {
           <li key={key} className={`st-${st.status}${key === current ? " current" : ""}`}>
             <span className="dot">{MARK[st.status]}</span>
             <span className="label">{label}</span>
-            <span className="time">{st.note ?? (st.status === "wait" ? "대기 중" : seconds(st.ms) ?? "")}</span>
+            <span className="time">{st.status === "wait" ? "대기 중" : st.status === "skip" ? "" : seconds(st.ms) ?? ""}</span>
+            {stageNote(key, st, deployment, ctx) && <span className="note">{stageNote(key, st, deployment, ctx)}</span>}
           </li>
         ))}
         <li className={`st-${deployOverall(deployment, targets)} fork`}>
@@ -178,6 +211,42 @@ function Log({ events }) {
   );
 }
 
+const AWS_MODE = {
+  first: "처음 배포 · 새 앱과 새 주소를 만듦",
+  resume: "이전에 멈춘 첫 배포를 이어서 · 새 주소",
+  redeploy: "기존 앱 갱신 · 주소는 그대로",
+};
+
+function json(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+/** 대상별 '바뀐 것 / 그대로인 것'. 배포기가 알려 준 사실만 쓰고, 모르면 줄을 만들지 않는다. */
+function changes(target, deploy, failure) {
+  if (target !== "aws") return []; // Local 배포기는 아직 바뀐 것 요약을 남기지 않는다
+  const rows = [];
+  let mode = null, plan = null;
+  for (const e of deploy?.events ?? []) {
+    const d = json(e.detail);
+    if (d?.mode) mode = d;
+    if (d?.stage_plan) plan = d.stage_plan;
+  }
+  const pushed = deploy?.events.some((e) => e.step === "push" && e.status === "ok");
+  const infraTried = deploy?.events.some((e) => e.step === "infra");
+  if (mode) rows.push(["배포 방식", AWS_MODE[mode.mode] ?? mode.mode]);
+  if (pushed) rows.push(["이미지", "새 이미지를 저장소(ECR)에 올림"]);
+  if (plan) {
+    const parts = [["추가", plan.create], ["변경", plan.update], ["교체", plan.replace], ["삭제", plan.delete]]
+      .filter(([, n]) => n).map(([w, n]) => `${w} ${n}`);
+    rows.push(["클라우드 자원", parts.length ? parts.join(" · ") : "바뀐 것 없음 (그대로)"]);
+  } else if (failure && infraTried) {
+    rows.push(["클라우드 자원", "반영 완료 전에 멈춤"]);
+  } else if (failure && pushed) {
+    rows.push(["클라우드 자원", "건드리지 않음"]);
+  }
+  return rows;
+}
+
 const HEADLINE = {
   LIVE: "배포 완료", FAILED: "배포 실패", ROLLED_BACK: "이전 버전으로 복구됨",
   DEPLOYING: "배포 중", CREATED: "대기 중", AWAITING_APPROVAL: "승인 대기",
@@ -215,6 +284,11 @@ function TargetResult({ target, deployment, stage, events, onRecheck }) {
           ))}
         </ul>
       )}
+      {changes(target, deploy, failure).length > 0 && (
+        <table className="changes"><tbody>
+          {changes(target, deploy, failure).map(([k, v]) => <tr key={k}><th>{k}</th><td>{v}</td></tr>)}
+        </tbody></table>
+      )}
       {failure?.detail && <Explained detail={failure.detail} />}
       {events.length > 0 && (
         <details className="log">
@@ -226,12 +300,12 @@ function TargetResult({ target, deployment, stage, events, onRecheck }) {
   );
 }
 
-export function Pipeline({ deployment, events, targets, onRecheck }) {
+export function Pipeline({ deployment, events, targets, onRecheck, ctx }) {
   const perTarget = Object.fromEntries(targets.map((t) => [t, events.filter((e) => e.target === t)]));
   const stages = Object.fromEntries(targets.map((t) => [t, byStage(perTarget[t])]));
   return (
     <>
-      <Stepper deployment={deployment} targets={targets} stages={stages} />
+      <Stepper deployment={deployment} targets={targets} stages={stages} ctx={ctx} />
       <div className="targets">
         {targets.map((t) => (
           <TargetResult key={t} target={t} deployment={deployment} stage={stages[t]} events={perTarget[t]}

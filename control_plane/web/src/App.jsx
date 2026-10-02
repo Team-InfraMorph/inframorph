@@ -396,7 +396,7 @@ export default function App() {
           )}
 
           {selected && (
-            <Pipeline deployment={selected} events={events} targets={targets}
+            <Pipeline deployment={selected} events={events} targets={targets} ctx={{ intent, patch, plans }}
                       onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
           )}
 
