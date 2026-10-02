@@ -25,8 +25,8 @@ from .db import TERMINAL, ConflictError, Status, Store
 from .change_detector import plan_diff, plan_redeploy
 from .orchestrator import record_verification, run_deployment
 from .orchestrator import stream_events as run_module
-from .runtime import build_cmds, fake_deployer_cmd  # noqa: F401 (fake_deployer_cmd: 테스트·대역용)
-from .runtime import deployer_cmd as module_deployer_cmd
+from .module_commands import build_cmds, fake_deployer_cmd  # noqa: F401 (fake_deployer_cmd: 테스트·대역용)
+from .module_commands import deployer_cmd as module_deployer_cmd
 from .verify import check_url
 
 DEFAULT_DB = Path(os.environ.get("INFRAMORPH_HOME", "/tmp/inframorph")) / "control_plane.db"
@@ -74,10 +74,13 @@ def _sse(event, data, seq=None):
 
 
 def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_analyzer, patcher=fixture_patcher,
-               builder=build_cmds):
-    """팀원 모듈이 붙는 네 자리: analyzer(B·C·E 판단 검사) → patcher(C) → builder(E) → deployer_cmd(E·A)."""
+               builder=build_cmds, runtime=None):
+    """D module hooks, or an explicit C worker owning patch/gate/build/recovery."""
     store = Store(db_path or DEFAULT_DB)
     store.recover_interrupted()
+    if runtime is not None:
+        analyzer = lambda deployment, folder: runtime.analyze(store, deployment)
+        deployer_cmd = lambda deployment, target, folder: runtime.command(store, deployment["id"], target)
     # 배포별 작업 폴더: <INFRAMORPH_HOME>/<deployment_id>/. C 모듈은 심볼릭 링크가 낀 경로를 거부하므로
     # macOS의 /tmp(→ /private/tmp) 같은 링크를 풀어 실제 경로로 넘긴다.
     workdir = store.path.parent.resolve()
@@ -87,13 +90,21 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         while deployment_id:
             deployment = store.get_deployment(deployment_id)
             folder = workdir / deployment_id
-            rollback = deployment["triggered_by"] == "rollback"  # 이전 이미지를 다시 띄우므로 분석·수정·빌드 생략
-            if rollback:
+            rollback = deployment["triggered_by"] == "rollback"
+            if rollback and runtime is None:
                 write_plans(deployment, folder)
             if (deployment["approved_at"] or rollback or ready(deployment, folder)) and (
                     rollback or (patched(deployment, folder) and built(deployment, folder))):
-                cmds = {t: deployer_cmd(deployment, t, folder) for t in deployment["targets"]}
-                run_deployment(store, deployment_id, cmds, verify=lambda t, url, d=deployment_id: verify(d, t, url))
+                try:
+                    cmds = {t: deployer_cmd(deployment, t, folder) for t in deployment["targets"]}
+                except StageFailed as exc:
+                    stage_event(deployment_id, deployment["targets"], exc.step, "fail", exc.code)
+                    store.fail(deployment_id)
+                except Exception:
+                    store.fail(deployment_id)
+                else:
+                    run_deployment(store, deployment_id, cmds,
+                                   verify=lambda t, url, d=deployment_id: verify(d, t, url))
             elif store.get_deployment(deployment_id)["status"] == Status.AWAITING_APPROVAL.value:
                 return  # 승인이 나면 approve가 이어서 실행한다
             deployment_id = None
@@ -123,26 +134,39 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
             return False
         if result is None:  # 분석 결과가 없으면(가짜 모드의 임의 커밋) 비교할 구조도 없다
             return True
-        metrics = result.get("metrics") or {}
+        try:
+            from .results import checked_payload
+            checked_payload(result)
+            metrics = result.get("metrics") or {}
+            store.set_analysis_metrics(deployment["id"], metrics)
+            store.set_commit(deployment["id"], result["commit_sha"])
+            store.save_analysis(deployment["project_id"], result["commit_sha"], result["repo_map"], result["intent"])
+            store.save_plans(deployment["id"], result["plans"])
+            store.save_initial_analysis(deployment["id"], result)
+        except (ValueError, KeyError, TypeError):
+            store.fail(deployment["id"])
+            return False
         detail = ("AI 분석 생략 · 이전 결과 재사용" if deployment["analysis_mode"] == "rebuild_only"
                   else "예시 분석 결과 사용 (Analyzer 미연결)" if metrics.get("backend") == "fixture"
+                  else f"로컬 Codex · {metrics.get('model')} · 모델 호출 {metrics.get('model_calls', 0)}회"
+                  if metrics.get("backend") == "codex-cli"
                   else f"모델 호출 {metrics.get('model_calls', 0)}회")
         stage_event(deployment["id"], targets, "analyze", "ok", detail, int((time.monotonic() - started) * 1000))
         if result.get("intent_checked"):
             stage_event(deployment["id"], targets, "policy", "ok", "AI 판단 근거 확인 (E Policy Gate)")
-        store.set_analysis_metrics(deployment["id"], metrics)
-        store.set_commit(deployment["id"], result["commit_sha"])
-        store.save_analysis(deployment["project_id"], result["commit_sha"], result["repo_map"], result["intent"])
-        store.save_plans(deployment["id"], result["plans"])
         # 직전 LIVE 대비 인프라 구조가 바뀌면 사람 승인을 받는다(기획서 시나리오 B-2)
         base = store.last_live(deployment["project_id"], deployment["id"], with_plans=True)
         changes = plan_diff(store.get_plans(base["id"]) if base else {}, result["plans"])
+        if runtime is not None and "aws" in result["plans"] and base is None:
+            changes = ["aws: 최초 실제 배포 · 프로젝트 전용 ECS·DB·S3 리소스 생성"]
         if changes:
             store.await_approval(deployment["id"], changes)
         return not changes
 
     def patched(deployment, folder):
-        """코드 수정(구간 7~8, C Code Patch). 성공하면 True."""
+        """C worker owns patch/gate/build/retry when an explicit runtime is supplied."""
+        if runtime is not None:
+            return True
         plans = store.get_plans(deployment["id"])
         targets = list(plans) or deployment["targets"]
         stage_event(deployment["id"], targets, "patch", "started")
@@ -163,7 +187,15 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
 
     def built(deployment, folder):
         """검사·빌드(구간 8~9, E Builder). 대상마다 차례로 빌드한다(같은 app:<sha> 태그를 동시에 만들지 않게)."""
-        for target, (cwd, cmd) in builder(deployment, store.get_plans(deployment["id"]), folder).items():
+        if runtime is not None:
+            return True
+        try:
+            commands = builder(deployment, store.get_plans(deployment["id"]), folder)
+        except StageFailed as exc:
+            stage_event(deployment["id"], deployment["targets"], "build", "fail", exc.code)
+            store.fail(deployment["id"])
+            return False
+        for target, (cwd, cmd) in commands.items():
             exit_code, events, _ = run_module(store, deployment["id"], target, cmd, BUILD_TIMEOUT_S, cwd)
             if exit_code != 0 or any(e.status == "fail" for e in events):
                 if not any(e.status == "fail" for e in events):
@@ -210,6 +242,15 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         allow_headers=["*"],
     )
 
+    @app.get("/api/runtime")
+    def runtime_info():
+        from analyzer.config import REASONING_EFFORT
+        backend = getattr(runtime, "analysis_backend", "module")
+        return {"analysis_backend": backend,
+                "aws_enabled": getattr(runtime, "aws_config", None) is not None,
+                "model": getattr(runtime, "analysis_model", None) if backend == "codex-cli" else None,
+                "reasoning_effort": REASONING_EFFORT if backend == "codex-cli" else None}
+
     @app.post("/api/projects", status_code=201)
     def create_project(body: ProjectIn):
         targets = [t.value for t in body.targets]
@@ -243,6 +284,18 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
             raise HTTPException(404, "project not found")
         return store.list_deployments(project_id)
 
+    @app.post("/api/deployments/{deployment_id}/retry", status_code=202)
+    def retry(deployment_id: str, background: BackgroundTasks):
+        deployment = deployment_or_404(deployment_id)
+        if runtime is None:
+            raise HTTPException(409, "validated retry requires the explicit runtime")
+        try:
+            new_id = store.retry_validated_deployment(deployment_id)
+        except (ValueError, ConflictError):
+            raise HTTPException(409, "validated retry unavailable or project is running")
+        background.add_task(execute, deployment["project_id"], new_id)
+        return {"deployment_id": new_id, "status": Status.DEPLOYING.value}
+
     @app.get("/api/deployments/{deployment_id}")
     def get_deployment(deployment_id: str):
         deployment = store.get_deployment(deployment_id)
@@ -259,6 +312,10 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
     def get_analysis(deployment_id: str):
         """이 배포 커밋의 분석 결과(C의 intent). 화면의 'AI가 이해한 앱'에 쓴다."""
         deployment = deployment_or_404(deployment_id)
+        saved = store.get_deployment_analysis(deployment_id)
+        if saved is not None:
+            return {"intent": saved["intent"], "metrics": saved["metrics"],
+                    "initial_intent": saved["initial"]["intent"], "recovery": saved.get("recovery")}
         cached = store.get_analysis(deployment["project_id"], deployment["commit_sha"]) if deployment["commit_sha"] else None
         return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"]}
 
@@ -266,6 +323,8 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
     def get_patch(deployment_id: str):
         """대상별 코드 수정 내역(C Code Patch 결과). 화면의 '코드를 이렇게 고쳤다'에 쓴다."""
         deployment = deployment_or_404(deployment_id)
+        if runtime is not None:
+            return store.get_runtime_patches(deployment_id)
         folder = workdir / deployment_id / "patched"
         return {t: patch for t in deployment["targets"] if (patch := read_patch(folder / t))}
 

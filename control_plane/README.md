@@ -8,11 +8,16 @@ git push가 오면 다시 실행할 범위와 승인 필요 여부를 판단한�
 
 ## 실행
 
+실제 C 분석·복구와 E Docker 배포를 연결한 로컬 모드는 [LOCAL_RUNTIME.md](LOCAL_RUNTIME.md)를 따른다.
+`--demo`는 B fixture와 저장된 모델 응답을 명시적으로 선택한다. 실제 B 구현은 아직 연결 전이다.
+아래 데모 실행 방식은 사용 가능한 팀 모듈을 자동 연결한다. `INFRAMORPH_DEMO_MODE=1`에서만 없는 모듈을 대역으로 사용한다.
+기본 모드는 B 연결이나 필수 배포 입력이 없으면 실패한다. E 실제 연결 검증은 [E_INTEGRATION.md](../E_INTEGRATION.md)를 참조한다.
+
 레포 최상위에서 실행한다. 화면을 한 번 빌드해 두면 API와 같은 주소(8000)에서 화면이 열린다.
 
 ```sh
 (cd control_plane/web && npm install && npm run build)
-GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --port 8000
+INFRAMORPH_DEMO_MODE=1 GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --port 8000
 ```
 
 - 화면: http://localhost:8000 · API 문서: http://localhost:8000/docs
@@ -23,6 +28,7 @@ GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --po
 | `INFRAMORPH_HOME` | `/tmp/inframorph` | SQLite(`control_plane.db`)와 작업 폴더 위치 |
 | `GITHUB_WEBHOOK_SECRET` | 없음 | 비어 있으면 webhook을 503으로 거부한다 |
 | `INFRAMORPH_DEPLOY_TIMEOUT` | `900` | 배포기 최대 실행 시간(초) |
+| `INFRAMORPH_DEMO_MODE` | `0` | `1`일 때만 fixture 분석·가짜 배포기 허용. 실제 E Local 검증은 별도 `--demo` 진입점 사용 |
 | `INFRAMORPH_FAKE_DELAY` | `1` | 가짜 배포기의 이벤트 간격(초) |
 | `INFRAMORPH_FAKE_FIXTURE` | `happy_path.jsonl` | 가짜 배포기가 재생할 이벤트 파일 |
 | `INFRAMORPH_FAKE_EXIT_CODE` | `0` | 가짜 배포기 종료 코드 |
@@ -44,6 +50,7 @@ GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --po
 | GET | `/api/deployments/{id}/analysis` | 이 커밋의 intent와 AI 사용량 |
 | GET | `/api/deployments/{id}/patch` | 대상별 코드 수정 내역(변경 파일·diff, lockfile diff는 생략) |
 | GET | `/api/deployments/{id}/events` | SSE 타임라인. `Last-Event-ID`로 이어 받기 |
+| POST | `/api/deployments/{id}/verify` | 배포 URL의 health를 직접 다시 확인 |
 | POST | `/api/deployments/{id}/approve` | 인프라 변경 승인 → 배포 계속. 승인 대기가 아니면 409 |
 | POST | `/api/deployments/{id}/reject` | 인프라 변경 거절 → FAILED |
 | POST | `/api/deployments/{id}/rollback` | 직전 LIVE의 커밋·plan으로 다시 배포. 기준점이 없으면 409 |
@@ -60,7 +67,7 @@ GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --po
 ```
 
 `create_app(analyzer=, patcher=, builder=, deployer_cmd=)` 네 자리에 모듈이 붙는다. 조종실은 모듈을 import하지 않고
-각 모듈의 checkout에서 명령으로 실행한다(`control_plane/analysis.py`, `control_plane/runtime.py` 위쪽 표 참고).
+각 모듈의 checkout에서 명령으로 실행한다(`control_plane/analysis.py`, `control_plane/module_commands.py` 위쪽 표 참고).
 
 | 단계 | 담당 | 지금 |
 |---|---|---|

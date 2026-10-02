@@ -1,67 +1,43 @@
+"""Control-plane command: one JSON request on stdin, one JSON reply on stdout.
+
+Reply: {"snapshot": "snapshot", "repo_map": RepoMap}. Failures exit 1 and write
+only a fixed error code to stderr.
+"""
 import json
-from pathlib import Path
-import re
-import shutil
-import subprocess
 import sys
 
-from .mapper import map_snapshot
-from .snapshot import git, snapshot_from_remote
+from . import MapperError, map_repository
 
-URLS = {
-    "https://github.com/Team-InfraMorph/demo-app",
-    "https://github.com/Team-InfraMorph/demo-app.git",
-}
 
-def main():
+LIMIT = 120_000
+
+
+def unique_object(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate_json_key")
+        result[name] = value
+    return result
+
+
+def main() -> int:
     try:
-        request = json.load(sys.stdin)
-        if not isinstance(request, dict) or set(request) != {
-            "repo_url", "branch", "source_revision", "output_dir"
-        }:
-            raise ValueError("invalid_request")
-
-        url = request["repo_url"]
-        branch = request["branch"]
-        if not isinstance(url, str) or url.rstrip("/") not in URLS:
-            raise ValueError("unsupported_repository")
-        if not isinstance(branch, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch
-        ):
-            raise ValueError("invalid_branch")
-
-        git(Path.cwd(), "check-ref-format", "--branch", branch)
-
-        revision = request["source_revision"]
-        if revision is not None and (
-            not isinstance(revision, str)
-            or not re.fullmatch(r"[0-9a-f]{40}", revision)
-        ):
-            raise ValueError("invalid_revision")
-
-        snapshot = snapshot_from_remote(
-            url.rstrip("/"), branch, revision, request["output_dir"]
-        )
+        raw = sys.stdin.buffer.read(LIMIT + 1)
+        if len(raw) > LIMIT:
+            raise MapperError("invalid_request")
         try:
-            mapping = map_snapshot(snapshot, request["output_dir"])
-        except Exception:
-            shutil.rmtree(snapshot.path)
-            raise
-
-        print(json.dumps({
-            "snapshot": "snapshot",
-            "repo_map": mapping.model_dump(mode="json"),
-        }))
-    except (
-        OSError,
-        ValueError,
-        TypeError,
-        UnicodeError,
-        subprocess.SubprocessError,
-    ):
-        print("repo_mapper_failed", file=sys.stderr)
+            request = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
+        except (ValueError, UnicodeError, RecursionError):
+            raise MapperError("invalid_request") from None
+        mapped = map_repository(request)
+    except MapperError as error:
+        print(error.code, file=sys.stderr)
         return 1
-
+    except Exception:
+        print("mapper_failed", file=sys.stderr)
+        return 1
+    print(json.dumps({"snapshot": mapped.snapshot.name, "repo_map": mapped.repo_map.model_dump(mode="json")}))
     return 0
 
 

@@ -120,6 +120,10 @@ class Store:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
+            from .results import DDL
+            self._conn.executescript(DDL)
+            from .patch_reviews import DDL as PATCH_DDL
+            self._conn.executescript(PATCH_DDL)
             existing = {row[1] for row in self._conn.execute("PRAGMA table_info(deployments)")}
             for name, ddl in DEPLOYMENT_COLUMNS.items():
                 if name not in existing:
@@ -138,7 +142,20 @@ class Store:
             return self._conn.execute(sql, params).fetchall()
 
     def close(self):
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
+
+    def save_validated_patch(self, deployment_id, candidate, mapping, approval, phase):
+        from .patch_reviews import save
+        return save(self, deployment_id, candidate, mapping, approval, phase)
+
+    def mark_patch_applied(self, deployment_id, phase, target="local"):
+        from .patch_reviews import applied
+        return applied(self, deployment_id, phase, target)
+
+    def get_runtime_patches(self, deployment_id):
+        from .patch_reviews import get
+        return get(self, deployment_id)
 
     def recover_interrupted(self):
         """서버가 꺼질 때 진행 중이던 배포는 결과를 알 수 없으므로 FAILED로 둔다."""
@@ -306,6 +323,26 @@ class Store:
             )
         return deployment_id
 
+    def retry_validated_deployment(self, deployment_id):
+        """New manual run of the same reviewed revision, using the validated cache.
+
+        Keep the failed history intact; never reuse rejected Analyzer output.
+        The runtime rechecks the source digest, Intent, Plan, patch and image.
+        """
+        with self._lock, self._conn:
+            previous = self.get_deployment(deployment_id)
+            analysis = self.get_deployment_analysis(deployment_id)
+            if (previous is None or previous["status"] != Status.FAILED.value or analysis is None or
+                    previous["commit_sha"] is None or self.get_analysis(previous["project_id"], previous["commit_sha"]) is None):
+                raise ValueError("validated_retry_unavailable")
+            if self._one("SELECT 1 FROM deployments WHERE project_id=? AND status IN (?, ?)",
+                         (previous["project_id"], *BLOCKING)):
+                raise ConflictError(previous["project_id"])
+            new_id, now = _new_id("d"), _now()
+            self._conn.execute(INSERT_DEPLOYMENT, (new_id, previous["project_id"], Status.CREATED.value,
+                previous["commit_sha"], now, now, "manual", "rebuild_only", json.dumps(["검증된 동일 커밋의 분석을 재사용해 다시 배포"])))
+            return self.begin_deploy(previous["project_id"])
+
     def set_target_status(self, deployment_id, target, status, url=None):
         with self._lock, self._conn:
             self._conn.execute(
@@ -334,6 +371,22 @@ class Store:
                 "UPDATE deployments SET analysis_metrics=? WHERE id=?",
                 (json.dumps(metrics) if metrics is not None else None, deployment_id),
             )
+
+    def save_initial_analysis(self, deployment_id, result):
+        from .results import put_initial
+        return put_initial(self, deployment_id, result)
+
+    def get_deployment_analysis(self, deployment_id):
+        from .results import get_result
+        return get_result(self, deployment_id)
+
+    def apply_recovery_analysis(self, deployment_id, result):
+        from .results import apply_recovery
+        return apply_recovery(self, deployment_id, result)
+
+    def claim_runtime_run(self, deployment_id, revision):
+        from .results import claim_run
+        return claim_run(self, deployment_id, revision)
 
     def fail(self, deployment_id):
         with self._lock, self._conn:
