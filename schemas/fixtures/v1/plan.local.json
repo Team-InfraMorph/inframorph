@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0.0",
+  "source_revision": "ebad709867cf1f3523075d8038ae41bd69ecae9b",
+  "target": "local",
+  "app": "demo-app",
+  "image_tag": "app:ebad709867cf1f3523075d8038ae41bd69ecae9b",
+  "services": [
+    {
+      "name": "web",
+      "kind": "http",
+      "cpu": 256,
+      "mem": 512,
+      "port": 3000,
+      "health": "/health",
+      "public": true,
+      "command": null
+    }
+  ],
+  "db": {
+    "type": "postgres_container",
+    "patch": "sqlite_to_postgres"
+  },
+  "storage": {
+    "type": "volume",
+    "patch": "fs_to_storage",
+    "path": "uploads/"
+  },
+  "secrets": [
+    "DATABASE_URL"
+  ],
+  "config": {
+    "STORAGE_DRIVER": "fs"
+  },
+  "logs": "docker",
+  "est_monthly_krw": 0,
+  "mermaid": "flowchart LR\nweb --> db\nweb --> storage"
+}

@@ -1,0 +1,5 @@
+{"deployment_id":"fixture-1","ts":"2026-10-01T00:00:00Z","target":"aws","step":"push","status":"started","detail":"fixture only"}
+{"deployment_id":"fixture-1","ts":"2026-10-01T00:00:01Z","target":"aws","step":"push","status":"ok","duration_ms":1000}
+{"deployment_id":"fixture-1","ts":"2026-10-01T00:00:02Z","target":"aws","step":"infra","status":"ok","duration_ms":1000}
+{"deployment_id":"fixture-1","ts":"2026-10-01T00:00:03Z","target":"aws","step":"health","status":"ok","duration_ms":1000}
+{"deployment_id":"fixture-1","ts":"2026-10-01T00:00:04Z","target":"aws","step":"url","status":"ok","url":"https://example.invalid"}
