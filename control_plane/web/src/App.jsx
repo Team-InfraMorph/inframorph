@@ -3,6 +3,7 @@ import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
 import { Badge, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
 import { AppCode } from "./CodeTree.jsx";
+import { PatchCard } from "./Patch.jsx";
 
 const TRIGGER = { manual: "수동", push: "git push", rollback: "롤백" };
 const MODE = { full_analysis: "전체 분석", reanalyze: "재분석", rebuild_only: "빌드만 (AI 생략)" };
@@ -143,44 +144,6 @@ function AnalysisCard({ deployment, intent, repoMap, patch, plans, targets, repo
 }
 
 
-function PatchCard({ patch }) {
-  const entries = Object.entries(patch);
-  if (!entries.length) return null;
-  const key = (p) => JSON.stringify(p.files.map((f) => [f.path, f.action, f.diff]));
-  const same = entries.every(([, p]) => key(p) === key(entries[0][1]));
-  const shown = same ? [[entries.map(([t]) => TARGETS[t]?.split(" ")[0] ?? t).join("·") + " 공통", entries[0][1]]] : entries.map(([t, p]) => [TARGETS[t] ?? t, p]);
-  return (
-    <div className="card patch">
-      {shown.map(([label, value]) => (
-        <div key={label}>
-          <div className="patch-head">
-            <strong>{label}</strong>
-            <span className="dim">{value.files.length}개 파일</span>
-            {value.verified && <span className="ok-chip">정책 검사 통과</span>}
-            {value.applied && <span className="ok-chip">실행 검증 완료</span>}
-            {value.phase === "recovery" && <span className="dim">자동 복구 후 패치</span>}
-          </div>
-          {value.status === "unchanged" && <p className="dim">고칠 코드가 없어 원본 그대로 배포했습니다.</p>}
-          {value.files.map((f) => (
-            <details key={f.path} className="patch-file">
-              <summary>
-                <span className={`tree-git g-${f.action === "add" ? "A" : "M"}`}>{f.action === "add" ? "A" : "M"}</span>
-                <span className="mono">{f.path}</span>
-                <span className="dim">{f.diff == null ? "잠금 파일 · 내용 생략" : `+${(f.diff.match(/^\+/gm) ?? []).length} −${(f.diff.match(/^-/gm) ?? []).length}`}</span>
-              </summary>
-              {f.diff != null && <>
-                <pre className="diff">{f.diff.split("\n").map((line, i) => (
-                  <span key={i} className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""}>{line}{"\n"}</span>
-                ))}</pre>
-                {f.truncated && <p className="dim">표시 크기 제한으로 diff 일부를 생략했습니다.</p>}
-              </>}
-            </details>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 
 /** 화면의 각 구역 = 번호 + 제목 + 이 구역을 왜 보여 주는지 한 줄. */
