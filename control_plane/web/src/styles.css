@@ -126,3 +126,11 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .verify.v-ok { color: var(--ok); }
 .verify.v-fail { color: var(--fail); }
 .verify.v-skipped { color: var(--dim); }
+
+.policy-results { list-style: none; padding: 0; }
+.policy-results li { padding: 12px 0; border-top: 1px solid #ddd; }
+.policy-results p { margin: 6px 0; overflow-wrap: anywhere; }
+.policy-decision { margin-left: 12px; padding: 3px 8px; border-radius: 5px; font-weight: bold; }
+.policy-pass { background: #d9f4e4; color: #145c36; }
+.policy-block, .policy-error { background: #ffe1e1; color: #8b1818; }
+.policy-unsupported { background: #fff0c7; color: #6c4a00; }
