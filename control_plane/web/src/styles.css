@@ -334,40 +334,44 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .patch-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 6px; }
 .ok-chip { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); }
 
-/* ── 앱 → 배포 모습 변환도: 경계 상자 3개, 같은 부품은 같은 줄 ── */
-.morph-wrap { overflow-x: auto; }
-.morph { display: grid; grid-template-columns: minmax(180px, 1fr) 132px repeat(var(--cols), minmax(190px, 1fr)); column-gap: 12px; min-width: 760px; }
-.m-row { display: contents; }
-.m-h { padding: 12px 14px 10px; font-size: 13px; font-weight: 600; color: var(--text); border-radius: 14px 14px 0 0;
-  border: 1px solid var(--rail); border-bottom: 0; background: var(--muted-bg); }
-.m-tag { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; margin-bottom: 2px; color: var(--dim); }
-.m-c { padding: 12px 14px; min-height: 70px; background: var(--muted-bg);
-  border-left: 1px solid var(--rail); border-right: 1px solid var(--rail); border-top: 1px solid var(--line); }
-.m-last .m-c { border-bottom: 1px solid var(--rail); border-radius: 0 0 14px 14px; }
-/* 원래 앱 = 점선 경계(아직 배포 전), Local = 파랑, AWS = 주황 */
-.m-col0.m-h { border-style: dashed; border-bottom: 0; }
-.m-col0.m-c { border-left-style: dashed; border-right-style: dashed; }
-.m-last .m-col0.m-c { border-bottom-style: dashed; }
-.m-h.m-local, .m-c.m-local { border-left-color: var(--env-local); border-right-color: var(--env-local); }
-.m-h.m-local { border-top: 3px solid var(--env-local); }
-.m-h.m-local .m-tag { color: var(--env-local); }
-.m-h.m-aws, .m-c.m-aws { border-left-color: var(--env-aws); border-right-color: var(--env-aws); }
-.m-h.m-aws { border-top: 3px solid var(--env-aws); }
-.m-h.m-aws .m-tag { color: var(--env-aws); }
-.m-last .m-c.m-local { border-bottom-color: var(--env-local); }
-.m-last .m-c.m-aws { border-bottom-color: var(--env-aws); }
-.m-what { font-size: 11px; font-weight: 700; color: var(--dim); margin-bottom: 3px; }
-.m-main { font-size: 14px; font-weight: 600; color: var(--text); }
-.m-sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
-.m-col0 .m-sub { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
-/* 가운데 화살표 열: 경계 없이, 줄마다 → 와 패치 내용 */
-.m-arrow-h { border: 0; background: none; text-align: center; font-size: 11px; color: var(--accent); padding-top: 18px; }
-.m-arrow { border: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; position: relative; }
-.m-arrow::before { content: ""; position: absolute; left: 4px; right: 10px; top: 50%; height: 2px; background: var(--rail); }
-.m-arrow::after { content: ""; position: absolute; right: 2px; top: calc(50% - 5px); border: 6px solid transparent; border-left: 8px solid var(--rail); border-right: 0; }
-.m-fix { position: relative; z-index: 1; font-size: 11px; font-weight: 600; color: var(--ok); background: var(--card); padding: 1px 7px;
-  border-radius: 6px; border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent); white-space: nowrap; transform: translateY(-14px); }
-.m-arrow.m-c, .m-arrow-h { background: none; border: 0; }
+/* ── 배포할 앱(코드 트리) | 배포된 구조 ─────────── */
+.appcode2 { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 860px) { .appcode2 { grid-template-columns: minmax(0, 1fr); } }
+.ac-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; font-weight: 600; margin-bottom: 10px; min-height: 30px; }
+.ac-head .dim { font-weight: 400; font-size: 12px; }
+.tab { background: var(--muted-bg); color: var(--dim); border: 1px solid var(--line); font-size: 12px; padding: 6px 12px; border-radius: 8px; }
+.tab.on.tab-aws { color: var(--env-aws); border-color: var(--env-aws); background: color-mix(in srgb, var(--env-aws) 10%, transparent); }
+.tab.on.tab-local { color: var(--env-local); border-color: var(--env-local); background: color-mix(in srgb, var(--env-local) 10%, transparent); }
+.tree-file { border-radius: 6px; padding: 0 6px; margin: 0 -6px; transition: background 0.15s; }
+.tree-file.hl { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.tree-file.hl .tree-name { color: var(--text); }
+
+.carch { display: flex; flex-direction: column; align-items: center; padding: 16px; border-radius: 14px; border: 1px solid var(--line); }
+.ca-aws { border-color: color-mix(in srgb, var(--env-aws) 45%, var(--line)); }
+.ca-local { border-color: color-mix(in srgb, var(--env-local) 45%, var(--line)); }
+.cbox { width: 230px; padding: 10px 12px; border-radius: 12px; background: var(--muted-bg); border: 1px solid var(--line); text-align: center;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
+.cbox.on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); transform: translateY(-1px); }
+.cb-user { width: 260px; background: transparent; border-style: dashed; }
+.cb-svc { border-top: 3px solid var(--accent); }
+.cb-data { border-top: 3px solid var(--ok); }
+.cb-title { display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; }
+.cb-title .chip { font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 999px; border: 1px solid var(--dim); color: var(--dim); }
+.cb-role { font-size: 12px; font-weight: 600; color: var(--accent); margin-top: 2px; }
+.cb-data .cb-role { color: var(--ok); }
+.cb-sub { font-size: 12px; color: var(--dim); margin-top: 2px; overflow-wrap: anywhere; }
+.cb-fix { font-size: 11.5px; color: var(--ok); margin-top: 4px; }
+.cb-files { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 6px; }
+.cb-files code { font-size: 11px; padding: 1px 6px; border-radius: 5px; background: var(--card); border: 1px solid var(--line); color: var(--dim); }
+.cdown { position: relative; width: 2px; height: 30px; background: var(--rail); margin: 2px 0; }
+.cdown::after { content: ""; position: absolute; left: -5px; bottom: -2px; border: 6px solid transparent; border-top: 7px solid var(--rail); border-bottom: 0; }
+.cdown span { position: absolute; left: 10px; top: 6px; font-size: 11px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+.czone { position: relative; padding: 30px 16px 16px; border-radius: 14px; border: 1px dashed var(--blue-dim); background: color-mix(in srgb, var(--run-bg) 50%, transparent); }
+.cz-label { position: absolute; top: 8px; left: 14px; font-size: 11px; font-weight: 600; color: var(--accent); }
+.crow { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.cside { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line);
+  width: 100%; font-size: 12px; color: var(--dim); }
+.cside b { color: var(--text); font-weight: 600; margin-right: 4px; }
 .tree-box { margin-top: 14px; }
 .tree-box summary { cursor: pointer; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 

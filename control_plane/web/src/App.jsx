@@ -134,7 +134,7 @@ function AnalysisCard({ deployment, intent, repoMap, patch, plans, targets, repo
           <span className="mono">{repo.replace("https://github.com/", "")}</span>
           {repoMap?.commit && <span className="dim mono"> @{repoMap.commit.slice(0, 7)}</span>}
         </h2>
-        <span className="dim">AI가 코드에서 앱의 부품을 찾고, 대상마다 맞는 인프라로 바꿔 배포합니다</span>
+        <span className="dim">AI가 코드에서 부품을 찾고, 대상마다 맞는 인프라로 바꿔 배포합니다</span>
       </div>
       <AppCode repoMap={repoMap} intent={intent} patch={patch} plans={plans} targets={targets}
                urls={Object.fromEntries(targets.map((t) => [t, deployment.targets[t]?.url]))} />
@@ -362,7 +362,7 @@ export default function App() {
           )}
 
           {selected && (
-            <Section n="3" title="앱이 이렇게 바뀌어 배포됩니다">
+            <Section n="3" title="배포할 앱과 배포된 구조" why="파일이나 부품에 마우스를 올리면 서로 연결된 곳이 표시됩니다">
               <AnalysisCard deployment={selected} intent={intent} repoMap={repoMap} patch={patch} plans={plans} targets={targets} repo={project.repo_url} />
             </Section>
           )}
