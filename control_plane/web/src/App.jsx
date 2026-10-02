@@ -3,6 +3,7 @@ import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
 import { Badge, LiveFeed, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
 import { AwsArchitecture } from "./Structure.jsx";
+import { CodeTree } from "./CodeTree.jsx";
 
 const TRIGGER = { manual: "수동", push: "git push", rollback: "롤백" };
 const MODE = { full_analysis: "전체 분석", reanalyze: "재분석", rebuild_only: "빌드만 (AI 생략)" };
@@ -132,13 +133,24 @@ function Recovery({ metrics }) {
   </div>;
 }
 
-function AnalysisCard({ deployment, intent }) {
+function AnalysisCard({ deployment, intent, repoMap, patch, repo }) {
   return (
     <>
     <Recovery metrics={deployment.analysis_metrics} />
     <div className="card">
-      <h2>AI가 이해한 앱</h2>
+      <h2 className="repo-title">
+        <span className="mono">{repo.replace("https://github.com/", "")}</span>
+        {repoMap?.commit && <span className="dim mono"> @ {repoMap.commit.slice(0, 7)}</span>}
+        <span className="dim"> · 배포할 앱 코드</span>
+      </h2>
       <Usage deployment={deployment} metrics={deployment.analysis_metrics} />
+      <div className="appcode">
+      <div>
+        <h3>코드 구조 <span className="dim">· 꼬리표 = AI가 찾은 역할(근거 줄)과 AI가 고친 파일</span></h3>
+        <CodeTree repoMap={repoMap} intent={intent} patch={patch} />
+      </div>
+      <div>
+      <h3>AI가 파악한 실행 조건</h3>
       {intent && (
         <table className="intent">
           <tbody>
@@ -167,6 +179,8 @@ function AnalysisCard({ deployment, intent }) {
           </tbody>
         </table>
       )}
+      </div>
+      </div>
     </div>
     </>
   );
@@ -264,6 +278,7 @@ export default function App() {
   const [events, setEvents] = useState([]);
   const [plans, setPlans] = useState({});
   const [intent, setIntent] = useState(null);
+  const [repoMap, setRepoMap] = useState(null);
   const [patch, setPatch] = useState({});
   const [error, setError] = useState("");
 
@@ -315,7 +330,8 @@ export default function App() {
     setIntent(null);
     setPatch({});
     api.plans(selectedKey).then((value) => alive && setPlans(value)).catch(() => alive && setPlans({}));
-    api.analysis(selectedKey).then((a) => alive && setIntent(a.intent)).catch(() => alive && setIntent(null));
+    api.analysis(selectedKey).then((a) => { if (alive) { setIntent(a.intent); setRepoMap(a.repo_map ?? null); } })
+      .catch(() => alive && setIntent(null));
     api.patch(selectedKey).then((value) => alive && setPatch(value)).catch(() => alive && setPatch({}));
     return () => { alive = false; };
   }, [selectedKey, selectedStatus]);
@@ -398,7 +414,7 @@ export default function App() {
                 <Results deployment={selected} events={events} targets={targets}
                          onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
               )}
-              {selected && <AnalysisCard deployment={selected} intent={intent} />}
+              {selected && <AnalysisCard deployment={selected} intent={intent} repoMap={repoMap} patch={patch} repo={project.repo_url} />}
               <PlanCompare plans={plans} targets={targets} />
               <PatchCard patch={patch} />
             </div>

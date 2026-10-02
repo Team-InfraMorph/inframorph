@@ -110,6 +110,7 @@ class AnalyzerInPipelineTest(unittest.TestCase):
         self.assertEqual(deployment["status"], "LIVE")
         self.assertEqual(deployment["analysis_metrics"]["model_calls"], 5)
         self.assertEqual(deployment["analysis"]["intent"]["workloads"][0]["name"], "web")
+        self.assertIn("src/server.js", deployment["analysis"]["repo_map"]["tree"])  # 화면의 앱 코드 구조 트리
 
     def test_analyzer_failure_stops_before_deploying(self):
         deployment = self.deploy(exit_code=1)

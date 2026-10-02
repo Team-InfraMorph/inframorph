@@ -313,11 +313,12 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         """이 배포 커밋의 분석 결과(C의 intent). 화면의 'AI가 이해한 앱'에 쓴다."""
         deployment = deployment_or_404(deployment_id)
         saved = store.get_deployment_analysis(deployment_id)
-        if saved is not None:
-            return {"intent": saved["intent"], "metrics": saved["metrics"],
-                    "initial_intent": saved["initial"]["intent"], "recovery": saved.get("recovery")}
         cached = store.get_analysis(deployment["project_id"], deployment["commit_sha"]) if deployment["commit_sha"] else None
-        return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"]}
+        repo_map = cached["repo_map"] if cached else None  # 화면의 '앱 코드 구조' 트리(B Repo Mapper 출력)
+        if saved is not None:
+            return {"intent": saved["intent"], "metrics": saved["metrics"], "repo_map": repo_map,
+                    "initial_intent": saved["initial"]["intent"], "recovery": saved.get("recovery")}
+        return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"], "repo_map": repo_map}
 
     @app.get("/api/deployments/{deployment_id}/patch")
     def get_patch(deployment_id: str):

@@ -319,3 +319,28 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
   .pulse, .node .dot, .node .link i, .feed li { animation: none !important; }
   .node.n-started .dot::before { animation: none; }
 }
+
+/* 배포할 앱 코드: 트리 | 실행 조건 */
+.repo-title { font-size: 15px; }
+.appcode { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 18px; }
+@media (max-width: 900px) { .appcode { grid-template-columns: minmax(0, 1fr); } }
+.appcode h3 { margin-top: 4px; }
+.codetree { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--muted-bg); border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 12px; overflow-x: auto; }
+.tree, .tree-sub { list-style: none; margin: 0; padding: 0; }
+.tree-sub { margin-left: 9px; padding-left: 12px; border-left: 1px solid var(--rail); }
+.tree li { padding: 2px 0; }
+.tree-dir > .tree-name { color: var(--cyan); }
+.tree-file .tree-name { color: var(--dim); }
+.tree-file.has-role .tree-name { color: var(--text); font-weight: 600; }
+.ttag { display: inline-block; margin-left: 8px; font: 600 11px/1.6 -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
+  padding: 0 7px; border-radius: 6px; vertical-align: 1px; }
+.tt-role { background: var(--run-bg); color: var(--cyan); }
+.tt-state { background: color-mix(in srgb, var(--blue) 18%, transparent); color: var(--blue); }
+.tt-env { background: var(--warn-bg); color: var(--warn); }
+.tt-dim { background: transparent; color: var(--dim); border: 1px solid var(--line); }
+.tt-added { background: var(--ok-bg); color: var(--ok); }
+.tt-changed { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok-2); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); }
+.tree-hidden { margin: 6px 0 0; font-size: 11px; }
+.routes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.routes code { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--card); border: 1px solid var(--line); }
