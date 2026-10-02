@@ -13,7 +13,7 @@ from schemas import DeployEvent, Plan
 from analyzer.backend import ReplayBackend
 from analyzer.e_runtime import EConnector, run_worker
 from analyzer.feedback import PatchReference
-from analyzer.recovery import PatchedCandidate, _assert_patch, _check_plan, fingerprint, recover_local
+from analyzer.recovery import Approval, PatchedCandidate, _assert_patch, _check_plan, fingerprint, recover_local
 from analyzer.retry_store import RetryStore
 from analyzer.runner import Metrics
 from analyzer.snapshot import Snapshot
@@ -105,7 +105,8 @@ async def deploy(context, store):
         files = tuple(sorted(set(context.repo_map.tree) | {c["path"] for c in manifest["changes"]}))
         candidate = PatchedCandidate(directory, manifest, context.plan, files)
         _assert_patch(candidate, context.repo_map)
-        await connector.validate_patch(candidate, candidate.fingerprint)
+        approval = await connector.validate_patch(candidate, candidate.fingerprint)
+        store.save_validated_patch(context.deployment_id, candidate, context.repo_map, approval, "initial")
         emit(context, stage, "ok", "initial_patch_approved")
         stage = "build"
         emit(context, stage, "started", "initial_build_started")
@@ -118,6 +119,7 @@ async def deploy(context, store):
         emit(context, stage, "started", "initial_local_started")
         checked = await connector.check_local(built.artifact, context.plan)
         if checked.ok:
+            store.mark_patch_applied(context.deployment_id, "initial")
             emit(context, "health", "ok", "initial_health_passed")
             emit(context, "smoke", "ok", "initial_smoke_passed", checked.url)
             finish_run(store, context.deployment_id, "succeeded")
@@ -133,6 +135,9 @@ async def deploy(context, store):
                   "reason": result.reason, "attempts": result.retry_attempts,
                   "metrics": asdict(result.reanalysis_metrics) if result.reanalysis_metrics else {"backend": "replay"}}
         if result.status == "recovered":
+            store.save_validated_patch(context.deployment_id, result.patch, context.repo_map,
+                Approval(approved=True, fingerprint=result.patch.fingerprint), "recovery")
+            store.mark_patch_applied(context.deployment_id, "recovery")
             update["corrected"] = {"repo_map": context.repo_map.model_dump(mode="json"),
                 "intent": result.analysis.intent.model_dump(mode="json"),
                 "plans": {"local": result.plan.model_dump(mode="json")}, "metrics": update["metrics"]}

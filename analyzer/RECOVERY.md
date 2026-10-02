@@ -2,7 +2,8 @@
 
 - 담당: C · 리뷰/연결: B/E · 이슈: #12
 - 현재 범위: 공통 Intent/Plan/BuildArtifact/DeployEvent를 사용하는 C의 코디네이터와
-  [실제 E 연결 콜백](E_RUNTIME.md). 제품 B Planner 및 D caller 연결은 별도로 필요하다.
+  [실제 E 연결 콜백](E_RUNTIME.md), [D Local worker](../control_plane/LOCAL_RUNTIME.md).
+  B 실제 Planner는 아직 별도로 필요하다.
 
 `recover_local()`은 실패한 Local 배포를 한 번만 재분석한다. 수정한 Intent를 검증하고
 새 Plan과 패치를 만든 뒤, 패치 검증·재빌드·Local 테스트를 순서대로 실행한다.
@@ -180,3 +181,7 @@ Intent를 응답 재생 backend로 검증한다. 경로를 생략하면 fixture 
 최신 D PR #21과 실제 배포 API·CLI·Docker·SSE를 연결한 추가 검증은
 [C/D 연결 문서](CONTROL_PLANE.md)를 따른다. C 단독 112개, 최신 D와 함께 178개 테스트 및
 API+Docker 4개 시나리오가 통과했다. B/E는 이 추가 검증에서도 개발용 대역이다.
+
+위 숫자는 당시 대역 검증 기록이다. 이후 실제 D API와 E Gate/Builder/Local을 연결한 경로,
+승인·복구·롤백 및 검증된 패치 diff 저장은 [Local Runtime 문서](../control_plane/LOCAL_RUNTIME.md)를 따른다.
+B와 모델 응답은 해당 검증에서도 명시적인 fixture/replay이며 새 모델 추론이나 실제 B 검증으로 표시하지 않는다.

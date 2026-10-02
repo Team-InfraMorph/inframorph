@@ -33,7 +33,9 @@ def expect(condition, code):
 def verify(output):
     output.mkdir(parents=True, exist_ok=False)
     adapter = LocalRuntime(root=output / "runtime", b_modules=DemoModules())
-    app = create_app(db_path=output / "control-plane.db", runtime=adapter)
+    def forbidden_fixture_patch(*args):
+        raise AssertionError("fixture_patch_must_not_run")
+    app = create_app(db_path=output / "control-plane.db", runtime=adapter, patcher=forbidden_fixture_patch)
     store = app.state.store
     client = TestClient(app)
     report = {"team_api_called": False, "aws_called": False, "publish": False,
@@ -79,11 +81,16 @@ def verify(output):
     try:
         _, normal = new_project("none")
         check("normal_real_docker_live_without_retry", get(normal)["status"] == "LIVE" and analysis(normal).get("recovery") is None)
+        review = client.get(f"/api/deployments/{normal}/patch").json()["local"]
+        check("normal_actual_e_validated_patch_visible", review["verified"] and review["applied"] and review["phase"] == "initial")
         pid, first = new_project("first")
         value = analysis(first)
         check("v1_real_docker_one_retry_live", get(first)["status"] == "LIVE" and value["recovery"]["attempts"] == 1)
         check("usage_initial_plus_retry_no_team_api", value["metrics"]["api_calls"] == 0 and
               value["metrics"]["model_calls"] == value["recovery"]["initial_metrics"]["model_calls"] + value["recovery"]["retry_metrics"]["model_calls"])
+        review = client.get(f"/api/deployments/{first}/patch").json()["local"]
+        check("recovered_patch_and_initial_history_visible", review["phase"] == "recovery" and review["applied"] and review["initial"]["phase"] == "initial")
+        check("patch_diff_binds_verified_digest", review["diff_sha256"] == json.loads((adapter.context_file(first).parent / "retry/manifest.json").read_text())["diff_sha256"])
         persistence(first)
         check("v1_initial_note_image_survive_retry_and_restart", True)
         v1 = value["intent"]["source_revision"]
@@ -121,6 +128,8 @@ def verify(output):
         _, failed = new_project("always")
         check("second_local_failure_stops_after_one_retry", get(failed)["status"] == "FAILED" and analysis(failed)["recovery"]["attempts"] == 1 and analysis(failed)["recovery"]["reason"] == "second_local_failure")
         check("failed_retry_does_not_promote_intent", analysis(failed)["intent"] == analysis(failed)["initial_intent"])
+        review = client.get(f"/api/deployments/{failed}/patch").json()["local"]
+        check("failed_recovery_patch_not_promoted", review["phase"] == "initial" and not review["applied"] and "initial" not in review)
         before = len(store.list_events(first))
         context = adapter.context_file(first)
         process = subprocess.run([sys.executable, "-m", "control_plane.local_deploy", "--context", str(context),

@@ -2,7 +2,8 @@
 
 `EConnector`는 실제 E의 Intent/Patch Gate, Builder, Local Adapter를 `RecoveryHooks`로
 연결한다. B Planner는 caller가 명시적으로 제공해야 한다. 기본 승인이나 예시 Planner를
-제품 기본값으로 넣지 않는다. D의 제품 실행 명령·복구 cache/UI 갱신은 별도 연결 작업이다.
+제품 기본값으로 넣지 않는다. D의 실제 Local 실행·복구 cache/UI 연결은
+[Local Runtime](../control_plane/LOCAL_RUNTIME.md)에 구현돼 있다. B 실제 모듈은 아직 연결 전이다.
 
 ## 사용 계약
 
@@ -36,7 +37,7 @@ caller가 제공한 안정된 프로젝트 namespace를 사용한다. 원래 Int
   원인을 확정할 수 없어 `infra/unknown`으로 중단한다. 로그 문구로 재시도 여부를 정하지 않는다.
 - 최초 E `fail` 이벤트를 그대로 D에 먼저 보내면 D가 FAILED를 확정한다. 최초 Local 호출의
   실패 이벤트는 caller가 보류하고, 확인한 실패 코드를 C에 전달해야 한다. 재시도 진행·최종
-  성공/실패는 코디네이터의 공통 이벤트로 전달한다. 제품 caller 연결은 아직 남아 있다.
+  성공/실패는 코디네이터의 공통 이벤트로 전달한다. D Local worker가 이 caller 역할을 수행한다.
 - E의 블로킹 코드는 별도 Python 프로세스에서 실행한다. 취소 시 프로세스 그룹을 종료하고
   Local에서는 전용 Compose namespace를 `down`한다. 볼륨은 보존한다. Docker daemon에서
   진행하는 이미지 빌드까지 취소됐다는 보장은 없다. 이미지 태그는 E 출처/충돌 검사를 유지한다.

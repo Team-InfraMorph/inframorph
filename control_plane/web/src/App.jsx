@@ -174,22 +174,30 @@ function AnalysisCard({ deployment, intent }) {
 const ACTION = { add: "추가", modify: "수정" };
 
 function PatchCard({ patch }) {
-  const [first] = Object.values(patch);
-  if (!first) return null;
-  const same = Object.values(patch).every((p) => JSON.stringify(p) === JSON.stringify(first));
+  const entries = Object.entries(patch);
+  if (!entries.length) return null;
+  const same = entries.length > 1 && entries.every(([, p]) => JSON.stringify(p) === JSON.stringify(entries[0][1]));
+  const shown = same ? [["공통 변경", entries[0][1]]] : entries;
   return (
     <div className="card">
-      <h2>코드를 이렇게 고쳤다 {same && <span className="dim">· Local·AWS 동일, 실행 때 환경변수로 저장소 선택</span>}</h2>
-      {first.files.map((f) => (
+      <h2>코드를 이렇게 고쳤다</h2>
+      {shown.map(([target, value]) => <section key={target}>
+      <h3>{TARGETS[target] ?? target} {value.phase === "recovery" ? "· 자동 복구 후 패치" : ""}</h3>
+      {value.verified && <p className="dim">E 정책 검사 통과 · {value.applied ? "이 배포에서 실행 검증 완료" : "실행 검증이 완료되지 않은 변경"} · 커밋 {value.source_revision.slice(0, 7)}</p>}
+      {value.initial && <p className="dim">최초 패치 이력을 보존하고 복구에 성공한 패치를 표시합니다.</p>}
+      {value.status === "unchanged" && <p className="dim">수정할 코드가 없습니다.</p>}
+      {value.files.map((f) => (
         <details key={f.path} className="patch-file">
           <summary><span className="mono">{f.path}</span> <span className="dim">{ACTION[f.action] ?? f.action}</span></summary>
-          {f.diff == null ? <p className="dim">잠금 파일이라 내용은 생략</p> : (
+          {f.diff == null ? <p className="dim">잠금 파일이라 내용은 생략</p> : <>
             <pre className="diff">{f.diff.split("\n").map((line, i) => (
               <span key={i} className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""}>{line}{"\n"}</span>
             ))}</pre>
-          )}
+            {f.truncated && <p className="dim">표시 크기 제한으로 diff 일부를 생략했습니다.</p>}
+          </>}
         </details>
       ))}
+      </section>)}
     </div>
   );
 }
@@ -332,6 +340,10 @@ export default function App() {
     setProjectId(id);
     setSelectedId(null);
     setDeployments([]);
+    setPlans({});
+    setPatch({});
+    setIntent(null);
+    setEvents([]);
     save("projectId", id ?? "");
   };
   const act = async (fn, id = selected?.id) => {

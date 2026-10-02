@@ -64,6 +64,22 @@ B 연결 후에도 새로운 소스 형태는 검토된 정책/패치 지원을 
 `GET /api/deployments/{id}/analysis`에는 현재 `intent`, `initial_intent`, 합산 `metrics`, `recovery`가 들어간다.
 화면은 복구 성공/중단, 재시도 수, 초기/재분석 응답 수와 총 사용량을 보여 준다. 실패 시 기존 분석 결과를 표시한다.
 
+## 검증된 패치 확인
+
+`GET /api/deployments/{id}/patch`는 실제 Local 모드에서 E가 승인한 변경 파일·diff·해시를 반환한다.
+최초 패치는 `phase=initial`, 성공한 복구 패치는 `phase=recovery`다. `verified`는 E patch gate 통과,
+`applied`는 해당 패치로 Local 검증 완료를 뜻한다. 복구가 성공하면 `initial`에 최초 패치 이력을 함께 보존한다.
+실패한 복구 패치는 현재 패치로 게시하지 않는다.
+
+화면의 '코드를 이렇게 고쳤다'에서 파일을 펼쳐 변경을 확인한다. 대상이 Local 하나면 Local만 표시한다.
+잠금 파일의 큰 diff는 생략하며, 다른 파일은 최대 16 KB를 표시하고 일부 생략 여부를 표시한다.
+전체 diff 해시와 파일 전후 해시는 생략하지 않는다. 비밀값 패턴은 표시 전에 마스킹한다.
+
+변경 내역은 gate 통과 직후 원본·manifest·diff를 다시 검사해 DB에 저장한다. API 조회 때 작업 폴더를
+다시 읽지 않으므로 나중에 파일이 바뀌거나 사라져도 당시 검증된 변경 이력을 유지한다.
+현재 D의 fixture patcher는 기본 가짜 실행 경로에서만 사용한다. 실제 Local worker가 패치·gate·build를
+담당하는 경로에서는 fixture patcher를 생략해 중복 패치/가짜 승인 이벤트를 만들지 않는다.
+
 원본 snapshot digest·revision·Plan·패치 digest·실제 이미지가 단계마다 묶인다. 실행 전 원본 변경도 중단한다.
 하위 프로세스 timeout 시 SIGTERM으로 C를 취소하고 E의 해당 namespace 정리를 기다린다(최대 추가 60초).
 일반 정리는 컨테이너/네트워크만 내리고 데이터 볼륨은 보존한다.
