@@ -113,6 +113,42 @@ class AnalyzerTests(unittest.IsolatedAsyncioTestCase):
             self.replies[:-1] + [Reply(text=json.dumps(result))]))
         self.assertEqual(analyzed.intent.unknowns, result["unknowns"])
 
+    async def test_requirements_clarification_is_bounded_and_does_not_echo_rejected_output(self):
+        unclear = deepcopy(self.expected)
+        canary = "private-unresolved-output-canary"
+        unclear["unknowns"] = [canary]
+        for corrected in (self.expected, unclear):
+            with self.subTest(still_unclear=corrected is unclear):
+                backend = RecordingBackend(self.replies[:-1] +
+                    [Reply(text=json.dumps(unclear)), Reply(text=json.dumps(corrected))])
+                result = await analyze(self.mapping, self.snapshot, backend, clarify_requirements=lambda intent: True)
+                self.assertEqual(result.intent.unknowns, corrected["unknowns"])
+                self.assertEqual(result.metrics.validation_retries, 1)
+                self.assertEqual(result.metrics.model_calls, 6)
+                self.assertEqual(result.metrics.tool_calls, 4)
+                self.assertNotIn(canary, json.dumps(backend.requests))
+        backend = RecordingBackend(self.replies[:-1] + [Reply(text=json.dumps(unclear))])
+        with self.assertRaises(AnalysisError) as raised:
+            await analyze(self.mapping, self.snapshot, backend, Limits(max_turns=5),
+                          clarify_requirements=lambda intent: True)
+        self.assertEqual(raised.exception.code, "model_turn_limit")
+        self.assertEqual(raised.exception.metrics.model_calls, 5)
+
+    async def test_requirements_and_schema_validation_share_one_correction(self):
+        unclear = deepcopy(self.expected)
+        unclear["unknowns"] = ["Unproven deletion requirement"]
+        backend = RecordingBackend(self.replies[:-1] + [Reply(text="{}"), Reply(text=json.dumps(unclear))])
+        def no_second_correction(intent):
+            self.fail("Schema validation already used the correction opportunity")
+        result = await analyze(self.mapping, self.snapshot, backend, clarify_requirements=no_second_correction)
+        self.assertEqual(result.intent.unknowns, unclear["unknowns"])
+        self.assertEqual(result.metrics.validation_retries, 1)
+        backend = RecordingBackend(self.replies[:-1] + [Reply(text=json.dumps(unclear)), Reply(text="{}")])
+        with self.assertRaises(AnalysisError) as raised:
+            await analyze(self.mapping, self.snapshot, backend, clarify_requirements=lambda intent: True)
+        self.assertEqual(raised.exception.code, "invalid_intent")
+        self.assertEqual(raised.exception.metrics.validation_retries, 1)
+
     async def test_injected_shell_call_is_never_executed(self):
         with tempfile.TemporaryDirectory() as directory:
             snapshot = Path(directory) / "snapshot"
@@ -326,7 +362,7 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
             requests.append(json.loads(request.content))
             return httpx2.Response(200, json={
                 "id": "resp_test", "object": "response", "created_at": 0,
-                "model": "gpt-5.3-codex", "status": "completed",
+                "model": "gpt-6-luna", "status": "completed",
                 "output": [{"type": "message", "id": "msg_test", "status": "completed", "role": "assistant",
                             "content": [{"type": "output_text", "text": '{"ok":true}', "annotations": []}]}],
                 "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
@@ -345,7 +381,8 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         request = requests[0]
         self.assertFalse(request["store"])
         self.assertFalse(request["parallel_tool_calls"])
-        self.assertEqual(request["model"], "gpt-5.3-codex")
+        self.assertEqual(request["model"], "gpt-6-luna")
+        self.assertEqual(request["reasoning"], {"effort": "low"})
         self.assertEqual({item["name"] for item in request["tools"]}, {"Read", "Grep", "Glob"})
         self.assertEqual(request["include"], ["reasoning.encrypted_content"])
 

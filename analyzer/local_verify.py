@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from schemas import Intent, RepoMap
 from schemas.common import parse_evidence
 
-from .config import MODEL, Limits
+from .config import MODEL, REASONING_EFFORT, Limits
 from .redaction import Redactor
 from .runner import INSTRUCTIONS, _validate
 from .snapshot import Snapshot
@@ -33,7 +33,7 @@ from .trust import DATA_INSTRUCTIONS, data_message, navigation_map
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests/fixtures/analyzer"
 MAX_OUTPUT_BYTES = 2_000_000
-LOCAL_MODEL = "gpt-6-astra"
+LOCAL_MODEL = MODEL
 DISABLED_FEATURES = (
     "shell_tool", "unified_exec", "shell_snapshot", "apps", "plugins", "hooks",
     "browser_use", "computer_use", "multi_agent", "image_generation", "view_image",
@@ -122,7 +122,7 @@ def command(binary: str, model: str, output: Path) -> list[str]:
             "--ephemeral", "--sandbox", "read-only", "--color", "never", "--json",
             "--model", model, "--output-last-message", str(output),
             "-c", 'forced_login_method="chatgpt"', "-c", 'model_provider="openai"',
-            "-c", 'model_reasoning_effort="low"', "-c", 'web_search="disabled"',
+            "-c", f'model_reasoning_effort="{REASONING_EFFORT}"', "-c", 'web_search="disabled"',
             "-c", "project_doc_max_bytes=0", "-c", 'approval_policy="never"',
             "-c", 'history.persistence="none"', "-c", "tools.view_image=false"]
     for feature in DISABLED_FEATURES:
@@ -288,7 +288,7 @@ def verify_case(case: str, args, directory: Path) -> dict:
         if feedback:
             report["failure_feedback_provided"] = True
         if args.action == "run":
-            report.update(model_requested=args.model, reasoning_effort="low",
+            report.update(model_requested=args.model, reasoning_effort=REASONING_EFFORT,
                           production_api_model=MODEL, same_model_as_api=args.model == MODEL)
             text, metadata = run_codex(prompt, args.model, args.timeout)
             report.update(metadata)

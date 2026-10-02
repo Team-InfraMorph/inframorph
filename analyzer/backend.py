@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Protocol
 
-from .config import MODEL
+from .config import MODEL, REASONING_EFFORT
 
 
 class BackendError(RuntimeError):
@@ -52,7 +52,7 @@ class OpenAIBackend:
         try:
             response = await self.client.responses.create(
                 model=MODEL, store=False, stream=False, parallel_tool_calls=False,
-                include=["reasoning.encrypted_content"], reasoning={"effort": "low"},
+                include=["reasoning.encrypted_content"], reasoning={"effort": REASONING_EFFORT},
                 truncation="disabled", service_tier="default", **request,
             )
         except openai.AuthenticationError:
