@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import re
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +24,9 @@ from .analysis import StageFailed, fixture_analyzer, fixture_patcher, read_patch
 from .db import TERMINAL, ConflictError, Status, Store
 from .change_detector import plan_diff, plan_redeploy
 from .orchestrator import run_deployment
+from .orchestrator import stream_events as run_module
+from .runtime import build_cmds, fake_deployer_cmd  # noqa: F401 (fake_deployer_cmd: 테스트·대역용)
+from .runtime import deployer_cmd as module_deployer_cmd
 
 DEFAULT_DB = Path(os.environ.get("INFRAMORPH_HOME", "/tmp/inframorph")) / "control_plane.db"
 REPO_URL = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(\.git)?/?")
@@ -32,6 +34,8 @@ BRANCH = re.compile(r"[A-Za-z0-9._/-]{1,100}")
 SSE_POLL_S = 0.5
 WEBHOOK_PATH = "/api/webhooks/github"
 WEB_DIST = Path(__file__).resolve().parent / "web" / "dist"
+BUILD_TIMEOUT_S = float(os.environ.get("INFRAMORPH_BUILD_TIMEOUT", "900"))
+STAGE_NAMES = {"analyze": "AI 분석", "policy": "판단 검사", "patch": "코드 수정"}
 
 
 class ProjectIn(BaseModel):
@@ -63,28 +67,14 @@ class ProjectIn(BaseModel):
         return value
 
 
-def _fake_env(name, target, default=None):
-    """INFRAMORPH_FAKE_<NAME>_<TARGET>이 있으면 그 대상에만, 없으면 INFRAMORPH_FAKE_<NAME>을 쓴다."""
-    return os.environ.get(f"INFRAMORPH_FAKE_{name}_{target.upper()}", os.environ.get(f"INFRAMORPH_FAKE_{name}", default))
-
-
-def fake_deployer_cmd(deployment_id, target):
-    """실제 배포기가 붙기 전까지 쓰는 명령. 환경 변수로 지연·fixture·종료 코드를 대상별로 바꿀 수 있다."""
-    cmd = [sys.executable, "-m", "control_plane.fake_deployer", "--deployment-id", deployment_id,
-           "--target", target,
-           "--delay", _fake_env("DELAY", target, "1"),
-           "--exit-code", _fake_env("EXIT_CODE", target, "0")]
-    if fixture := _fake_env("FIXTURE", target):
-        cmd += ["--fixture", fixture]
-    return cmd
-
-
 def _sse(event, data, seq=None):
     head = f"id: {seq}\n" if seq is not None else ""
     return f"{head}event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_analyzer, patcher=fixture_patcher):
+def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_analyzer, patcher=fixture_patcher,
+               builder=build_cmds):
+    """팀원 모듈이 붙는 네 자리: analyzer(B·C·E 판단 검사) → patcher(C) → builder(E) → deployer_cmd(E·A)."""
     store = Store(db_path or DEFAULT_DB)
     store.recover_interrupted()
     # 배포별 작업 폴더: <INFRAMORPH_HOME>/<deployment_id>/. C 모듈은 심볼릭 링크가 낀 경로를 거부하므로
@@ -92,13 +82,17 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
     workdir = store.path.parent.resolve()
 
     def execute(project_id, deployment_id):
-        """분석·승인 확인 후 대상별 배포기를 동시에 돌리고, 끝나면 대기 중인 최신 요청을 이어서 실행한다."""
+        """분석 → 승인 → 코드 수정 → 검사·빌드 → 대상별 동시 배포. 끝나면 대기 중인 최신 요청을 이어서 실행한다."""
         while deployment_id:
             deployment = store.get_deployment(deployment_id)
-            rollback = deployment["triggered_by"] == "rollback"  # 이전 이미지를 다시 띄우므로 수정·빌드 생략
-            if (deployment["approved_at"] or rollback or ready(deployment)) and (rollback or patched(deployment)):
-                targets = deployment["targets"]
-                run_deployment(store, deployment_id, {t: deployer_cmd(deployment_id, t) for t in targets})
+            folder = workdir / deployment_id
+            rollback = deployment["triggered_by"] == "rollback"  # 이전 이미지를 다시 띄우므로 분석·수정·빌드 생략
+            if rollback:
+                write_plans(deployment, folder)
+            if (deployment["approved_at"] or rollback or ready(deployment, folder)) and (
+                    rollback or (patched(deployment, folder) and built(deployment, folder))):
+                cmds = {t: deployer_cmd(deployment, t, folder) for t in deployment["targets"]}
+                run_deployment(store, deployment_id, cmds)
             elif store.get_deployment(deployment_id)["status"] == Status.AWAITING_APPROVAL.value:
                 return  # 승인이 나면 approve가 이어서 실행한다
             deployment_id = None
@@ -108,17 +102,34 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
                 except ConflictError:
                     return
 
-    def ready(deployment):
-        """분석·설계(구간 2~7)를 하고 승인이 필요 없으면 True. 분석 실패면 FAILED, 구조 변경이면 승인 대기."""
+    def stage_event(deployment_id, targets, step, status, detail=None, duration_ms=None):
+        """조종실이 직접 진행한 단계(분석·코드 수정 등)도 배포기와 같은 DeployEvent로 대상별 타임라인에 남긴다."""
+        for target in targets:
+            event = DeployEvent(deployment_id=deployment_id, ts=datetime.now(timezone.utc), target=target, step=step,
+                                status=status, detail=detail, duration_ms=duration_ms)
+            store.add_event(deployment_id, event.model_dump(mode="json", exclude_none=True))
+
+    def ready(deployment, folder):
+        """분석·설계(구간 2~7)를 하고 승인이 필요 없으면 True. 실패면 FAILED, 구조 변경이면 승인 대기."""
+        targets = deployment["targets"]
+        started = time.monotonic()
         try:
-            result = analyzer(deployment)
+            result = analyzer(deployment, folder)
         except StageFailed as exc:
+            stage_event(deployment["id"], targets, exc.step, "fail", f"{STAGE_NAMES[exc.step]} 실패: {exc.code}")
             store.set_analysis_metrics(deployment["id"], {**exc.metrics, "error": exc.code})
             store.fail(deployment["id"])
             return False
         if result is None:  # 분석 결과가 없으면(가짜 모드의 임의 커밋) 비교할 구조도 없다
             return True
-        store.set_analysis_metrics(deployment["id"], result.get("metrics"))
+        metrics = result.get("metrics") or {}
+        detail = ("AI 분석 생략 · 이전 결과 재사용" if deployment["analysis_mode"] == "rebuild_only"
+                  else "예시 분석 결과 사용 (Analyzer 미연결)" if metrics.get("backend") == "fixture"
+                  else f"모델 호출 {metrics.get('model_calls', 0)}회")
+        stage_event(deployment["id"], targets, "analyze", "ok", detail, int((time.monotonic() - started) * 1000))
+        if result.get("intent_checked"):
+            stage_event(deployment["id"], targets, "policy", "ok", "AI 판단 근거 확인 (E Policy Gate)")
+        store.set_analysis_metrics(deployment["id"], metrics)
         store.set_commit(deployment["id"], result["commit_sha"])
         store.save_analysis(deployment["project_id"], result["commit_sha"], result["repo_map"], result["intent"])
         store.save_plans(deployment["id"], result["plans"])
@@ -129,24 +140,16 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
             store.await_approval(deployment["id"], changes)
         return not changes
 
-    def stage_event(deployment_id, target, step, status, detail=None, duration_ms=None):
-        """조종실이 직접 진행한 단계(코드 수정 등)도 배포기와 같은 DeployEvent로 타임라인에 남긴다."""
-        event = DeployEvent(deployment_id=deployment_id, ts=datetime.now(timezone.utc), target=target, step=step,
-                            status=status, detail=detail, duration_ms=duration_ms)
-        store.add_event(deployment_id, event.model_dump(mode="json", exclude_none=True))
-
-    def patched(deployment):
-        """코드 수정(구간 7~8, C Code Patch). 성공하면 True. E의 Policy Gate·Builder는 이 결과를 받아 이어진다."""
+    def patched(deployment, folder):
+        """코드 수정(구간 7~8, C Code Patch). 성공하면 True."""
         plans = store.get_plans(deployment["id"])
         targets = list(plans) or deployment["targets"]
-        for target in targets:
-            stage_event(deployment["id"], target, "patch", "started")
+        stage_event(deployment["id"], targets, "patch", "started")
         started = time.monotonic()
         try:
-            manifests = patcher(deployment, plans, workdir / deployment["id"])
+            manifests = patcher(deployment, plans, folder)
         except StageFailed as exc:
-            for target in targets:
-                stage_event(deployment["id"], target, "patch", "fail", f"코드 수정 실패: {exc.code}")
+            stage_event(deployment["id"], targets, "patch", "fail", f"코드 수정 실패: {exc.code}")
             store.fail(deployment["id"])
             return False
         elapsed = int((time.monotonic() - started) * 1000)
@@ -154,8 +157,25 @@ def create_app(db_path=None, deployer_cmd=fake_deployer_cmd, analyzer=fixture_an
             manifest = (manifests or {}).get(target)
             detail = (f"파일 {len(manifest['changes'])}개 수정" if manifest and manifest["status"] == "patched"
                       else "수정할 코드 없음" if manifest else "코드 수정 모듈 없음 · 원본 그대로")
-            stage_event(deployment["id"], target, "patch", "ok", detail, elapsed)
+            stage_event(deployment["id"], [target], "patch", "ok", detail, elapsed)
         return True
+
+    def built(deployment, folder):
+        """검사·빌드(구간 8~9, E Builder). 대상마다 차례로 빌드한다(같은 app:<sha> 태그를 동시에 만들지 않게)."""
+        for target, (cwd, cmd) in builder(deployment, store.get_plans(deployment["id"]), folder).items():
+            exit_code, events, _ = run_module(store, deployment["id"], target, cmd, BUILD_TIMEOUT_S, cwd)
+            if exit_code != 0 or any(e.status == "fail" for e in events):
+                if not any(e.status == "fail" for e in events):
+                    stage_event(deployment["id"], [target], "build", "fail", f"빌드 실패: exit_{exit_code}")
+                store.fail(deployment["id"])
+                return False
+        return True
+
+    def write_plans(deployment, folder):
+        """롤백 작업에는 복사된 plan만 있으므로 배포기가 읽을 plan 파일을 작업 폴더에 쓴다."""
+        folder.mkdir(parents=True, exist_ok=True)
+        for target, plan in store.get_plans(deployment["id"]).items():
+            (folder / f"plan.{target}.json").write_text(json.dumps(plan))
 
     def deployment_or_404(deployment_id):
         deployment = store.get_deployment(deployment_id)

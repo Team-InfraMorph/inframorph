@@ -59,15 +59,17 @@ def _overall_status(statuses):
     return Status.LIVE
 
 
-def run_target(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S):
-    """대상 하나의 배포기를 실행하고 끝날 때까지 이벤트를 저장한 뒤 그 대상의 상태를 기록한다."""
-    accepted, rejected, events = 0, 0, []
+def stream_events(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S, cwd=None):
+    """cmd를 실행해 stdout의 DeployEvent를 줄마다 검증·저장한다. 반환 = (종료 코드, 받은 이벤트, 버린 줄 수).
+
+    배포기뿐 아니라 이벤트를 내는 다른 모듈(E Builder 등)도 같은 규칙으로 받는다.
+    """
+    rejected, events = 0, []
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1, cwd=cwd)
     except OSError as exc:
-        log.error("%s deployer failed to start: %s", target, exc)
-        store.set_target_status(deployment_id, target, Status.FAILED)
-        return RunResult(None, 0, 0, Status.FAILED)
+        log.error("%s command failed to start: %s", target, exc)
+        return None, events, rejected
 
     try:
         for line in proc.stdout:
@@ -88,28 +90,36 @@ def run_target(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S):
                 event = event.model_copy(update={"detail": mask_secrets(event.detail)})
             store.add_event(deployment_id, event.model_dump(mode="json", exclude_none=True))
             events.append(event)
-            accepted += 1
         exit_code = proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
         exit_code = None
-        log.error("%s deployer timed out after %ss", target, timeout)
+        log.error("%s command timed out after %ss", target, timeout)
     finally:
         proc.stdout.close()
+    return exit_code, events, rejected
 
-    status = _final_status(exit_code, events)
+
+def run_target(store, deployment_id, target, cmd, timeout=DEFAULT_TIMEOUT_S, cwd=None):
+    """대상 하나의 배포기를 실행하고 끝날 때까지 이벤트를 저장한 뒤 그 대상의 상태를 기록한다."""
+    exit_code, events, rejected = stream_events(store, deployment_id, target, cmd, timeout, cwd)
+    status = _final_status(exit_code, events)  # 시작 실패·시간 초과(None)도 0이 아니므로 FAILED
     url = next((e.url for e in reversed(events) if e.url and e.status == "ok"), None)
     store.set_target_status(deployment_id, target, status, url)
-    return RunResult(exit_code, accepted, rejected, status, url)
+    return RunResult(exit_code, len(events), rejected, status, url)
 
 
 def run_deployment(store, deployment_id, cmds, timeout=DEFAULT_TIMEOUT_S):
-    """대상별 배포기를 동시에 실행한다(기획서 시나리오 A: Local과 AWS 동시 진행). cmds = {target: cmd}."""
+    """대상별 배포기를 동시에 실행한다(기획서 시나리오 A: Local과 AWS 동시 진행).
+
+    cmds = {target: cmd} 또는 {target: (작업 위치, cmd)}. 팀원 모듈은 자기 checkout에서 실행해야 한다.
+    """
     results = {}
 
-    def run(target, cmd):
-        results[target] = run_target(store, deployment_id, target, cmd, timeout)
+    def run(target, spec):
+        cwd, cmd = spec if isinstance(spec, tuple) else (None, spec)
+        results[target] = run_target(store, deployment_id, target, cmd, timeout, cwd)
 
     threads = [threading.Thread(target=run, args=item) for item in cmds.items()]
     for thread in threads:

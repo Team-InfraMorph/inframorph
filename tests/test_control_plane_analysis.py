@@ -86,7 +86,7 @@ class AnalyzerInPipelineTest(unittest.TestCase):
             root = make_stub_root(stub, exit_code)[0]
             if patch_exit_code is not None:
                 add_code_patch_stub(root, patch_exit_code)
-            os.environ["INFRAMORPH_ANALYZER_ROOT"] = str(root)
+            os.environ["INFRAMORPH_MODULES_ROOT"] = str(root)
             os.environ["INFRAMORPH_FAKE_DELAY"] = "0"
             try:
                 app = create_app(db_path=Path(tmp) / "cp.db")
@@ -100,7 +100,7 @@ class AnalyzerInPipelineTest(unittest.TestCase):
                     deployment["events"] = [e["event"] for e in app.state.store.list_events(dep)]
                     return deployment
             finally:
-                os.environ.pop("INFRAMORPH_ANALYZER_ROOT", None)
+                os.environ.pop("INFRAMORPH_MODULES_ROOT", None)
                 os.environ.pop("INFRAMORPH_FAKE_DELAY", None)
                 app.state.store.close()
 
@@ -129,7 +129,7 @@ class AnalyzerInPipelineTest(unittest.TestCase):
     def test_code_patch_failure_stops_before_deployers(self):
         deployment = self.deploy(patch_exit_code=1)
         self.assertEqual(deployment["status"], "FAILED")
-        self.assertEqual({e["step"] for e in deployment["events"]}, {"patch"})
+        self.assertEqual({e["step"] for e in deployment["events"]}, {"analyze", "patch"})  # 배포기는 안 돌았다
         self.assertIn("unsupported_source", deployment["events"][-1]["detail"])
 
 
