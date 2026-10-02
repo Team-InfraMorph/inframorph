@@ -115,6 +115,17 @@ class LocalRuntime:
         if not isinstance(b_modules, DemoModules) and replay is None and not codex:
             raise ValueError("explicit_analysis_replay_required")
 
+    def demo_versions(self):
+        return self.b.versions() if isinstance(self.b, DemoModules) else []
+
+    def demo_revision(self, project, version):
+        if project["repo_url"].rstrip("/").removesuffix(".git") != "https://github.com/Team-InfraMorph/demo-app":
+            raise ValueError("demo_repository_required")
+        for item in self.demo_versions():
+            if item["id"] == version:
+                return item["commit_sha"]
+        raise ValueError("demo_version_unavailable")
+
     def context_file(self, deployment_id):
         if not __import__("re").fullmatch(r"[A-Za-z0-9-]{1,100}", deployment_id):
             raise ValueError("invalid_deployment_id")

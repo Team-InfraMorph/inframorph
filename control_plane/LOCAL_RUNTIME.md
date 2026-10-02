@@ -41,7 +41,22 @@ ChatGPT 로그인만 허용하며 팀 API로 전환하거나 실패 시 저장 �
 새 분석 역시 source policy와 E gate를 통과해야 한다. 빌드만·롤백의 캐시에는 새 모델 호출을 추가하지 않는다.
 토큰은 Codex CLI가 보고한 사용량이며 팀 API 요금으로 환산하지 않는다. ChatGPT/Codex 사용량은 소비된다.
 빌드만·롤백은 기존 Intent를 재사용하며 새 추론을 하지 않는다.
-B Mapper/Planner는 여전히 명시적인 demo fixture이고, 테스트 대상은 검토한 demo-app v1/v2다.
+`--demo` 모드의 B Mapper/Planner는 명시적인 fixture이며, 테스트 대상은 검토한 demo-app v1/v2다.
+
+### 웹에서 V2 배포 테스트
+
+`--demo`로 실행한 조종실의 demo-app 프로젝트에는 **테스트 버전** 선택이 표시된다.
+기존 V1 프로젝트에서 **V2 · 노트 집계 worker 추가 → 배포**를 선택하면 V2의 고정된 SHA로
+새 분석을 시작한다. web+worker 설계와 worker 추가 승인 요청을 확인하고 **승인하고 배포**로 진행한다.
+프로젝트를 유지하므로 Local/AWS의 프로젝트별 주소와 데이터 저장소를 그대로 사용한다.
+이력에도 V1/V2와 커밋을 함께 표시한다. 선택은 GitHub 브랜치의 최신 소스를 가져오는 기능이 아니다.
+
+API는 `POST /api/projects/<id>/deploy`의 선택적 `{"demo_version":"v2"}`를 받으며,
+운영자의 demo runtime이 제공하는 버전만 허용한다. 실제 B 모드·다른 레포·임의 SHA 입력에서는
+이 선택을 거부한다. 선택한 SHA는 분석 전에 저장되고 실행 중인 프로젝트의 잠금을 우회하지 않는다.
+명시한 버전은 새로운 수동 요청으로 처리하므로 대기 중인 push의 원래 커밋을 바꾸지 않는다.
+본문이 없는 기존 수동 배포와 webhook/rollback 경로의 동작은 유지한다.
+AWS의 V2→V1 전환은 worker 리소스 제거를 포함하므로 현재 삭제 방지 정책에 따라 차단될 수 있다.
 
 새 Node/Prisma/PostgreSQL 이미지나 패키지가 로컬에 없으면 Docker 빌드가 다운로드할 수 있다.
 `.env`를 로드하지 않으며 팀 API 키를 하위 프로세스에 전달하지 않는다.

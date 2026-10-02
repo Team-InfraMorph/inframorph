@@ -9,6 +9,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,6 +67,11 @@ class ProjectIn(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("배포 대상이 중복되었습니다")
         return value
+
+
+class DeployIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    demo_version: Literal["v1", "v2"] | None = None
 
 
 def _sse(event, data, seq=None):
@@ -249,7 +255,8 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         return {"analysis_backend": backend,
                 "aws_enabled": getattr(runtime, "aws_config", None) is not None,
                 "model": getattr(runtime, "analysis_model", None) if backend == "codex-cli" else None,
-                "reasoning_effort": REASONING_EFFORT if backend == "codex-cli" else None}
+                "reasoning_effort": REASONING_EFFORT if backend == "codex-cli" else None,
+                "demo_versions": getattr(runtime, "demo_versions", lambda: [])()}
 
     @app.post("/api/projects", status_code=201)
     def create_project(body: ProjectIn):
@@ -268,11 +275,21 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         return project
 
     @app.post("/api/projects/{project_id}/deploy", status_code=202)
-    def deploy(project_id: str, background: BackgroundTasks):
-        if store.get_project(project_id) is None:
+    def deploy(project_id: str, background: BackgroundTasks, body: DeployIn | None = None):
+        project = store.get_project(project_id)
+        if project is None:
             raise HTTPException(404, "project not found")
+        revision = None
+        if body is not None and body.demo_version is not None:
+            resolve = getattr(runtime, "demo_revision", None)
+            if resolve is None:
+                raise HTTPException(409, "demo version selection requires the explicit demo runtime")
+            try:
+                revision = resolve(project, body.demo_version)
+            except ValueError:
+                raise HTTPException(409, "selected demo version is unavailable for this project") from None
         try:
-            deployment_id = store.begin_deploy(project_id)
+            deployment_id = store.begin_deploy(project_id, revision=revision)
         except ConflictError:
             raise HTTPException(409, "deployment already running for this project")
         background.add_task(execute, project_id, deployment_id)

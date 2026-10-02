@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
+from schemas.common import check_revision
+
 
 class Status(str, Enum):
     CREATED = "CREATED"
@@ -283,29 +285,38 @@ class Store:
         )
         return latest is not None and latest["status"] == Status.CREATED.value
 
-    def begin_deploy(self, project_id):
+    def begin_deploy(self, project_id, *, revision=None):
         """진행 중 배포가 없을 때만 DEPLOYING으로 바꾼다. 확인과 변경을 한 잠금 안에서 해서 동시 요청을 막는다.
 
         가장 최근 CREATED 작업을 실행하고, 그보다 오래된 CREATED 작업은 SUPERSEDED로 닫는다.
         대상(local·aws)마다 상태 행을 만든다.
+        명시한 revision은 수동 요청으로 고정하며 대기 중인 push의 커밋을 덮어쓰지 않는다.
         """
+        if revision is not None:
+            check_revision(revision)
         with self._lock, self._conn:
             if self._one(
                 "SELECT 1 FROM deployments WHERE project_id=? AND status IN (?, ?)", (project_id, *BLOCKING)
             ):
                 raise ConflictError(project_id)
             latest = self._one(
-                "SELECT id, status FROM deployments WHERE project_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                "SELECT id, status, triggered_by, commit_sha FROM deployments WHERE project_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 (project_id,),
             )
             now = _now()
-            if latest and latest["status"] == Status.CREATED.value:
+            mode = "full_analysis" if revision is not None else None
+            reasons = json.dumps(["선택한 데모 버전의 전체 분석"]) if revision is not None else None
+            if latest and latest["status"] == Status.CREATED.value and (revision is None or
+                    (latest["triggered_by"] == "manual" and latest["commit_sha"] is None)):
                 deployment_id = latest["id"]
+                if revision is not None:
+                    self._conn.execute("UPDATE deployments SET commit_sha=?, analysis_mode=?, change_reasons=? WHERE id=?",
+                                       (revision, mode, reasons, deployment_id))
             else:
                 deployment_id = _new_id("d")
                 self._conn.execute(
                     INSERT_DEPLOYMENT,
-                    (deployment_id, project_id, Status.CREATED.value, None, now, now, "manual", None, None),
+                    (deployment_id, project_id, Status.CREATED.value, revision, now, now, "manual", mode, reasons),
                 )
             self._conn.execute(
                 "UPDATE deployments SET status=?, updated_at=? WHERE project_id=? AND status=? AND id<>?",
