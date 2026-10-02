@@ -33,9 +33,10 @@ def expect(condition, code):
 def verify(output):
     output.mkdir(parents=True, exist_ok=False)
     adapter = LocalRuntime(root=output / "runtime", b_modules=DemoModules())
-    def forbidden_fixture_patch(*args):
-        raise AssertionError("fixture_patch_must_not_run")
-    app = create_app(db_path=output / "control-plane.db", runtime=adapter, patcher=forbidden_fixture_patch)
+    def forbidden_duplicate_stage(*args):
+        raise AssertionError("duplicate_patch_or_build_must_not_run")
+    app = create_app(db_path=output / "control-plane.db", runtime=adapter,
+                     patcher=forbidden_duplicate_stage, builder=forbidden_duplicate_stage)
     store = app.state.store
     client = TestClient(app)
     report = {"team_api_called": False, "aws_called": False, "publish": False,
@@ -81,6 +82,12 @@ def verify(output):
     try:
         _, normal = new_project("none")
         check("normal_real_docker_live_without_retry", get(normal)["status"] == "LIVE" and analysis(normal).get("recovery") is None)
+        verification = get(normal)["targets"]["local"]["verification"]
+        check("d_direct_url_verification_after_real_local_deploy", verification["status"] == "ok" and verification["code"] == 200)
+        before_verify = len(store.list_events(normal))
+        checked = client.post(f"/api/deployments/{normal}/verify").json()["local"]["verification"]
+        check("d_manual_reverify_without_duplicate_timeline", checked["status"] == "ok" and checked["code"] == 200
+              and len(store.list_events(normal)) == before_verify)
         review = client.get(f"/api/deployments/{normal}/patch").json()["local"]
         check("normal_actual_e_validated_patch_visible", review["verified"] and review["applied"] and review["phase"] == "initial")
         pid, first = new_project("first")

@@ -10,6 +10,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from tests.cp_isolation import NO_MODULES  # noqa: E402,F401
 from control_plane.analysis import StageFailed, run_analyzer  # noqa: E402
 from control_plane.app import create_app  # noqa: E402
 
@@ -39,7 +40,7 @@ def add_code_patch_stub(root, exit_code=0):
         out.mkdir()
         (out / "manifest.json").write_text(json.dumps({MANIFEST!r}))
         (out / "patch.diff").write_text({DIFF!r})
-        print(json.dumps({MANIFEST!r}))
+        print(json.dumps({MANIFEST!r}, indent=2))  # 실제 C 모듈처럼 여러 줄 JSON
     """))
 
 
@@ -86,7 +87,7 @@ class AnalyzerInPipelineTest(unittest.TestCase):
             root = make_stub_root(stub, exit_code)[0]
             if patch_exit_code is not None:
                 add_code_patch_stub(root, patch_exit_code)
-            os.environ["INFRAMORPH_ANALYZER_ROOT"] = str(root)
+            os.environ["INFRAMORPH_MODULES_ROOT"] = str(root)
             os.environ["INFRAMORPH_FAKE_DELAY"] = "0"
             try:
                 app = create_app(db_path=Path(tmp) / "cp.db")
@@ -100,7 +101,7 @@ class AnalyzerInPipelineTest(unittest.TestCase):
                     deployment["events"] = [e["event"] for e in app.state.store.list_events(dep)]
                     return deployment
             finally:
-                os.environ.pop("INFRAMORPH_ANALYZER_ROOT", None)
+                os.environ["INFRAMORPH_MODULES_ROOT"] = NO_MODULES
                 os.environ.pop("INFRAMORPH_FAKE_DELAY", None)
                 app.state.store.close()
 
@@ -129,7 +130,7 @@ class AnalyzerInPipelineTest(unittest.TestCase):
     def test_code_patch_failure_stops_before_deployers(self):
         deployment = self.deploy(patch_exit_code=1)
         self.assertEqual(deployment["status"], "FAILED")
-        self.assertEqual({e["step"] for e in deployment["events"]}, {"patch"})
+        self.assertEqual({e["step"] for e in deployment["events"]}, {"analyze", "patch"})  # 배포기는 안 돌았다
         self.assertIn("unsupported_source", deployment["events"][-1]["detail"])
 
 

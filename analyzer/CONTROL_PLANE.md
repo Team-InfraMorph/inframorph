@@ -4,6 +4,8 @@
 SQLite 저장, SSE 타임라인을 연결한다. D PR #21의
 `c82ff1dcff8fd6aff2c074f71b131076dc47b324`에서 검증했다. B/E는 원격에도 구현이 없어
 RepoMap·Plan fixture와 검토된 Docker smoke 콜백을 사용한다. 실제 제품 B/E 연결 완료는 아니다.
+최신 D/E 모듈과 C 복구·사용량·패치 이력의 실제 Local 통합은
+[현재 실행 문서](../control_plane/LOCAL_RUNTIME.md)를 따른다. 아래 내용은 초기 검증의 기록이다.
 별도로 추가한 실제 E 복구 콜백은 [C/E 연결 문서](E_RUNTIME.md)에 있다. 이 문서의 기존
 API/Docker 시나리오가 실제 E를 사용하도록 바뀐 것은 아니다.
 
@@ -56,7 +58,7 @@ Docker에서는 메모·PNG·앱 재시작 후 저장 유지, v2 worker의 동�
 
 ## E 배포기 연결 시 지킬 계약
 
-실제 E 배포기는 D의 `deployer_cmd(deployment_id, target)`가 만든 프로세스로 실행한다.
+실제 E 배포기는 D의 `deployer_cmd(deployment, target, folder)`가 만든 프로세스로 실행한다.
 stdout은 **그 deployment_id/target의 DeployEvent JSONL만**, 진단은 stderr로 보낸다.
 복구 성공은 종료 코드 0, 최종 실패는 1이다. [복구 코디네이터](RECOVERY.md)의 최초 실패
 처리 규칙도 지켜야 한다. 초기 `fail` 이벤트를 먼저 보내면 D는 최종 FAILED로 판정한다.

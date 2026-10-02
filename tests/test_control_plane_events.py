@@ -71,8 +71,8 @@ class OrchestratorTest(unittest.TestCase):
         deployment = self.store.get_deployment(dep)
         self.assertEqual(deployment["status"], "FAILED")
         self.assertEqual(deployment["targets"], {
-            "aws": {"status": "FAILED", "url": None},
-            "local": {"status": "LIVE", "url": "http://localhost:3000"},
+            "aws": {"status": "FAILED", "url": None, "verification": None},
+            "local": {"status": "LIVE", "url": "http://localhost:3000", "verification": None},
         })
 
     def test_mask_secrets_keeps_ordinary_text(self):

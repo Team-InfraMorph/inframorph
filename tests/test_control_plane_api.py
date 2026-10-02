@@ -9,6 +9,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from tests.cp_isolation import NO_MODULES  # noqa: E402,F401
 from control_plane.app import create_app  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parents[1] / "schemas" / "fixtures" / "events"
@@ -82,16 +83,26 @@ class ControlPlaneApiTest(unittest.TestCase):
 
         deployment = self.client.get(f"/api/deployments/{deployment_id}").json()
         self.assertEqual(deployment["status"], "LIVE")
-        self.assertEqual(deployment["targets"]["local"], {"status": "LIVE", "url": "http://localhost:3000"})
+        local = deployment["targets"]["local"]
+        self.assertEqual((local["status"], local["url"]), ("LIVE", "http://local.invalid:3000"))
+        self.assertEqual(local["verification"]["status"], "skipped")  # 가짜 배포기 주소는 직접 확인하지 않는다
         self.assertEqual(deployment["targets"]["aws"]["status"], "LIVE")
 
         with self.client.stream("GET", f"/api/deployments/{deployment_id}/events") as stream:
             body = "".join(stream.iter_text())
-        # local + aws 각각: 코드 수정(시작·완료) 2줄 + 배포기 이벤트
-        expected = 2 * (2 + len((FIXTURES / "happy_path.jsonl").read_text().splitlines()))
+        # local + aws 각각: 분석 완료 1줄 + 코드 수정(시작·완료) 2줄 + 배포기 이벤트
+        expected = 2 * (3 + len((FIXTURES / "happy_path.jsonl").read_text().splitlines()))
         self.assertEqual(body.count("event: deploy"), expected)
         self.assertIn("event: end", body)
         self.assertIn(deployment_id, body)
+
+    def test_reverify_endpoint_refreshes_direct_checks(self):
+        project = self.create().json()
+        deployment_id = self.client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
+        targets = self.client.post(f"/api/deployments/{deployment_id}/verify").json()
+        self.assertEqual({t: v["verification"]["status"] for t, v in targets.items()},
+                         {"local": "skipped", "aws": "skipped"})
+        self.assertEqual(self.client.post("/api/deployments/d-missing/verify").status_code, 404)
 
     def test_event_stream_resumes_after_last_event_id(self):
         project = self.create().json()

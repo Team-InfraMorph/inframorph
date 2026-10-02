@@ -12,6 +12,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from tests.cp_isolation import NO_MODULES  # noqa: E402,F401
 from control_plane.app import create_app, fake_deployer_cmd  # noqa: E402
 from control_plane.change_detector import plan_redeploy  # noqa: E402
 from control_plane.db import Store  # noqa: E402
@@ -86,7 +87,7 @@ class AnalysisCacheTest(unittest.TestCase):
         newer = self.store.create_push_deployment(self.project, AFTER, "rebuild_only", [])
         self.assertEqual(self.store.begin_deploy(self.project), newer)
         self.assertEqual(self.store.get_deployment(first)["status"], "SUPERSEDED")
-        self.assertEqual(self.store.get_deployment(newer)["targets"], {"local": {"status": "DEPLOYING", "url": None}})
+        self.assertEqual(self.store.get_deployment(newer)["targets"], {"local": {"status": "DEPLOYING", "url": None, "verification": None}})
         self.assertFalse(self.store.has_queued(self.project))
 
     def test_old_database_gets_new_columns(self):
@@ -185,11 +186,11 @@ class QueueDrainTest(unittest.TestCase):
             os.environ["INFRAMORPH_FAKE_DELAY"] = "0"
             calls = []
 
-            def deployer_cmd(deployment_id, target):
+            def deployer_cmd(deployment, target, folder):
                 if not calls:  # 첫 배포가 도는 중에 push가 들어온 상황
                     store.create_push_deployment(project, AFTER, "rebuild_only", [])
-                calls.append(deployment_id)
-                return fake_deployer_cmd(deployment_id, target)
+                calls.append(deployment["id"])
+                return fake_deployer_cmd(deployment, target, folder)
 
             app = create_app(db_path=Path(tmp) / "cp.db", deployer_cmd=deployer_cmd)
             store = app.state.store

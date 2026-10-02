@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_FIXTURE = Path(__file__).resolve().parents[1] / "schemas" / "fixtures" / "events" / "happy_path.jsonl"
-LOCAL_URL = "http://localhost:3000"
+LOCAL_URL = "http://local.invalid:3000"  # 가짜 주소(.invalid)라 조종실이 직접 확인하지 않는다
 
 
 def main():
@@ -21,7 +21,14 @@ def main():
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     parser.add_argument("--delay", type=float, default=1.0)
     parser.add_argument("--exit-code", type=int, default=0)
+    parser.add_argument("--note", help="배포하지 않고 이 안내 한 줄만 남긴다(실제 배포기에 넘길 입력이 없을 때)")
     args = parser.parse_args()
+
+    if args.note:
+        event = {"deployment_id": args.deployment_id, "ts": datetime.now(timezone.utc).isoformat(),
+                 "target": args.target, "step": "start", "status": "ok", "detail": args.note}
+        print(json.dumps(event, ensure_ascii=False), flush=True)
+        return 0
 
     for line in args.fixture.read_text(encoding="utf-8").splitlines():
         if not line.strip():

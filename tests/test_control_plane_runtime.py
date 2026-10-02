@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -140,6 +141,62 @@ class RuntimeTests(unittest.TestCase):
         result = run_deployment(self.store, self.did, {"local": [sys.executable, "-c", "import time; time.sleep(30)"]}, timeout=0.15)
         self.assertLess(time.monotonic() - start, 3)
         self.assertEqual(result["local"].status.value, "FAILED")
+
+    def test_explicit_runtime_skips_d_patch_and_builder_and_keeps_direct_verification(self):
+        initial = self.initial
+        calls = []
+        check = {"status": "ok", "url": "http://127.0.0.1:9/health", "code": 200,
+                 "ms": 1, "checked_at": "2026-10-02T00:00:00Z"}
+
+        class Runtime:
+            def analyze(self, store, deployment):
+                calls.append("analyze")
+                return initial | {"commit_sha": initial["repo_map"]["commit"], "intent_checked": True}
+
+            def command(self, store, deployment_id, target):
+                calls.append("worker")
+                event = json.dumps({"deployment_id": deployment_id, "ts": check["checked_at"],
+                                    "target": target, "step": "url", "status": "ok",
+                                    "url": "http://127.0.0.1:9"})
+                return [sys.executable, "-c", f"print({event!r})"]
+
+        def forbidden(*args):
+            raise AssertionError("D stage must not duplicate C worker")
+
+        app = create_app(db_path=self.root / "runtime-api.db", runtime=Runtime(),
+                         patcher=forbidden, builder=forbidden)
+        try:
+            with TestClient(app) as client, patch("control_plane.app.check_url", return_value=check) as verify:
+                project = client.post("/api/projects", json={"repo_url": "https://github.com/o/r",
+                                                            "targets": ["local"]}).json()
+                did = client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
+                deployment = client.get(f"/api/deployments/{did}").json()
+                self.assertEqual(deployment["status"], "LIVE")
+                self.assertEqual(deployment["targets"]["local"]["verification"], check)
+                steps = [(e["event"]["step"], e["event"]["status"]) for e in app.state.store.list_events(did)]
+                self.assertIn(("policy", "ok"), steps)
+                self.assertIn(("health", "ok"), steps)
+                before = len(steps)
+                self.assertEqual(client.post(f"/api/deployments/{did}/verify").json()["local"]["verification"], check)
+                self.assertEqual(len(app.state.store.list_events(did)), before)
+                self.assertEqual(verify.call_count, 2)
+                verify.assert_called_with("http://127.0.0.1:9", "/health")
+            self.assertEqual(calls, ["analyze", "worker"])
+        finally:
+            app.state.store.close()
+
+    def test_module_stream_supports_cwd_without_inheriting_api_key(self):
+        event = {"deployment_id": self.did, "ts": "2026-10-02T00:00:00Z", "target": "local",
+                 "step": "start", "status": "ok"}
+        code = ("import json,os; from pathlib import Path; "
+                "assert str(Path.cwd()) == Path('cwd-marker').read_text() and 'OPENAI_API_KEY' not in os.environ; "
+                f"print({json.dumps(event)!r})")
+        (self.root / "cwd-marker").write_text(str(self.root))
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "TEST_SENTINEL_NOT_REAL"}):
+            results = run_deployment(self.store, self.did,
+                                    {"local": (self.root, [sys.executable, "-c", code])})
+        self.assertEqual(results["local"].status.value, "LIVE")
+        self.assertEqual(results["local"].accepted, 1)
 
     def test_api_reads_corrected_intent_and_original_intent(self):
         self.store.apply_recovery_analysis(self.did, self.recovered())

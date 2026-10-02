@@ -227,7 +227,21 @@ function PlanCompare({ plans, targets }) {
   );
 }
 
-function TargetColumn({ target, state, events }) {
+function Verification({ check, onRecheck }) {
+  if (!check) return null;
+  const time = new Date(check.checked_at).toLocaleTimeString();
+  const text = check.status === "ok" ? `조종실이 직접 확인 · 응답 ${check.code} · ${(check.ms / 1000).toFixed(2)}초`
+    : check.status === "fail" ? `직접 확인 실패 · ${check.detail}` : check.detail;
+  return (
+    <div className={`verify v-${check.status}`}>
+      <span>{check.status === "ok" ? "✓" : check.status === "fail" ? "✗" : "–"} {text}</span>
+      <span className="dim"> · {time}</span>
+      {check.status !== "skipped" && <button className="small secondary" onClick={onRecheck}>다시 확인</button>}
+    </div>
+  );
+}
+
+function TargetColumn({ target, state, events, onRecheck }) {
   return (
     <div className="card target">
       <div className="row between">
@@ -235,6 +249,7 @@ function TargetColumn({ target, state, events }) {
         {state && <Badge status={state.status} />}
       </div>
       {state?.url && <a className="url" href={state.url} target="_blank" rel="noreferrer">{state.url}</a>}
+      <Verification check={state?.verification} onRecheck={onRecheck} />
       <ol className="timeline">
         {events.map((e) => (
           <li key={e.seq} className={`ev-${e.status}`}>
@@ -299,8 +314,9 @@ export default function App() {
       setProjects(list);
       if (projectId && list.some((p) => p.project_id === projectId)) {
         setDeployments(await api.deployments(projectId));
-      } else if (projectId) {
-        setProjectId(list[0]?.project_id ?? null); // 저장된 프로젝트가 없어졌으면(DB 초기화) 최신 것으로
+      } else if (projectId || (projectId === null && list.length)) {
+        // 처음 방문(null)이거나 저장된 프로젝트가 없어졌으면(DB 초기화) 최신 것으로. "+ 새 프로젝트"를 고르면 ""라 그대로 둔다.
+        setProjectId(list[0]?.project_id ?? "");
       }
     } catch (err) {
       setError(`조종실 서버에 연결할 수 없습니다: ${err.message}`);
@@ -363,7 +379,7 @@ export default function App() {
     <div className="app">
       <header>
         <h1>InfraMorph 조종실</h1>
-        <select value={projectId ?? ""} onChange={(e) => choose(e.target.value || null)}>
+        <select value={projectId ?? ""} onChange={(e) => choose(e.target.value)}>
           <option value="">+ 새 프로젝트</option>
           {projects.map((p) => (
             <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch}</option>
@@ -409,7 +425,8 @@ export default function App() {
 
           <div className="targets">
             {targets.map((t) => (
-              <TargetColumn key={t} target={t} state={selected?.targets[t]} events={events.filter((e) => e.target === t)} />
+              <TargetColumn key={t} target={t} state={selected?.targets[t]} events={events.filter((e) => e.target === t)}
+                            onRecheck={() => api.verify(selected.id).then(refresh).catch((err) => setError(err.message))} />
             ))}
           </div>
 

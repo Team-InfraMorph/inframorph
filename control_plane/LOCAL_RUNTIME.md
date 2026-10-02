@@ -111,8 +111,8 @@ B가 명령 계약을 구현하면 `--fixture-commands`를 빼고 실제 argv를
 
 변경 내역은 gate 통과 직후 원본·manifest·diff를 다시 검사해 DB에 저장한다. API 조회 때 작업 폴더를
 다시 읽지 않으므로 나중에 파일이 바뀌거나 사라져도 당시 검증된 변경 이력을 유지한다.
-현재 D의 fixture patcher는 기본 가짜 실행 경로에서만 사용한다. 실제 Local worker가 패치·gate·build를
-담당하는 경로에서는 fixture patcher를 생략해 중복 패치/가짜 승인 이벤트를 만들지 않는다.
+D의 일반 모듈 연결 경로는 patcher·builder를 각각 실행한다. `create_app(runtime=...)` 경로는
+C Local worker가 패치·gate·build·복구를 담당하므로 D의 patcher·builder 단계를 생략해 중복 실행을 막는다.
 
 원본 snapshot digest·revision·Plan·패치 digest·실제 이미지가 단계마다 묶인다. 실행 전 원본 변경도 중단한다.
 하위 프로세스 timeout 시 SIGTERM으로 C를 취소하고 E의 해당 namespace 정리를 기다린다(최대 추가 60초).
@@ -128,8 +128,10 @@ B가 명령 계약을 구현하면 `--fixture-commands`를 빼고 실제 argv를
 
 두 번째 명령은 새 테스트 namespace에서 실제 D API와 Docker를 실행한다. v1 정상 완료/한 번 복구,
 v2 worker 추가 승인/복구, 이전 커밋 롤백, 두 번째 실패 중단, DB 이력/사용량, SSE 재생, 중복 worker 차단을 검증한다.
+D의 배포 직후 URL 직접 확인과 `/verify` 재확인도 실제 실행 중인 Local 앱에 요청해 검사한다.
 오류는 실제 HTTP 이미지 읽기 **한 번**의 결과 bytes에만 주입한다. 자연 발생한 앱 결함을 모델이 수정한 테스트는 아니다.
 B와 모델 응답은 fixture이며 실제 C/E 실행과 구분해 summary.json에 기록한다.
 테스트만 자신이 만든 컨테이너/네트워크와 DB/uploads 볼륨을 제거한다. 기존 앱 이미지와 다른 프로젝트 자원은 유지한다.
 
-`control_plane.app:app`의 기존 기본 동작은 가짜 배포다. 실제 Local을 검증할 때는 위의 `control_plane.runtime` 진입점을 사용한다.
+`control_plane.app:app`은 최신 D의 일반 모듈 연결을 사용하며 사용 가능한 C/E 모듈을 자동 인식한다.
+C의 한 번 복구·검증된 패치 이력·엄격한 source policy를 함께 검증할 때는 위의 `control_plane.runtime` 진입점을 사용한다.

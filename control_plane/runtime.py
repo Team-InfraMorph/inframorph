@@ -23,6 +23,8 @@ from analyzer.source_policy import validate_demo_intent, validate_demo_plan
 from policy_gate.gate import validate_intent
 from .analysis import AnalysisFailed
 from .b_bridge import BCommands, DemoModules
+# Preserve D module command imports while the C Local worker uses an explicit runtime.
+from .module_commands import build_cmds, deployer_cmd, fake_deployer_cmd  # noqa: F401
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,7 +122,7 @@ class LocalRuntime:
                 planner_command=None if isinstance(self.b, DemoModules) else self.b.planner_command)
             private_json(folder / "context.json", context.model_dump(mode="json"))
             return {"commit_sha": mapped.repo_map.commit, "repo_map": mapped.repo_map.model_dump(mode="json"),
-                    "intent": intent.model_dump(mode="json"), "plans": {"local": plan.model_dump(mode="json")}, "metrics": stats}
+                    "intent": intent.model_dump(mode="json"), "plans": {"local": plan.model_dump(mode="json")}, "metrics": stats, "intent_checked": True}
         except AnalysisError as error:
             raise AnalysisFailed(error.code, asdict(error.metrics) | {"blocked_stage": stage}) from None
         except Exception:

@@ -23,6 +23,7 @@ export const api = {
   approve: (deploymentId) => request("POST", `/deployments/${deploymentId}/approve`),
   reject: (deploymentId) => request("POST", `/deployments/${deploymentId}/reject`),
   rollback: (deploymentId) => request("POST", `/deployments/${deploymentId}/rollback`),
+  verify: (deploymentId) => request("POST", `/deployments/${deploymentId}/verify`),
 };
 
 // SSE: 새로고침해도 처음부터 다시 받는다. 서버가 end를 보내면 닫는다.
