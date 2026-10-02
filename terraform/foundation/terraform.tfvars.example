@@ -1,0 +1,15 @@
+expected_account_id         = "111122223333"
+region                      = "ap-northeast-2"
+project                     = "inframorph"
+azs                         = ["ap-northeast-2a", "ap-northeast-2c"]
+vpc_cidr                    = "10.40.0.0/16"
+public_subnet_cidrs         = ["10.40.1.0/24", "10.40.2.0/24"]
+private_subnet_cidrs        = ["10.40.11.0/24", "10.40.12.0/24"]
+apps_domain                 = "apps.example.com"
+ecr_repository_name         = "inframorph/apps"
+enable_https_listener       = false
+alb_ssl_policy              = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+db_instance_class           = "db.t4g.micro"
+db_engine_version           = "16"
+db_name                     = "app"
+db_username                 = "inframorph"
