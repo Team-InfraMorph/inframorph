@@ -119,6 +119,13 @@ class ApprovalAndRollbackTest(unittest.TestCase):
         aws_plan = self.client.get(f"/api/deployments/{rolled['id']}/plans").json()["aws"]
         self.assertEqual([s["name"] for s in aws_plan["services"]], ["web"])
 
+    def test_rollback_skips_live_deployments_that_had_no_plans(self):
+        self.test_first_deploy_caches_analysis_so_text_push_skips_ai()  # v1 다음에 설계도 없는 LIVE가 끼어 있다
+        pending = self.push_v2()
+        self.client.post(f"/api/deployments/{pending}/approve")
+        rolled = self.get(self.client.post(f"/api/deployments/{pending}/rollback").json()["deployment_id"])
+        self.assertEqual(rolled["commit_sha"], V1_SHA)
+
     def test_rollback_without_earlier_live_is_conflict(self):
         self.assertEqual(self.client.post(f"/api/deployments/{self.first}/rollback").status_code, 409)
 

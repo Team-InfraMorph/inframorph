@@ -66,7 +66,7 @@ def add_e_stubs(root, gate_ok=True, build_ok=True):
 
 
 class TeamModulesPipelineTest(unittest.TestCase):
-    def run_pipeline(self, gate_ok=True, build_ok=True, then_rollback=False):
+    def run_pipeline(self, gate_ok=True, build_ok=True, then_rollback=False, push_unknown_commit=False):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as stub:
             root = make_stub_root(stub)[0]
             add_code_patch_stub(root)
@@ -80,6 +80,9 @@ class TeamModulesPipelineTest(unittest.TestCase):
                     project = client.post("/api/projects", json={
                         "repo_url": "https://github.com/Team-InfraMorph/demo-app", "targets": ["local", "aws"]}).json()
                     dep = client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
+                    if push_unknown_commit:  # fixture에 없는 커밋 = 스냅샷·빌드할 코드가 없다
+                        store.create_push_deployment(project["project_id"], "c" * 40, "rebuild_only", [])
+                        dep = client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
                     if then_rollback:
                         second = client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
                         dep = client.post(f"/api/deployments/{second}/rollback").json()["deployment_id"]
@@ -115,6 +118,13 @@ class TeamModulesPipelineTest(unittest.TestCase):
         self.assertEqual(deployment["status"], "FAILED")
         self.assertIn(("build", "fail"), self.steps(deployment, "local"))
         self.assertNotIn("url", {e["step"] for e in deployment["events"]})
+
+    def test_unknown_commit_does_not_pretend_local_was_redeployed(self):
+        deployment = self.run_pipeline(push_unknown_commit=True)
+        local = [e for e in deployment["events"] if e["target"] == "local" and e["step"] != "patch"]
+        self.assertEqual([(e["step"], e["status"]) for e in local], [("start", "ok")])  # 빌드·실제 배포 없음
+        self.assertIn("기존 버전 유지", local[0]["detail"])
+        self.assertIsNone(deployment["targets"]["local"]["url"])
 
     def test_rollback_uses_local_adapter_rollback(self):
         deployment = self.run_pipeline(then_rollback=True)

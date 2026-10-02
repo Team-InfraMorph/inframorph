@@ -18,6 +18,7 @@ import sys
 from .analysis import module_root
 
 ADAPTERS = {"local": "adapters/local"}  # A의 AWS Adapter가 오면 "aws": "adapters/aws"
+NO_BUILD_NOTE = "새 커밋의 코드가 없어 다시 빌드하지 않음 (B Repo Mapper 연결 전) · 기존 버전 유지"
 
 
 def _fake_env(name, target, default=None):
@@ -72,4 +73,6 @@ def deployer_cmd(deployment, target, folder):
             publish = ["--publish"] if os.environ.get("INFRAMORPH_LOCAL_PUBLISH") == "1" else []
             return root, base[:3] + ["deploy", "--plan", str(plan_path), "--artifact", str(artifact),
                                      "--state-dir", str(state)] + publish + base[3:]
+    if root is not None:  # 실제 배포기는 있는데 넘길 빌드 결과가 없다 = 이 커밋의 코드가 없다. 가짜 성공을 보이지 않는다.
+        return None, fake_deployer_cmd(deployment, target, folder) + ["--note", NO_BUILD_NOTE]
     return None, fake_deployer_cmd(deployment, target, folder)

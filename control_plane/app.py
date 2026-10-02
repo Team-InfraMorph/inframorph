@@ -156,7 +156,7 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         for target in targets:
             manifest = (manifests or {}).get(target)
             detail = (f"파일 {len(manifest['changes'])}개 수정" if manifest and manifest["status"] == "patched"
-                      else "수정할 코드 없음" if manifest else "코드 수정 모듈 없음 · 원본 그대로")
+                      else "수정할 코드 없음" if manifest else "코드 수정 생략 (모듈 또는 이 커밋의 스냅샷 없음)")
             stage_event(deployment["id"], [target], "patch", "ok", detail, elapsed)
         return True
 
@@ -283,7 +283,8 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         deployment = deployment_or_404(deployment_id)
         if Status(deployment["status"]) not in TERMINAL:
             raise HTTPException(409, "deployment is still in progress")
-        base = store.last_live(deployment["project_id"], deployment_id)
+        # 실제로 배포된(설계도가 있는) 직전 LIVE로 돌아간다. 설계도 없이 건너뛴 배포는 기준점이 아니다.
+        base = store.last_live(deployment["project_id"], deployment_id, with_plans=True)
         if base is None:
             raise HTTPException(409, "no earlier LIVE deployment to roll back to")
         new_id = store.create_rollback(deployment_id, base)
