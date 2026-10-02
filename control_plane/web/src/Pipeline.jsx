@@ -457,55 +457,6 @@ function TargetResult({ target, deployment, stage, onRecheck }) {
   );
 }
 
-/** 시작·완료 두 줄을 한 줄로 합친 행. */
-function mergedRows(events) {
-  const rows = [];
-  const open = {};
-  let patched = false, planned = false;
-  for (const e of events) {
-    if (e.step === "patch") patched = true;
-    if (e.step === "plan") planned = true;
-    const stage = stageOf(e, patched, planned);
-    const label = stage === "deploy" ? DEPLOY_STEPS[e.step] ?? e.step : STAGE_LABEL[stage];
-    const key = `${stage}:${e.step}`;
-    if (open[key] != null && e.status !== "started") {
-      const row = rows[open[key]];
-      Object.assign(row, { seq: e.seq, status: e.status, end: e.ts, detail: e.detail ?? row.detail });
-      delete open[key];
-    } else {
-      rows.push({ seq: e.seq, label, status: e.status, start: e.ts, end: e.ts, detail: e.detail });
-      if (e.status === "started") open[key] = rows.length - 1;
-    }
-  }
-  return rows;
-}
-
-/** 실시간 기록: 모든 대상의 단계를 최신순으로. 새 줄은 살짝 떠오른다. */
-export function LiveFeed({ events, running }) {
-  const rows = Object.keys(TARGETS)
-    .flatMap((t) => mergedRows(events.filter((e) => e.target === t)).map((r) => ({ ...r, target: t })))
-    .sort((a, b) => b.seq - a.seq);
-  return (
-    <div className="card feed">
-      <div className="row between">
-        <h2>실시간 기록</h2>
-        {running && <span className="live"><span className="pulse" />LIVE</span>}
-      </div>
-      {!rows.length && <p className="dim">아직 기록이 없습니다</p>}
-      <ol>
-        {rows.map((r) => (
-          <li key={`${r.target}-${r.start}-${r.label}`} className={`f-${r.status}`}>
-            <span className={`tag tag-${r.target}`}>{SHORT[r.target]}</span>
-            <span className="what"><strong>{r.label}</strong> {r.status === "ok" ? "완료" : r.status === "fail" ? "실패" : "진행 중"}</span>
-            <span className="at">{new Date(r.end).toLocaleTimeString()}</span>
-            {r.detail && <span className="detail">{explain(r.detail)?.what ?? describe(r.detail)}</span>}
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
 export function Pipeline({ deployment, events, targets, ctx }) {
   const now = useNow(!TERMINAL.includes(deployment.status));
   const stages = Object.fromEntries(targets.map((t) => [t, byStage(events.filter((e) => e.target === t))]));

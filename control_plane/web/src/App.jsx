@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
-import { Badge, LiveFeed, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
+import { Badge, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
 import { CodeTree } from "./CodeTree.jsx";
 
 const TRIGGER = { manual: "수동", push: "git push", rollback: "롤백" };
@@ -411,9 +411,6 @@ export default function App() {
               <PlanCompare plans={plans} targets={targets} />
               <PatchCard patch={patch} />
             </div>
-            <aside className="side-col">
-              {selected && <LiveFeed events={events} running={running} />}
-            </aside>
           </div>
 
           <History deployments={deployments} selectedId={selected?.id}
