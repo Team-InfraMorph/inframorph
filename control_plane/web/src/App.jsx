@@ -17,10 +17,23 @@ const MODE = { full_analysis: "전체 분석", reanalyze: "재분석", rebuild_o
 const TERMINAL = ["LIVE", "FAILED", "ROLLED_BACK", "SUPERSEDED"];
 
 const STATE_KIND = { relational_db: "관계형 DB", persistent_files: "영구 파일" };
-const BACKEND = { replay: "저장된 응답 재생", openai: "실제 모델 호출", fixture: "예시 분석 결과" };
+const BACKEND = { replay: "저장된 응답 재생", "codex-cli": "로컬 Codex · ChatGPT 로그인", openai: "실제 모델 호출", fixture: "예시 분석 결과", mixed: "혼합" };
+const ANALYSIS_STAGE = { mapper: "소스 준비", snapshot: "소스 확인", cached_intent: "이전 분석 확인",
+  analyzer: "모델 분석", intent_policy: "분석 결과와 소스 대조", intent_gate: "분석 근거 검사",
+  planner: "배포 설계", plan_policy: "배포 설계 검사", context: "분석 저장" };
+const POLICY_FIELD = { source_revision: "커밋", app: "앱 이름", unknowns: "미확인 요구사항",
+  workloads: "서비스·포트·상태 확인", state: "DB·파일 저장소", secrets: "필수 환경변수", config: "환경설정" };
+const ANALYSIS_ERROR = {
+  intent_source_mismatch: "모델의 분석 결과가 검토된 소스의 실행 조건과 일치하지 않아요.",
+  unreviewed_runtime_source: "현재 실행 정책에서 검토하지 않은 소스가 포함돼 있어요.",
+  non_source_evidence: "분석 근거가 실행 소스 대신 다른 파일을 가리켜요.",
+  invalid_source_evidence: "분석 근거의 파일·줄을 확인할 수 없어요.",
+  plan_source_mismatch: "배포 설계가 검토된 소스의 실행 조건과 일치하지 않아요.",
+};
 
 const PLAN_ROWS = [
   ["서비스", (p) => p.services.map((s) => `${s.name} (${s.kind})`).join(", ")],
+  ["포트 · 상태 확인", (p) => p.services.filter((s) => s.public).map((s) => `${s.port} · ${s.health ?? "없음"}`).join(", ")],
   ["DB", (p) => p.db?.type ?? "없음"],
   ["파일 저장소", (p) => (p.storage ? `${p.storage.type} · ${p.storage.path}` : "없음")],
   ["로그", (p) => p.logs],
@@ -38,10 +51,10 @@ function Badge({ status }) {
   return <span className={`badge s-${status}`}>{STATUS[status] ?? status}</span>;
 }
 
-function NewProject({ onCreated }) {
+function NewProject({ onCreated, awsEnabled }) {
   const [repo, setRepo] = useState("https://github.com/Team-InfraMorph/demo-app");
   const [branch, setBranch] = useState("main");
-  const [targets, setTargets] = useState(["local", "aws"]);
+  const [targets, setTargets] = useState(awsEnabled ? ["local", "aws"] : ["local"]);
   const [error, setError] = useState("");
 
   const toggle = (t) => setTargets((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
@@ -64,7 +77,7 @@ function NewProject({ onCreated }) {
         <legend>배포 대상</legend>
         {Object.entries(TARGETS).map(([t, label]) => (
           <label key={t} className="check">
-            <input type="checkbox" checked={targets.includes(t)} onChange={() => toggle(t)} /> {label}
+            <input type="checkbox" disabled={t === "aws" && !awsEnabled} checked={targets.includes(t)} onChange={() => toggle(t)} /> {label}
           </label>
         ))}
       </fieldset>
@@ -88,21 +101,94 @@ function ApprovalBanner({ deployment, onAct }) {
 }
 
 function Usage({ deployment, metrics }) {
-  if (deployment.analysis_mode === "rebuild_only") {
+  if (deployment.analysis_mode === "rebuild_only" && !metrics?.recovery?.attempts) {
     return <p className="usage saved">AI 분석 생략: 이전 분석을 재사용 (모델 호출 0회, 비용 $0)</p>;
   }
   if (!metrics) return null;
-  if (metrics.error) return <p className="usage error">AI 분석 실패: {metrics.error}</p>;
-  const parts = [`모델 호출 ${metrics.model_calls ?? 0}회`];
+  const parts = [`${metrics.backend === "replay" ? "응답 재생" : "모델 호출"} ${metrics.model_calls ?? 0}회`];
+  if (metrics.backend !== "replay" && metrics.model) parts.unshift(metrics.model);
+  if (metrics.api_calls != null) parts.push(`API 호출 ${metrics.api_calls}회`);
+  if (metrics.usage_complete === false) parts.push("사용량 집계 미완료");
   if (metrics.tool_calls != null) parts.push(`파일 탐색 ${metrics.tool_calls}회`);
+  if (metrics.validation_retries) parts.push(`분석 보정 ${metrics.validation_retries}회`);
   if (metrics.input_tokens || metrics.output_tokens) parts.push(`토큰 ${metrics.input_tokens}/${metrics.output_tokens}`);
-  if (metrics.estimated_usd != null) parts.push(`예상 $${Number(metrics.estimated_usd).toFixed(3)}`);
+  if (metrics.backend === "codex-cli") parts.push("ChatGPT 사용량 사용 · 팀 API 비용 $0");
+  else if (metrics.estimated_usd != null) parts.push(`예상 $${Number(metrics.estimated_usd).toFixed(3)}`);
   if (metrics.duration_ms != null) parts.push(`${(metrics.duration_ms / 1000).toFixed(1)}초`);
-  return <p className="usage">{parts.join(" · ")} <span className="dim">({BACKEND[metrics.backend] ?? metrics.backend})</span></p>;
+  const fields = (Array.isArray(metrics.policy_fields) ? metrics.policy_fields : [])
+    .filter((name) => Object.hasOwn(POLICY_FIELD, name)).map((name) => POLICY_FIELD[name]);
+  return <>
+    {metrics.error && <p className="usage error">
+      AI 분석 실패: {ANALYSIS_ERROR[metrics.error] ?? "분석 처리를 완료하지 못했어요."}
+      {ANALYSIS_STAGE[metrics.blocked_stage] && <> 단계: {ANALYSIS_STAGE[metrics.blocked_stage]}.</>}
+      {fields.length > 0 && <> 확인 항목: {fields.join(", ")}.</>}
+      <span className="dim"> ({metrics.error})</span>
+    </p>}
+    <p className="usage">{parts.join(" · ")} <span className="dim">({BACKEND[metrics.backend] ?? metrics.backend})</span></p>
+  </>;
+}
+
+function Recovery({ metrics }) {
+  const recovery = metrics?.recovery;
+  if (!recovery) return null;
+  const recovered = recovery.status === "recovered";
+  const reason = { second_local_failure: "재시도 후에도 자동 테스트가 실패했어요.",
+    reanalysis_failed: "재분석을 완료하지 못했어요.", not_retryable: "자동 재시도 대상이 아닌 실패예요.",
+    recovery_timeout: "자동 복구 시간이 초과됐어요." }[recovery.reason];
+  return <div className={`card ${recovered ? "" : "error"}`}>
+    <h2>{recovered ? "자동 복구 완료" : "자동 복구 중단"}</h2>
+    <p>재시도 {recovery.attempts}회 / 최대 1회 · {recovered ? "검증을 통과한 분석 결과와 설계도를 반영했어요." : "기존 분석 결과와 설계도를 유지했어요."}</p>
+    {reason && <p>{reason}</p>}
+    <p className="dim">초기 응답 {recovery.initial_metrics.model_calls ?? 0}회 · 재분석 응답 {recovery.retry_metrics.model_calls ?? 0}회 · 총 사용량은 아래에 합산돼요.</p>
+  </div>;
+}
+
+function eventDetail(detail) {
+  const messages = {
+    image_build_waiting: "다른 배포에서 같은 이미지를 준비하고 있어 완료를 기다립니다.",
+    image_build_wait_timeout: "다른 배포의 이미지 빌드가 오래 걸려 대기 시간을 초과했습니다. 완료 후 다시 배포해 주세요.",
+    image_build_already_running: "다른 배포가 같은 이미지를 빌드하는 중입니다. 완료 후 다시 배포해 주세요.",
+    image_tag_collision: "같은 커밋의 이미지와 수정된 코드가 달라 이미지 검증에 실패했습니다.",
+    image_platform_mismatch: "이미지가 배포에 필요한 플랫폼과 일치하지 않습니다.",
+    image_provenance_mismatch: "이미지가 승인된 코드로 만들어졌는지 확인하지 못했습니다.",
+    untrusted_build_lock: "이미지 빌드 잠금 파일의 안전성을 확인하지 못했습니다.",
+    command_failed: "Docker 명령이 실패했습니다. Docker 실행 상태를 확인해 주세요.",
+    command_unavailable_or_timeout: "Docker 명령을 실행하지 못했거나 실행 시간을 초과했습니다.",
+    local_pipeline_failed: "Local 배포 단계를 완료하지 못했습니다.",
+    aws_intent_source_approved: "앱 소스와 분석 결과를 확인했습니다.",
+    aws_patch_started: "AWS에 맞게 DB와 저장소 코드를 수정합니다.",
+    aws_patch_approved: "AWS 코드 수정의 정책 검사를 통과했습니다.",
+    aws_adapter_failed: "AWS 배포 단계를 완료하지 못했습니다. 비공개 진단 기록을 확인해 주세요.",
+    "validating exact local linux/amd64 image": "승인된 이미지를 확인합니다.",
+    "publishing immutable ECR tag": "승인된 이미지를 ECR에 업로드합니다.",
+    "activating digest-pinned ECS services": "ECS 서비스를 실행합니다.",
+    "waiting for ALB target health": "로드밸런서에서 앱 상태를 확인합니다.",
+    "all registered public targets are healthy": "로드밸런서 상태 검사를 통과했습니다.",
+    "performing verified external HTTPS health request": "외부 HTTPS 접속을 확인합니다.",
+  };
+  if (messages[detail]) return messages[detail];
+  try {
+    const value = JSON.parse(detail);
+    if (messages[value.code]) return messages[value.code];
+    if (value.phase === "recoverable_failure") return "자동 테스트 실패를 확인해 한 번 재분석합니다.";
+    if (value.code === "retry_recovered") return "재시도 검증을 통과했습니다.";
+    if (value.code === "second_local_failure") return "재시도 후에도 실패해 자동 복구를 중단했습니다.";
+    if (value.retry_attempt != null) return `자동 복구 ${value.retry_attempt}/1회`;
+    if (typeof value.code === "string" && value.code.startsWith("initial_")) return "첫 배포 검증";
+    const changes = value.changes ?? value.stage_plan;
+    if (changes) return `앱 리소스 추가 ${changes.create} · 수정 ${changes.update} · 삭제 ${changes.delete} · 교체 ${changes.replace}`;
+    if (value.mode) return value.mode === "redeploy" ? "기존 앱과 같은 주소로 재배포합니다." : "이 프로젝트 전용 앱을 준비합니다.";
+    if (value.services) return `서비스 실행 완료: ${Object.keys(value.services).join(", ")}`;
+    if (value.digest) return "이미지를 업로드하고 배포에 사용할 버전을 고정했습니다.";
+    if (value.local_image_id) return "승인된 이미지와 커밋을 확인했습니다.";
+  } catch { /* E가 보내는 일반 문구도 표시 */ }
+  return detail;
 }
 
 function AnalysisCard({ deployment, intent }) {
   return (
+    <>
+    <Recovery metrics={deployment.analysis_metrics} />
     <div className="card">
       <h2>AI가 이해한 앱</h2>
       <Usage deployment={deployment} metrics={deployment.analysis_metrics} />
@@ -135,28 +221,37 @@ function AnalysisCard({ deployment, intent }) {
         </table>
       )}
     </div>
+    </>
   );
 }
 
 const ACTION = { add: "추가", modify: "수정" };
 
 function PatchCard({ patch }) {
-  const [first] = Object.values(patch);
-  if (!first) return null;
-  const same = Object.values(patch).every((p) => JSON.stringify(p) === JSON.stringify(first));
+  const entries = Object.entries(patch);
+  if (!entries.length) return null;
+  const same = entries.length > 1 && entries.every(([, p]) => JSON.stringify(p) === JSON.stringify(entries[0][1]));
+  const shown = same ? [["공통 변경", entries[0][1]]] : entries;
   return (
     <div className="card">
-      <h2>코드를 이렇게 고쳤다 {same && <span className="dim">· Local·AWS 동일, 실행 때 환경변수로 저장소 선택</span>}</h2>
-      {first.files.map((f) => (
+      <h2>코드를 이렇게 고쳤다</h2>
+      {shown.map(([target, value]) => <section key={target}>
+      <h3>{TARGETS[target] ?? target} {value.phase === "recovery" ? "· 자동 복구 후 패치" : ""}</h3>
+      {value.verified && <p className="dim">E 정책 검사 통과 · {value.applied ? "이 배포에서 실행 검증 완료" : "실행 검증이 완료되지 않은 변경"} · 커밋 {value.source_revision.slice(0, 7)}</p>}
+      {value.initial && <p className="dim">최초 패치 이력을 보존하고 복구에 성공한 패치를 표시합니다.</p>}
+      {value.status === "unchanged" && <p className="dim">수정할 코드가 없습니다.</p>}
+      {value.files.map((f) => (
         <details key={f.path} className="patch-file">
           <summary><span className="mono">{f.path}</span> <span className="dim">{ACTION[f.action] ?? f.action}</span></summary>
-          {f.diff == null ? <p className="dim">잠금 파일이라 내용은 생략</p> : (
+          {f.diff == null ? <p className="dim">잠금 파일이라 내용은 생략</p> : <>
             <pre className="diff">{f.diff.split("\n").map((line, i) => (
               <span key={i} className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""}>{line}{"\n"}</span>
             ))}</pre>
-          )}
+            {f.truncated && <p className="dim">표시 크기 제한으로 diff 일부를 생략했습니다.</p>}
+          </>}
         </details>
       ))}
+      </section>)}
     </div>
   );
 }
@@ -215,7 +310,7 @@ function TargetColumn({ target, state, events, onRecheck }) {
             <span className="step">{STEPS[e.step] ?? e.step}</span>
             <span className="mark">{e.status === "ok" ? "완료" : e.status === "fail" ? "실패" : "시작"}</span>
             {e.duration_ms != null && <span className="dim">{(e.duration_ms / 1000).toFixed(1)}초</span>}
-            {e.detail && <div className="detail">{e.detail}</div>}
+            {e.detail && <div className="detail">{eventDetail(e.detail)}</div>}
           </li>
         ))}
         {!events.length && <li className="dim">아직 이벤트가 없습니다</li>}
@@ -254,6 +349,7 @@ function History({ deployments, selectedId, onSelect, onRollback }) {
 }
 
 export default function App() {
+  const [runtime, setRuntime] = useState(null);
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(load("projectId"));
   const [deployments, setDeployments] = useState([]);
@@ -266,6 +362,12 @@ export default function App() {
 
   const project = projects.find((p) => p.project_id === projectId);
   const selected = deployments.find((d) => d.id === selectedId) ?? deployments[0];
+
+  useEffect(() => {
+    let alive = true;
+    api.runtime().then((value) => alive && setRuntime(value)).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -301,15 +403,24 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedKey) return;
-    api.plans(selectedKey).then(setPlans).catch(() => setPlans({}));
-    api.analysis(selectedKey).then((a) => setIntent(a.intent)).catch(() => setIntent(null));
-    api.patch(selectedKey).then(setPatch).catch(() => setPatch({}));
+    let alive = true;
+    setPlans({});
+    setIntent(null);
+    setPatch({});
+    api.plans(selectedKey).then((value) => alive && setPlans(value)).catch(() => alive && setPlans({}));
+    api.analysis(selectedKey).then((a) => alive && setIntent(a.intent)).catch(() => alive && setIntent(null));
+    api.patch(selectedKey).then((value) => alive && setPatch(value)).catch(() => alive && setPatch({}));
+    return () => { alive = false; };
   }, [selectedKey, selectedStatus]);
 
   const choose = (id) => {
     setProjectId(id);
     setSelectedId(null);
     setDeployments([]);
+    setPlans({});
+    setPatch({});
+    setIntent(null);
+    setEvents([]);
     save("projectId", id ?? "");
   };
   const act = async (fn, id = selected?.id) => {
@@ -329,16 +440,20 @@ export default function App() {
     <div className="app">
       <header>
         <h1>InfraMorph 조종실</h1>
-        <select value={projectId ?? ""} onChange={(e) => choose(e.target.value || null)}>
+        <select value={projectId ?? ""} onChange={(e) => choose(e.target.value)}>
           <option value="">+ 새 프로젝트</option>
           {projects.map((p) => (
-            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch}</option>
+            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch} · {p.targets.map((t) => t === "aws" ? "AWS" : "Local").join(" / ")} · {p.project_id.slice(-6)}</option>
           ))}
         </select>
       </header>
+      {runtime?.analysis_backend === "codex-cli" && <p className="usage">
+        로컬 Codex 실제 분석 · {runtime.model} / {runtime.reasoning_effort} · ChatGPT 사용량 사용 · 팀 API 비용 $0
+      </p>}
+      {runtime?.aws_enabled && <p className="usage">AWS 실제 배포 연결됨 · 프로젝트별로 앱과 데이터를 분리해 배포합니다.</p>}
       {error && <p className="error banner">{error}</p>}
 
-      {!project && <NewProject onCreated={(p) => { choose(p.project_id); refresh(); }} />}
+      {!project && <NewProject awsEnabled={runtime?.aws_enabled} onCreated={(p) => { choose(p.project_id); refresh(); }} />}
 
       {project && (
         <>
@@ -353,6 +468,10 @@ export default function App() {
           </div>
 
           {selected?.status === "AWAITING_APPROVAL" && <ApprovalBanner deployment={selected} onAct={act} />}
+          {selected?.status === "FAILED" && intent && <p>
+            <button className="secondary" disabled={running} onClick={() => act(api.retry)}>같은 분석으로 다시 배포</button>
+            <span className="dim"> 검증된 동일 커밋의 분석을 재사용하고 소스와 배포 조건을 다시 검사합니다.</span>
+          </p>}
 
           {selected && (
             <div className="row between summary">

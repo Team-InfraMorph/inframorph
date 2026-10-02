@@ -67,7 +67,8 @@ def save(store, deployment_id, candidate, mapping, approval, phase):
     encoded = json.dumps(result, sort_keys=True)
     with store._lock, store._conn:
         row = store._conn.execute("SELECT status,commit_sha FROM deployments WHERE id=?", (deployment_id,)).fetchone()
-        if row is None or row[0] != "DEPLOYING" or row[1] != mapping.commit or target != "local":
+        targets = {r[0] for r in store._conn.execute("SELECT target FROM deployment_targets WHERE deployment_id=?", (deployment_id,))}
+        if row is None or row[0] != "DEPLOYING" or row[1] != mapping.commit or target not in targets:
             raise ValueError("patch_review_binding_mismatch")
         previous = store._conn.execute("SELECT fingerprint FROM deployment_patch_reviews WHERE deployment_id=? AND target=? AND phase=?",
                                       (deployment_id, target, phase)).fetchone()
@@ -80,16 +81,16 @@ def save(store, deployment_id, candidate, mapping, approval, phase):
     return True
 
 
-def applied(store, deployment_id, phase):
+def applied(store, deployment_id, phase, target="local"):
     with store._lock, store._conn:
-        row = store._conn.execute("SELECT payload FROM deployment_patch_reviews WHERE deployment_id=? AND target='local' AND phase=?",
-                                  (deployment_id, phase)).fetchone()
+        row = store._conn.execute("SELECT payload FROM deployment_patch_reviews WHERE deployment_id=? AND target=? AND phase=?",
+                                  (deployment_id, target, phase)).fetchone()
         deployment = store._conn.execute("SELECT status FROM deployments WHERE id=?", (deployment_id,)).fetchone()
         if row is None or deployment is None or deployment[0] != "DEPLOYING":
             raise ValueError("patch_review_not_running")
         value = json.loads(row[0]) | {"applied": True}
-        store._conn.execute("UPDATE deployment_patch_reviews SET payload=? WHERE deployment_id=? AND target='local' AND phase=?",
-                            (json.dumps(value, sort_keys=True), deployment_id, phase))
+        store._conn.execute("UPDATE deployment_patch_reviews SET payload=? WHERE deployment_id=? AND target=? AND phase=?",
+                            (json.dumps(value, sort_keys=True), deployment_id, target, phase))
 
 
 def get(store, deployment_id):

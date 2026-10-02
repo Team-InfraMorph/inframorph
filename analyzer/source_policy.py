@@ -13,8 +13,17 @@ from schemas.common import parse_evidence
 from code_patch.runner import read_snapshot
 
 
+POLICY_CODES = frozenset({"unreviewed_runtime_source", "intent_source_mismatch",
+                         "non_source_evidence", "invalid_source_evidence", "plan_source_mismatch"})
+POLICY_FIELDS = ("source_revision", "app", "unknowns", "workloads", "state", "secrets", "config")
+
+
 class SourcePolicyError(ValueError):
-    pass
+    """Public diagnostics contain only host-owned codes and field names."""
+    def __init__(self, code, fields=()):
+        self.code = code if code in POLICY_CODES else "local_pipeline_analysis_failed"
+        self.fields = tuple(name for name in POLICY_FIELDS if name in fields)
+        super().__init__(self.code)
 
 
 def validate_demo_intent(value, source, mapping):
@@ -55,10 +64,17 @@ def validate_demo_intent(value, source, mapping):
     states = sorted((s.kind, s.engine, s.orm, s.path.rstrip("/") if s.path else None) for s in intent.state)
     expected_states = sorted([("relational_db", "sqlite", "prisma", None),
                               ("persistent_files", None, None, "uploads")])
-    if (intent.source_revision != mapping.commit or intent.app != "demo-app" or intent.unknowns or
-            sorted(actual) != sorted(workloads) or states != expected_states or
-            intent.secrets != ["DATABASE_URL"] or intent.config not in ({}, {"PORT": "3000"})):
-        raise SourcePolicyError("intent_source_mismatch")
+    mismatches = {
+        "source_revision": intent.source_revision != mapping.commit,
+        "app": intent.app != "demo-app",
+        "unknowns": bool(intent.unknowns),
+        "workloads": sorted(actual) != sorted(workloads),
+        "state": states != expected_states,
+        "secrets": intent.secrets != ["DATABASE_URL"],
+        "config": intent.config not in ({}, {"PORT": "3000"}),
+    }
+    if any(mismatches.values()):
+        raise SourcePolicyError("intent_source_mismatch", [name for name, failed in mismatches.items() if failed])
     for entity in [*intent.workloads, *intent.state]:
         for citation in entity.evidence:
             name, line = parse_evidence(citation)
@@ -70,7 +86,7 @@ def validate_demo_intent(value, source, mapping):
     return intent
 
 
-def validate_demo_plan(value, mapping):
+def validate_demo_plan(value, mapping, *, target="local"):
     """B output is data too; allow only reviewed demo execution settings."""
     plan = Plan.model_validate(value.model_dump() if isinstance(value, Plan) else value)
     expected = [("web", "http", 3000, "/health", True, None)]
@@ -79,9 +95,13 @@ def validate_demo_plan(value, mapping):
     actual = [(s.name, s.kind.value, s.port, s.health, s.public, s.command) for s in plan.services]
     config = dict(plan.config)
     config.pop("PORT", None)
-    if (plan.source_revision != mapping.commit or plan.app != "demo-app" or plan.target.value != "local" or
+    if target not in {"local", "aws"}:
+        raise SourcePolicyError("plan_source_mismatch")
+    if (plan.source_revision != mapping.commit or plan.app != "demo-app" or plan.target.value != target or
             sorted(actual) != sorted(expected) or plan.db is None or plan.storage is None or
             plan.storage.path.rstrip("/") != "uploads" or plan.secrets != ["DATABASE_URL"] or
-            config != {"STORAGE_DRIVER": "fs"} or plan.config.get("PORT", "3000") != "3000"):
+            config != {"STORAGE_DRIVER": "fs" if target == "local" else "s3"} or
+            plan.config.get("PORT", "3000") != "3000" or
+            (target == "aws" and any(s.cpu != 256 or s.mem != 512 for s in plan.services))):
         raise SourcePolicyError("plan_source_mismatch")
     return plan

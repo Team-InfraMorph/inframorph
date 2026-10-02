@@ -148,6 +148,8 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
             return False
         detail = ("AI 분석 생략 · 이전 결과 재사용" if deployment["analysis_mode"] == "rebuild_only"
                   else "예시 분석 결과 사용 (Analyzer 미연결)" if metrics.get("backend") == "fixture"
+                  else f"로컬 Codex · {metrics.get('model')} · 모델 호출 {metrics.get('model_calls', 0)}회"
+                  if metrics.get("backend") == "codex-cli"
                   else f"모델 호출 {metrics.get('model_calls', 0)}회")
         stage_event(deployment["id"], targets, "analyze", "ok", detail, int((time.monotonic() - started) * 1000))
         if result.get("intent_checked"):
@@ -155,6 +157,8 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         # 직전 LIVE 대비 인프라 구조가 바뀌면 사람 승인을 받는다(기획서 시나리오 B-2)
         base = store.last_live(deployment["project_id"], deployment["id"], with_plans=True)
         changes = plan_diff(store.get_plans(base["id"]) if base else {}, result["plans"])
+        if runtime is not None and "aws" in result["plans"] and base is None:
+            changes = ["aws: 최초 실제 배포 · 프로젝트 전용 ECS·DB·S3 리소스 생성"]
         if changes:
             store.await_approval(deployment["id"], changes)
         return not changes
@@ -238,6 +242,15 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         allow_headers=["*"],
     )
 
+    @app.get("/api/runtime")
+    def runtime_info():
+        from analyzer.config import REASONING_EFFORT
+        backend = getattr(runtime, "analysis_backend", "module")
+        return {"analysis_backend": backend,
+                "aws_enabled": getattr(runtime, "aws_config", None) is not None,
+                "model": getattr(runtime, "analysis_model", None) if backend == "codex-cli" else None,
+                "reasoning_effort": REASONING_EFFORT if backend == "codex-cli" else None}
+
     @app.post("/api/projects", status_code=201)
     def create_project(body: ProjectIn):
         targets = [t.value for t in body.targets]
@@ -270,6 +283,18 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         if store.get_project(project_id) is None:
             raise HTTPException(404, "project not found")
         return store.list_deployments(project_id)
+
+    @app.post("/api/deployments/{deployment_id}/retry", status_code=202)
+    def retry(deployment_id: str, background: BackgroundTasks):
+        deployment = deployment_or_404(deployment_id)
+        if runtime is None:
+            raise HTTPException(409, "validated retry requires the explicit runtime")
+        try:
+            new_id = store.retry_validated_deployment(deployment_id)
+        except (ValueError, ConflictError):
+            raise HTTPException(409, "validated retry unavailable or project is running")
+        background.add_task(execute, deployment["project_id"], new_id)
+        return {"deployment_id": new_id, "status": Status.DEPLOYING.value}
 
     @app.get("/api/deployments/{deployment_id}")
     def get_deployment(deployment_id: str):

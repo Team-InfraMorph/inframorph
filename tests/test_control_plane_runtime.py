@@ -16,6 +16,8 @@ from control_plane.local_deploy import load_context
 from control_plane.orchestrator import run_deployment
 from control_plane.runtime import LocalRuntime
 from analyzer.source_policy import validate_demo_plan, SourcePolicyError
+from analyzer.backend import ReplayBackend, Reply
+from control_plane.analysis import AnalysisFailed
 from schemas import Plan, RepoMap
 
 
@@ -122,6 +124,42 @@ class RuntimeTests(unittest.TestCase):
             LocalRuntime(root=self.root / "runtime", b_modules=object())
         with self.assertRaises(ValueError):
             LocalRuntime(root=self.root / "runtime", b_modules=object(), replay="response.json", fault="first")
+
+    def test_only_unresolved_requirements_get_one_clarification_and_repeated_uncertainty_stops(self):
+        replies = json.loads((ROOT / "tests/fixtures/analyzer/v1/replay.json").read_text())
+        unclear = copy.deepcopy(self.initial["intent"])
+        unclear["unknowns"] = ["Upload directory deployment location needs review"]
+        injected = copy.deepcopy(unclear)
+        injected["config"] = {"EXECUTE": "private-injected-config-canary"}
+        for name, first, second in (("corrected", unclear, self.initial["intent"]),
+                                    ("unresolved", unclear, unclear), ("injected", injected, None)):
+            with self.subTest(case=name):
+                runtime = LocalRuntime(root=self.root / name / "runtime", b_modules=DemoModules())
+                transcript = replies[:-1] + [{"text": json.dumps(first)}]
+                if second is not None:
+                    transcript.append({"text": json.dumps(second)})
+                backend = ReplayBackend([Reply(**item) for item in transcript])
+                with patch("control_plane.runtime.analysis_backend", return_value=backend):
+                    if name == "corrected":
+                        result = runtime.analyze(self.store, self.store.get_deployment(self.did))
+                        self.assertEqual(result["intent"]["unknowns"], [])
+                        self.assertEqual(result["metrics"]["validation_retries"], 1)
+                        self.assertEqual(result["metrics"]["model_calls"], 6)
+                        load_context(runtime.context_file(self.did))
+                    else:
+                        with self.assertRaises(AnalysisFailed) as raised:
+                            runtime.analyze(self.store, self.store.get_deployment(self.did))
+                        error = raised.exception
+                        self.assertEqual(error.code, "intent_source_mismatch")
+                        self.assertEqual(error.metrics["blocked_stage"], "intent_policy")
+                        self.assertEqual(error.metrics["policy_fields"],
+                            ["unknowns"] if name == "unresolved" else ["unknowns", "config"])
+                        self.assertEqual(error.metrics["validation_retries"], 1 if name == "unresolved" else 0)
+                        self.assertEqual(error.metrics["model_calls"], 6 if name == "unresolved" else 5)
+                        self.assertFalse(runtime.context_file(self.did).exists())
+                        self.assertNotIn("private-injected-config-canary", json.dumps(error.metrics))
+                        self.assertEqual(self.store.get_analysis(self.project["project_id"],
+                            self.initial["repo_map"]["commit"])["intent"], self.initial["intent"])
 
     def test_plan_cannot_inject_node_execution_options(self):
         plan = Plan.model_validate(self.initial["plans"]["local"])
