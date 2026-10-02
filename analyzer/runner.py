@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 import time
+from typing import Callable
 
 from pydantic import ValidationError
 from schemas import Intent, RepoMap
@@ -103,15 +104,18 @@ def _validate(text: str, repo_map: RepoMap, snapshot: Snapshot) -> Intent:
 
 
 async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend,
-                  limits: Limits | None = None, *, feedback: AnalysisFeedback | None = None) -> AnalysisResult:
+                  limits: Limits | None = None, *, feedback: AnalysisFeedback | None = None,
+                  clarify_requirements: Callable[[Intent], bool] | None = None) -> AnalysisResult:
     """Return validated Intent. Raises AnalysisError with safe metrics on failure.
 
     The caller/Repo Mapper must supply an immutable snapshot of repo_map.commit.
     Validation here checks the revision in the response, not Git authenticity.
     Policy Gate still owns semantic evidence checks and deployment authorization.
+    An operator-owned clarification check may use the same single correction slot
+    as schema validation. It never supplies answers or changes the returned Intent.
     """
     limits = limits or Limits()
-    stats = Metrics(backend=backend.name)
+    stats = Metrics(backend=backend.name, model=getattr(backend, "model", MODEL))
     started = time.monotonic()
     try:
         async with asyncio.timeout(limits.timeout_seconds):
@@ -146,14 +150,14 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
                 # Conservative reservation: one input token per serialized byte plus
                 # protocol padding; not a provider-enforced billing guarantee.
                 reserve = estimated_cost(request_size + 4096, limits.max_output_tokens)
-                if stats.estimated_usd + reserve > limits.max_estimated_usd:
+                if backend.name != "codex-cli" and stats.estimated_usd + reserve > limits.max_estimated_usd:
                     raise AnalysisError("estimated_cost_limit", stats)
                 remaining = limits.timeout_seconds - (time.monotonic() - started)
                 if remaining <= 0:
                     raise AnalysisError("analysis_timeout", stats)
                 stats.model_calls += 1
                 stats.api_calls += int(backend.name == "openai")
-                stats.usage_complete = backend.name != "openai"
+                stats.usage_complete = backend.name not in {"openai", "codex-cli"}
                 reply = await backend.respond(**request, timeout=remaining)
                 if (type(reply.input_tokens) is not int or type(reply.output_tokens) is not int
                         or reply.input_tokens < 0 or reply.output_tokens < 0):
@@ -161,7 +165,8 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
                 stats.input_tokens += reply.input_tokens
                 stats.output_tokens += reply.output_tokens
                 stats.usage_complete = True
-                stats.estimated_usd = estimated_cost(stats.input_tokens, stats.output_tokens)
+                stats.estimated_usd = (0.0 if backend.name == "codex-cli" else
+                                       estimated_cost(stats.input_tokens, stats.output_tokens))
                 if stats.estimated_usd > limits.max_estimated_usd:
                     raise AnalysisError("estimated_cost_limit", stats)
                 if reply.refused:
@@ -198,6 +203,20 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
                         "Validation failed. This is your ONLY correction opportunity. Return valid Intent JSON; "
                         "preserve the commit, use observed evidence, and include no secrets. "
                         "Use Read/Grep first if evidence was not observed. Follow the original schema."})
+                    continue
+                if (not stats.validation_retries and intent.unknowns and clarify_requirements is not None
+                        and clarify_requirements(intent)):
+                    stats.validation_retries = 1
+                    # No rejected model text, expected fixture or source value is
+                    # copied into the correction request. All original limits apply.
+                    history.append({"role": "user", "content":
+                        "Your answer reports unresolved source requirements. This is your ONLY correction opportunity. "
+                        "Re-read the relevant source with Read/Grep and distinguish missing source requirements "
+                        "from deployment inputs. A directory proven relative to process.cwd() has a source-relative "
+                        "path; its eventual absolute location, volume mount or storage infrastructure is chosen "
+                        "during deployment. Secret values and optional overrides of proven defaults are also "
+                        "deployment inputs. Preserve genuine uncertainty in unknowns; never invent facts or "
+                        "remove unknowns just to pass. Return Intent JSON with observed source evidence."})
                     continue
                 return AnalysisResult(intent=intent, metrics=stats)
             raise AnalysisError("model_turn_limit", stats)

@@ -150,10 +150,10 @@ class RecoveryTests(unittest.TestCase):
         private_file(file, "new")
         self.assertEqual(file.stat().st_mode & 0o777, 0o600)
 
-    def test_same_image_concurrent_build_rejected(self):
+    def test_same_image_wait_can_be_disabled_with_zero_timeout(self):
         with image_lock(self.artifact["image"]):
-            with self.assertRaisesRegex(RuntimeFailure, "already_running"):
-                with image_lock(self.artifact["image"]):
+            with self.assertRaisesRegex(RuntimeFailure, "image_build_wait_timeout"):
+                with image_lock(self.artifact["image"], timeout=0):
                     pass
 
     def test_network_disconnect_is_retryable(self):

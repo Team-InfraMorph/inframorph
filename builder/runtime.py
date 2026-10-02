@@ -3,10 +3,12 @@
 import contextlib
 import fcntl
 import json
+import math
 import os
 import re
 import subprocess
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -114,8 +116,15 @@ def check_build_profile(files):
 
 
 @contextlib.contextmanager
-def image_lock(image):
+def image_lock(image, *, timeout=900, on_wait=None):
     """Serialize tag creation across this user's local Builder processes."""
+    require(
+        isinstance(timeout, (int, float))
+        and not isinstance(timeout, bool)
+        and math.isfinite(timeout)
+        and timeout >= 0,
+        "invalid_build_lock_timeout",
+    )
     directory = Path(tempfile.gettempdir()).resolve() / (
         "inframorph-builder-" + str(os.getuid())
     )
@@ -132,18 +141,39 @@ def image_lock(image):
         0o600,
     )
     try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeFailure("image_build_already_running") from None
+        deadline = time.monotonic() + timeout
+        notified = False
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeFailure("image_build_wait_timeout") from None
+                if not notified and on_wait is not None:
+                    on_wait()
+                notified = True
+                time.sleep(min(0.1, remaining))
         yield
     finally:
         os.close(fd)
 
 
-def build(snapshot, bundle, plan, **kwargs):
+def build(snapshot, bundle, plan, *, lock_timeout=900, **kwargs):
     plan = Plan.model_validate(plan)
-    with image_lock(plan.image_tag):
+
+    def waiting():
+        emit(
+            kwargs.get("sink"),
+            kwargs.get("deployment_id", "local-build"),
+            plan.target,
+            "build",
+            "started",
+            detail="image_build_waiting",
+        )
+
+    with image_lock(plan.image_tag, timeout=lock_timeout, on_wait=waiting):
         return _build(snapshot, bundle, plan, **kwargs)
 
 
