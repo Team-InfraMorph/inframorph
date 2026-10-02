@@ -22,7 +22,8 @@ function roles(intent, repoMap, patch) {
     if (h.type === "env" && h.name) add(h.at.split(":")[0], `환경변수 ${h.name}`, "env");
   }
   if (repoMap?.deps?.length) add("package.json", `의존성 ${repoMap.deps.length}개`, "dim");
-  for (const f of patch?.files ?? []) add(f.path, f.action === "add" ? "AI 추가" : "AI 수정", f.action === "add" ? "added" : "changed");
+  // C Code Patch는 모델이 아니라 검토된 고정 템플릿으로 고친다(code_patch/README.md) → 'AI'라고 쓰지 않는다.
+  for (const f of patch?.files ?? []) add(f.path, f.action === "add" ? "패치로 추가" : "패치로 수정", f.action === "add" ? "added" : "changed");
   return tags;
 }
 

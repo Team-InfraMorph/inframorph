@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
 import { Badge, LiveFeed, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
-import { AwsArchitecture } from "./Structure.jsx";
 import { CodeTree } from "./CodeTree.jsx";
 
 const TRIGGER = { manual: "수동", push: "git push", rollback: "롤백" };
@@ -146,7 +145,7 @@ function AnalysisCard({ deployment, intent, repoMap, patch, repo }) {
       <Usage deployment={deployment} metrics={deployment.analysis_metrics} />
       <div className="appcode">
       <div>
-        <h3>코드 구조 <span className="dim">· 꼬리표 = AI가 찾은 역할(근거 줄)과 AI가 고친 파일</span></h3>
+        <h3>코드 구조 <span className="dim">· 꼬리표 = AI가 찾은 역할(근거 줄)과 코드 수정 단계가 바꾼 파일</span></h3>
         <CodeTree repoMap={repoMap} intent={intent} patch={patch} />
       </div>
       <div>
@@ -230,12 +229,6 @@ function PlanCompare({ plans, targets }) {
           ))}
         </tbody>
       </table>
-      {plans.aws && (
-        <>
-          <h3>AWS에 실제로 만들어지는 구성 <span className="dim">· "공용" = 여러 앱이 같이 쓰는 부품</span></h3>
-          <AwsArchitecture plan={plans.aws} />
-        </>
-      )}
     </div>
   );
 }
