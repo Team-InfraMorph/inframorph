@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS runtime_runs (
 );
 """
 COUNTERS = ("model_calls", "api_calls", "tool_calls", "validation_retries",
+            "app_name_corrections", "source_clarifications",
             "input_tokens", "output_tokens", "duration_ms")
 
 

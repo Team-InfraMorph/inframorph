@@ -23,7 +23,8 @@ from .b_bridge import DemoModules, call_json
 from .change_detector import plan_diff
 from .db import Store
 from .results import finish_run
-from .runtime import LocalContext, analysis_backend, analysis_limits, context_plans
+from .runtime import (LocalContext, analysis_backend, analysis_limits, context_plans,
+                      record_analysis_diagnostics, requirements_clarifier)
 
 
 def load_context(path):
@@ -157,7 +158,12 @@ async def deploy(context, store):
             previous_patch=PatchReference.from_manifest(manifest), failure=checked.failure,
             backend=analysis_backend(context.analysis_backend, context.analysis_model, context.replay),
             limits=analysis_limits(context.analysis_backend), hooks=connector.hooks(), store=retry_store,
-            output_dir=Path(context.output_dir) / "retry", previous_metrics=previous, emit=send)
+            output_dir=Path(context.output_dir) / "retry", previous_metrics=previous, emit=send,
+            clarify_requirements=requirements_clarifier(context.snapshot, context.repo_map))
+        if result.reanalysis_metrics is not None:
+            record_analysis_diagnostics(Path(context.output_dir) / "recovery-analysis-diagnostics.json",
+                asdict(result.reanalysis_metrics), result.reanalysis_diagnostics,
+                status="passed" if result.status == "recovered" else "failed", stage="recovery")
         update = {"status": "recovered" if result.status == "recovered" else "failed",
                   "reason": result.reason, "attempts": result.retry_attempts,
                   "metrics": asdict(result.reanalysis_metrics) if result.reanalysis_metrics else
