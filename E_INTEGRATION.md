@@ -88,6 +88,8 @@ redteam checkout의 HEAD는 pin의 SHA여야 한다. 작업 중인 checkout을 �
 
 이번 단계의 설계 근거와 수용 기준별 달성 여부는 [POLICY_GATE_V2_PLAN.md](POLICY_GATE_V2_PLAN.md)에 있다. 미구현으로 남은 항목은 `required_rules`/`evaluated_rules` 기록, 폐기된 정책의 과거 PASS 차단, 외부 예제 검증, 오탐·미지원 비율 측정이다.
 
+공개 보고서는 [validation/e-policy-hardening-results.json](validation/e-policy-hardening-results.json)이다. 구현 commit, corpus pin, 사유 코드별 집계, 남은 한계를 담았다. `implementation.tracked_changes`가 false이므로 해당 commit에서 재현할 수 있다. 공개 URL은 임시 터널이라 기록하지 않는다.
+
 원본 기록은 `.local/e-integration/`에 보관한다. 앱 비밀값이 있는 상태 파일을 커밋하지 않는다. 공개 보고서 [validation/e-integration-results.json](validation/e-integration-results.json)에는 판정·사유·버전·체크 결과만 기록한다.
 
 ## 남은 공동 검증
