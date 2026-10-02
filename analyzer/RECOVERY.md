@@ -1,8 +1,8 @@
 # Local 실패 피드백 및 1회 복구
 
 - 담당: C · 리뷰/연결: B/E · 이슈: #12
-- 현재 범위: 공통 Intent/Plan/BuildArtifact/DeployEvent를 사용하는 C의 코디네이터.
-  제품 Planner, Policy Gate, Builder, Local Adapter는 팀의 실제 구현을 연결해야 한다.
+- 현재 범위: 공통 Intent/Plan/BuildArtifact/DeployEvent를 사용하는 C의 코디네이터와
+  [실제 E 연결 콜백](E_RUNTIME.md). 제품 B Planner 및 D caller 연결은 별도로 필요하다.
 
 `recover_local()`은 실패한 Local 배포를 한 번만 재분석한다. 수정한 Intent를 검증하고
 새 Plan과 패치를 만든 뒤, 패치 검증·재빌드·Local 테스트를 순서대로 실행한다.
@@ -173,6 +173,9 @@ Intent를 응답 재생 backend로 검증한다. 경로를 생략하면 fixture 
   `report.json`에서 실제 복구 이벤트의 LIVE/FAILED 판정 4개도 확인했다.
 
 제품 B/E 연결, 실제 API 사용량/청구, AWS 복구, 추가 앱/반복 안정성은 아직 검증하지 않았다.
+
+위 기록은 이전 개발용 대역 검증 범위다. 이후 추가한 실제 E 콜백·독립 소스 정책과
+재현 스크립트는 [C/E 연결 문서](E_RUNTIME.md)와 [보안 문서](SECURITY.md)를 따른다.
 
 최신 D PR #21과 실제 배포 API·CLI·Docker·SSE를 연결한 추가 검증은
 [C/D 연결 문서](CONTROL_PLANE.md)를 따른다. C 단독 112개, 최신 D와 함께 178개 테스트 및

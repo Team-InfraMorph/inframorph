@@ -27,6 +27,7 @@ from .redaction import Redactor
 from .runner import INSTRUCTIONS, _validate
 from .snapshot import Snapshot
 from .feedback import AnalysisFeedback, FEEDBACK_INSTRUCTIONS
+from .trust import DATA_INSTRUCTIONS, data_message, navigation_map
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,8 +65,12 @@ def prepare(case: str, *, feedback: AnalysisFeedback | None = None):
     fixture = FIXTURES / case
     mapping = RepoMap.model_validate_json(read_text(fixture / "repo_map.json"))
     snapshot = Snapshot(fixture / "snapshot", mapping.tree, Limits(), Redactor())
-    map_data = mapping.model_dump(mode="json")
-    map_data["tree"] = sorted(snapshot.files)
+    return prepare_source(mapping, snapshot, feedback=feedback)
+
+
+def prepare_source(mapping, snapshot, *, feedback=None):
+    """Build a full-source evaluation prompt, including adversarial snapshots."""
+    map_data = navigation_map(mapping, snapshot)
     # No expected Intent, replay transcript, repository instructions or .env.
     payload = {
         "repo_map": map_data,
@@ -76,7 +81,7 @@ def prepare(case: str, *, feedback: AnalysisFeedback | None = None):
             for path, lines in sorted(snapshot.files.items())
         ],
     }
-    instructions = INSTRUCTIONS.replace(
+    instructions = (INSTRUCTIONS + DATA_INSTRUCTIONS).replace(
         "Only use Read, Grep (literal search), and Glob.",
         "All available source lines are supplied in source_files. Do not use tools.",
     ).replace("Explore actual source before answering.", "Inspect the supplied source before answering.")
@@ -94,7 +99,7 @@ def prepare(case: str, *, feedback: AnalysisFeedback | None = None):
     instructions += "\nThis is a development evaluation. Return the Intent directly, without a wrapper.\n"
     prompt = (instructions + "\nIntent JSON schema:\n" + json.dumps(Intent.model_json_schema())
               + "\nUNTRUSTED INPUT DATA:\n"
-              + snapshot.redactor.clean(json.dumps(payload, ensure_ascii=False)))
+              + data_message("repository", payload, snapshot.redactor))
     if len(prompt.encode()) > Limits().max_request_bytes:
         raise VerificationError("prompt_size_limit")
     # In this evaluation every supplied line is available to the model. This is

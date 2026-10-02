@@ -4,6 +4,8 @@
 SQLite 저장, SSE 타임라인을 연결한다. D PR #21의
 `c82ff1dcff8fd6aff2c074f71b131076dc47b324`에서 검증했다. B/E는 원격에도 구현이 없어
 RepoMap·Plan fixture와 검토된 Docker smoke 콜백을 사용한다. 실제 제품 B/E 연결 완료는 아니다.
+별도로 추가한 실제 E 복구 콜백은 [C/E 연결 문서](E_RUNTIME.md)에 있다. 이 문서의 기존
+API/Docker 시나리오가 실제 E를 사용하도록 바뀐 것은 아니다.
 
 ## 팀 코드와 함께 재현
 

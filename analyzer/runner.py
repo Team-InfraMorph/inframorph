@@ -15,6 +15,7 @@ from .redaction import Redactor, SECRET_NAME
 from .snapshot import Snapshot, SnapshotError
 from .tools import TOOLS, execute
 from .feedback import AnalysisFeedback, FEEDBACK_INSTRUCTIONS
+from .trust import DATA_INSTRUCTIONS, data_message, navigation_map
 
 
 INSTRUCTIONS = """You are InfraMorph's source-code Analyzer for Node 22 / Express / Prisma apps.
@@ -118,12 +119,11 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
             redactor = Redactor(backend.known_secrets)
             snapshot = Snapshot(Path(snapshot_dir), mapping.tree, limits, redactor)
             stats.snapshot_digest = snapshot.digest
-            instructions = INSTRUCTIONS + "\nIntent JSON schema:\n" + json.dumps(Intent.model_json_schema())
-            map_data = mapping.model_dump(mode="json")
-            map_data["tree"] = sorted(snapshot.files)
+            instructions = INSTRUCTIONS + DATA_INSTRUCTIONS + "\nIntent JSON schema:\n" + json.dumps(Intent.model_json_schema())
+            map_data = navigation_map(mapping, snapshot)
             # Everything in the map, even scripts, is data and is never executed.
             payload = {"repo_map": map_data, "unavailable_file_count": len(snapshot.excluded)}
-            history = [{"role": "user", "content": redactor.clean(json.dumps(payload, ensure_ascii=False))}]
+            history = [{"role": "user", "content": data_message("repository", payload, redactor)}]
             if feedback is not None:
                 feedback = AnalysisFeedback.model_validate(feedback)
                 if any(revision != mapping.commit for revision in (
@@ -134,8 +134,8 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
                         feedback.previous_patch.original_digest != snapshot.digest):
                     raise ValueError("feedback_snapshot_or_target_mismatch")
                 instructions += "\n" + FEEDBACK_INSTRUCTIONS
-                history.append({"role": "user", "content": redactor.clean(json.dumps(
-                    {"failure_feedback": feedback.payload(redactor)}, ensure_ascii=False))})
+                history.append({"role": "user", "content": data_message(
+                    "failure_feedback", {"failure_feedback": feedback.payload(redactor)}, redactor)})
 
             for _ in range(limits.max_turns):
                 request = {"instructions": instructions, "input": history, "tools": TOOLS,
@@ -185,7 +185,7 @@ async def analyze(repo_map: RepoMap | dict, snapshot_dir: Path, backend: Backend
                         stats.tool_calls += 1
                         result = execute(snapshot, call["name"], call["arguments"])
                         history.append({"type": "function_call_output", "call_id": call["call_id"],
-                                        "output": json.dumps(result, ensure_ascii=False)})
+                                        "output": data_message("snapshot_tool", result, redactor)})
                     continue
                 try:
                     intent = _validate(reply.text, mapping, snapshot)
