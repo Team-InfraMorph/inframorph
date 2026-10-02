@@ -94,6 +94,9 @@ B가 명령 계약을 구현하면 `--fixture-commands`를 빼고 실제 argv를
 
 `GET /api/deployments/{id}/analysis`에는 현재 `intent`, `initial_intent`, 합산 `metrics`, `recovery`가 들어간다.
 화면은 복구 성공/중단, 재시도 수, 초기/재분석 응답 수와 총 사용량을 보여 준다. 실패 시 기존 분석 결과를 표시한다.
+최초 분석이 정책 검사·E Intent Gate·Planner 단계에서 거절되면 기존 결과를 게시하지 않고, 이미 소비한 사용량과
+고정 `blocked_stage`만 실패 기록에 남긴다. 원시 예외 메시지를 공개하지 않는다.
+배포 전 인젝션·캐시·승인 경계의 오프라인 재현은 [보안 검증 문서](../analyzer/SECURITY.md#실제-d-api의-배포-경계-검증)를 따른다.
 
 ## 검증된 패치 확인
 

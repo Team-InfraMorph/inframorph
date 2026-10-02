@@ -78,12 +78,15 @@ class LocalRuntime:
             raise AnalysisFailed("local_runtime_only")
         folder = self.context_file(deployment["id"]).parent
         project = store.get_project(deployment["project_id"])
+        stats, stage = {}, "mapper"
         try:
             folder.mkdir(parents=True, exist_ok=False, mode=0o700)
             mapped = self.b.map(project, deployment, folder)
+            stage = "snapshot"
             replay = Path(self.replay or self.b.replay(mapped.repo_map)).absolute()
             snapshot = Snapshot(mapped.snapshot, mapped.repo_map.tree, Limits(), Redactor())
             if deployment.get("analysis_mode") == "rebuild_only" or deployment.get("triggered_by") == "rollback":
+                stage = "cached_intent"
                 cached = store.get_analysis(project["project_id"], mapped.repo_map.commit)
                 if cached is None and deployment.get("analysis_mode") == "rebuild_only":
                     base = store.last_live(project["project_id"], deployment["id"])
@@ -94,16 +97,22 @@ class LocalRuntime:
                 stats = {"backend": "replay", "model_calls": 0, "api_calls": 0,
                          "snapshot_digest": snapshot.digest, "usage_complete": True}
             else:
+                stage = "analyzer"
                 result = asyncio.run(analyze(mapped.repo_map, mapped.snapshot, ReplayBackend.from_file(replay)))
                 intent, stats = result.intent, asdict(result.metrics)
+            stage = "intent_policy"
             validate_demo_intent(intent, mapped.snapshot, mapped.repo_map)
+            stage = "intent_gate"
             validate_intent(intent, mapped.snapshot, mapped.repo_map.commit)
+            stage = "planner"
             if deployment.get("triggered_by") == "rollback":
                 plan = Plan.model_validate(store.get_plans(deployment["id"])["local"])
             else:
                 plan = self.b.plan(intent)
+            stage = "plan_policy"
             _check_plan(intent, plan, mapped.repo_map.commit)
             validate_demo_plan(plan, mapped.repo_map)
+            stage = "context"
             context = LocalContext(deployment_id=deployment["id"], project_id=project["project_id"],
                 snapshot=str(mapped.snapshot), repo_map=mapped.repo_map, intent=intent, plan=plan,
                 metrics=stats, replay=str(replay), state_root=str(self.root / "projects"),
@@ -113,9 +122,11 @@ class LocalRuntime:
             return {"commit_sha": mapped.repo_map.commit, "repo_map": mapped.repo_map.model_dump(mode="json"),
                     "intent": intent.model_dump(mode="json"), "plans": {"local": plan.model_dump(mode="json")}, "metrics": stats}
         except AnalysisError as error:
-            raise AnalysisFailed(error.code, asdict(error.metrics)) from None
+            raise AnalysisFailed(error.code, asdict(error.metrics) | {"blocked_stage": stage}) from None
         except Exception:
-            raise AnalysisFailed("local_pipeline_analysis_failed") from None
+            # A downstream gate/Planner failure must not discard consumed usage
+            # or publish the rejected Intent/Plan. Stage names are host constants.
+            raise AnalysisFailed("local_pipeline_analysis_failed", stats | {"blocked_stage": stage}) from None
 
     def command(self, store, deployment_id, target):
         if target != "local":
