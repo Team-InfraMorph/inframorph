@@ -258,8 +258,9 @@ export default function App() {
       setProjects(list);
       if (projectId && list.some((p) => p.project_id === projectId)) {
         setDeployments(await api.deployments(projectId));
-      } else if (projectId) {
-        setProjectId(list[0]?.project_id ?? null); // 저장된 프로젝트가 없어졌으면(DB 초기화) 최신 것으로
+      } else if (projectId || (projectId === null && list.length)) {
+        // 처음 방문(null)이거나 저장된 프로젝트가 없어졌으면(DB 초기화) 최신 것으로. "+ 새 프로젝트"를 고르면 ""라 그대로 둔다.
+        setProjectId(list[0]?.project_id ?? "");
       }
     } catch (err) {
       setError(`조종실 서버에 연결할 수 없습니다: ${err.message}`);

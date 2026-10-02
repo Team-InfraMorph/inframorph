@@ -55,28 +55,34 @@ GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn control_plane.app:app --po
 ## 배포 한 번의 단계와 모듈 연결 지점 (A·B·C·E)
 
 ```
-분석·설계(analyzer) → 승인 게이트 → 코드 수정(patcher) → [검사·빌드: E 자리] → 배포기 동시 실행(deployer_cmd)
+분석(C Analyzer) → 판단 검사(E Policy Gate) → 승인 게이트 → 코드 수정(C Code Patch)
+  → 검사·빌드(E Builder) → 대상별 동시 배포(Local = E Local Adapter, AWS = A 연결 전 가짜 배포기)
 ```
 
-`create_app(analyzer=..., patcher=..., deployer_cmd=...)` 세 곳에 실제 모듈이 붙는다. 조종실은 모듈을 import하지 않고
-명령으로 실행한다(`control_plane/analysis.py`).
+`create_app(analyzer=, patcher=, builder=, deployer_cmd=)` 네 자리에 모듈이 붙는다. 조종실은 모듈을 import하지 않고
+각 모듈의 checkout에서 명령으로 실행한다(`control_plane/analysis.py`, `control_plane/runtime.py` 위쪽 표 참고).
 
-| 연결 지점 | 지금 | 실제 모듈 |
+| 단계 | 담당 | 지금 |
 |---|---|---|
-| `analyzer(deployment)` → `{commit_sha, repo_map, intent, plans, metrics}` | C Analyzer 실행 + B는 fixture | B Repo Mapper·Planner 명령이 오면 교체 |
-| `patcher(deployment, plans, workdir)` → `{target: manifest}` | C Code Patch 실행 | 연결 완료(#22) |
-| `deployer_cmd(deployment_id, target)` → 명령 | 가짜 배포기 | A(AWS)·E(Local) 명령이 오면 교체 |
+| 스냅샷·지도, 설계 | B Repo Mapper·Planner | 연결 전: C fixture 스냅샷 + schemas/fixtures repo_map·plan |
+| 분석 | C `python -m analyzer` | 연결됨. 기본 replay(비용 0), `INFRAMORPH_ANALYZER_LIVE=1`이면 실제 모델 호출. 빌드만이면 호출 생략 |
+| 판단 검사 | E `python -m policy_gate intent` | 연결됨. 근거 파일·줄이 실제 스냅샷에 있는지 |
+| 코드 수정 | C `python -m code_patch` | 연결됨. `<home>/<id>/patched/<target>/` |
+| 검사·빌드 | E `python -m builder` | 연결됨. 실제 배포기가 있는 대상만 빌드(가짜 배포기는 이미지 불필요) |
+| Local 배포·롤백 | E `python -m adapters.local deploy\|rollback` | 연결됨. 상태 폴더 `<home>/state/<plan.app>`, `INFRAMORPH_LOCAL_PUBLISH=1`이면 공개 주소 |
+| AWS 배포 | A | 연결 전: 가짜 배포기 |
 
-- C 모듈 위치: `INFRAMORPH_ANALYZER_ROOT`(없으면 #22 병합 후 레포 루트를 자동 인식). Analyzer는 기본 replay(비용 0),
-  `INFRAMORPH_ANALYZER_LIVE=1`이면 실제 모델 호출. `rebuild_only`면 Analyzer를 부르지 않는다.
-- Code Patch는 대상별로 `<INFRAMORPH_HOME>/<deployment_id>/patched/<target>/`(source/·patch.diff·manifest.json)을 만든다.
-  C 모듈은 심볼릭 링크가 낀 경로를 거부하므로 작업 폴더는 실제 경로로 바꿔 넘긴다(macOS `/tmp` → `/private/tmp`).
-- E의 Policy Gate·Builder는 코드 수정 다음, 배포기 앞에 들어간다. 입력은 위 manifest(원본·결과·diff 해시)와 `source/`다.
-  명령이 정해지면 `patched()` 뒤에 같은 방식으로 붙인다.
-- 롤백은 이전 이미지를 다시 띄우므로 분석·코드 수정을 건너뛴다.
-- 배포기 stdout은 `schemas.events.DeployEvent` JSONL 전용, 진단은 stderr, 종료 코드 0이 성공(schemas/README.md).
+- 모듈 위치: `INFRAMORPH_MODULES_ROOT`(팀원 브랜치를 합친 checkout). 없으면 이 레포에 패키지가 있을 때(병합 후) 자동 인식.
+  테스트는 `tests/cp_isolation.py`로 항상 대역을 쓴다.
+- 작업 폴더: `<INFRAMORPH_HOME>/<deployment_id>/{snapshot, repo_map.json, intent.json, plan.<t>.json, patched/<t>, build.<t>.json}`.
+  C 모듈은 심볼릭 링크가 낀 경로를 거부하므로 실제 경로로 바꿔 넘긴다(macOS `/tmp` → `/private/tmp`).
+- **`INFRAMORPH_HOME`의 `state/` 폴더를 지우지 말 것.** E Local Adapter가 DB 비밀번호를 여기에 두고, Docker 볼륨은 처음 비밀번호로
+  잠긴다. state만 지우면 다음 배포가 DB에 접속하지 못한다(볼륨 `inframorph-<app>-db`도 같이 정리해야 한다).
+- 실제 배포기는 있는데 이 커밋의 빌드 결과가 없으면(스냅샷이 없는 커밋) 가짜 성공을 보이지 않고 "기존 버전 유지"를 남긴다.
+- 롤백은 설계도가 있는 직전 LIVE로 돌아가며, Local은 E의 `rollback`으로 이전 이미지를 다시 띄운다(분석·수정·빌드 생략).
+- 배포기·Builder stdout은 `schemas.events.DeployEvent` JSONL 전용, 진단은 stderr, 종료 코드 0이 성공(schemas/README.md).
   줄마다 스키마를 검증하고, 다른 배포 ID나 **다른 target**의 줄은 버린다. `detail`의 비밀값은 저장 전에 가린다.
-  조종실이 직접 하는 단계(코드 수정)도 같은 DeployEvent로 타임라인에 남긴다.
+  조종실이 직접 하는 단계(분석·판단 검사·코드 수정)도 같은 DeployEvent로 대상별 타임라인에 남긴다.
 
 대상별 최종 상태: `rollback ok` 이벤트면 ROLLED_BACK, 종료 코드가 0이 아니거나 `fail` 이벤트면 FAILED,
 아니면 LIVE. 전체 상태는 하나라도 FAILED면 FAILED, 롤백이 있으면 ROLLED_BACK, 모두 LIVE면 LIVE.
