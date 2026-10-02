@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
 import { Badge, LiveFeed, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
-import { Structure } from "./Structure.jsx";
+import { AwsArchitecture } from "./Structure.jsx";
 
 const TRIGGER = { manual: "수동", push: "git push", rollback: "롤백" };
 const MODE = { full_analysis: "전체 분석", reanalyze: "재분석", rebuild_only: "빌드만 (AI 생략)" };
@@ -216,14 +216,12 @@ function PlanCompare({ plans, targets }) {
           ))}
         </tbody>
       </table>
-      <div className="structures">
-        {targets.map((t) => (
-          <div key={t}>
-            <h3>{TARGETS[t]} 구조{t === "aws" && <span className="dim"> · 점선 테두리 = 여러 앱이 같이 쓰는 공용 자원</span>}</h3>
-            <Structure plan={plans[t]} />
-          </div>
-        ))}
-      </div>
+      {plans.aws && (
+        <>
+          <h3>AWS에 실제로 만들어지는 구성 <span className="dim">· "공용" = 여러 앱이 같이 쓰는 부품</span></h3>
+          <AwsArchitecture plan={plans.aws} />
+        </>
+      )}
     </div>
   );
 }

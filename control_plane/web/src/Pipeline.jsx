@@ -180,6 +180,9 @@ function lane(target, events, running, now) {
     if (!seen[step] && running && !stopped) nodes.push({ step, label: DEPLOY_STEPS[step] ?? step, status: "pending" });
     else if (!seen[step] && stopped && order.length) nodes.push({ step, label: DEPLOY_STEPS[step] ?? step, status: "notrun" });
   }
+  // 진행 중인데 다음 단계의 '시작'이 아직 안 왔으면, 마지막으로 끝난 칸에서 다음 칸으로 빛줄기를 흘린다.
+  const next = nodes.findIndex((n) => n.status === "pending");
+  if (running && next > 0 && !nodes.some((n) => n.status === "started")) nodes[next - 1].flowing = true;
   return nodes;
 }
 
@@ -208,12 +211,13 @@ function Where({ place, detail }) {
   );
 }
 
-function Node({ status, label, time, note, flag, onClick, selected }) {
+function Node({ status, label, time, note, flag, onClick, selected, index, flowing }) {
   return (
-    <li className={`node n-${status}${onClick ? " clickable" : ""}${selected ? " selected" : ""}`} onClick={onClick ?? undefined}
+    <li className={`node n-${status}${flowing ? " flowing" : ""}${onClick ? " clickable" : ""}${selected ? " selected" : ""}`} onClick={onClick ?? undefined}
         role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined}
         onKeyDown={onClick ? (e) => (e.key === "Enter" || e.key === " ") && onClick() : undefined}>
-      <span className="dot">{MARK[status] ?? ""}</span>
+      <span className="link"><i /></span>
+      <span className="dot">{MARK[status] || (status === "pending" || status === "notrun" ? index : "")}</span>
       <span className="label">{label}</span>
       <span className="time">{time}</span>
       {note && <span className="note">{note}</span>}
@@ -300,7 +304,7 @@ function Flow({ deployment, targets, stages, perTarget, ctx, now }) {
             const status = stop >= 0 && i > stop ? "notrun" : st.status;
             const id = `shared:${key}`;
             const evs = targets.flatMap((t) => stages[t][key]?.events ?? []);
-            return <Node key={key} label={label} status={status} time={nodeTime(status, st.ms)}
+            return <Node key={key} index={i + 1} label={label} status={status} time={nodeTime(status, st.ms)}
                          note={status === "notrun" ? null : stageNote(key, st, ctx)} flag={i === stop ? "여기서 멈춤" : null}
                          selected={open?.id === id} onClick={evs.length ? () => setOpen(open?.id === id ? null : { id, title: `공통 › ${label}`, events: evs }) : null} />;
           })}
@@ -309,8 +313,8 @@ function Flow({ deployment, targets, stages, perTarget, ctx, now }) {
           <div key={t} className="lane-row">
             <div className="lane-title">{SHORT[t]} <Badge status={deployment.targets[t]?.status ?? "CREATED"} /></div>
             <ol className="track small">
-              {lanes[t].map((n) => (
-                <Node key={n.step} label={n.label} status={n.status} time={nodeTime(n.status, n.ms)}
+              {lanes[t].map((n, i) => (
+                <Node key={n.step} index={i + 1} label={n.label} status={n.status} flowing={n.flowing} time={nodeTime(n.status, n.ms)}
                       flag={n.status === "fail" ? "여기서 멈춤" : null} selected={open?.id === `${t}:${n.step}`}
                       onClick={n.events || n.gap ? () => setOpen(open?.id === `${t}:${n.step}` ? null
                         : { id: `${t}:${n.step}`, title: `${SHORT[t]} › ${n.label}`, events: n.events ?? [], gap: n.gap, ms: n.ms }) : null} />
