@@ -41,6 +41,10 @@ def module_root(package):
     return root.resolve() if (root / package / "__main__.py").exists() else None
 
 
+# Preserve C's previously exported analysis exception while D adds patch stages.
+AnalysisFailed = StageFailed
+
+
 def _last_json(text):
     """출력 전체가 JSON이면(여러 줄 들여쓰기 포함) 그대로, 아니면 마지막 JSON 줄(로그 뒤에 결과를 찍는 모듈)."""
     try:
@@ -158,6 +162,8 @@ def fixture_analyzer(deployment, folder):
     - rebuild_only는 Analyzer를 부르지 않는다(Change Detector가 AI 생략을 결정한 경우).
     - E Policy Gate가 있으면 intent의 근거가 스냅샷에 실제로 있는지 검사한다(intent_checked).
     """
+    if os.environ.get("INFRAMORPH_DEMO_MODE") != "1":
+        raise StageFailed("mapper_planner_not_connected")
     version = _fixture_version(deployment["commit_sha"])
     if version is None:
         return None

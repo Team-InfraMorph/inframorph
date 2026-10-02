@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0.0",
+  "commit": "ebad709867cf1f3523075d8038ae41bd69ecae9b",
+  "tree": [
+    "package.json",
+    "prisma/schema.prisma",
+    "src/images.js",
+    "src/server.js"
+  ],
+  "deps": [
+    "@prisma/client",
+    "dotenv",
+    "express",
+    "prisma"
+  ],
+  "db": {
+    "orm": "prisma",
+    "provider": "sqlite"
+  },
+  "entrypoints": {
+    "start": "node src/server.js"
+  },
+  "routes": [
+    "GET /",
+    "GET /health",
+    "POST /api/notes",
+    "GET /api/notes",
+    "POST /api/images",
+    "GET /api/images/:key"
+  ],
+  "hints": [
+    {
+      "type": "file_write",
+      "at": "src/images.js:10",
+      "name": null
+    },
+    {
+      "type": "env",
+      "at": "prisma/schema.prisma:7",
+      "name": "DATABASE_URL"
+    }
+  ]
+}
