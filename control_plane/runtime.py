@@ -25,7 +25,8 @@ from analyzer.snapshot import Snapshot
 from analyzer.redaction import Redactor
 from analyzer.recovery import _check_plan
 from analyzer.source_policy import SourcePolicyError, validate_demo_intent, validate_demo_plan
-from policy_gate.gate import validate_intent
+from policy_gate.gate import validate_intent, validate_plan
+from .policy_results import check as policy_check
 from .analysis import AnalysisFailed
 from .b_bridge import BCommands, DemoModules
 from .results import metrics as checked_metrics
@@ -188,9 +189,11 @@ class LocalRuntime:
                 intent, stats = result.intent, asdict(result.metrics)
                 attempts = result.diagnostics
             stage = "intent_policy"
-            validate_demo_intent(intent, mapped.snapshot, mapped.repo_map)
+            for target in sorted(targets):
+                policy_check(store, deployment["id"], target, "source", lambda: validate_demo_intent(intent, mapped.snapshot, mapped.repo_map))
             stage = "intent_gate"
-            validate_intent(intent, mapped.snapshot, mapped.repo_map.commit)
+            for target in sorted(targets):
+                policy_check(store, deployment["id"], target, "intent", lambda: validate_intent(intent, mapped.snapshot, mapped.repo_map.commit))
             stage = "planner"
             if deployment.get("triggered_by") == "rollback" and "local" in targets:
                 plan = Plan.model_validate(store.get_plans(deployment["id"])["local"])
@@ -198,12 +201,13 @@ class LocalRuntime:
                 plan = self.b.plan(intent)
             stage = "plan_policy"
             _check_plan(intent, plan, mapped.repo_map.commit)
-            validate_demo_plan(plan, mapped.repo_map)
+            if "local" in targets:
+                policy_check(store, deployment["id"], "local", "plan", lambda: (validate_demo_plan(plan, mapped.repo_map), validate_plan(intent, plan)))
             aws_plan = None
             if "aws" in targets:
                 aws_plan = (Plan.model_validate(store.get_plans(deployment["id"])["aws"])
                             if deployment.get("triggered_by") == "rollback" else self.b.plan(intent, "aws"))
-                validate_demo_plan(aws_plan, mapped.repo_map, target="aws")
+                policy_check(store, deployment["id"], "aws", "plan", lambda: (validate_demo_plan(aws_plan, mapped.repo_map, target="aws"), validate_plan(intent, aws_plan)))
             stage = "context"
             context = LocalContext(deployment_id=deployment["id"], project_id=project["project_id"],
                 snapshot=str(mapped.snapshot), repo_map=mapped.repo_map, intent=intent, plan=plan,

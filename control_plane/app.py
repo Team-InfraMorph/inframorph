@@ -319,6 +319,12 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         cached = store.get_analysis(deployment["project_id"], deployment["commit_sha"]) if deployment["commit_sha"] else None
         return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"]}
 
+    @app.get("/api/deployments/{deployment_id}/policy")
+    def get_policy(deployment_id: str):
+        deployment_or_404(deployment_id)
+        from .policy_results import read
+        return read(store, deployment_id)
+
     @app.get("/api/deployments/{deployment_id}/patch")
     def get_patch(deployment_id: str):
         """대상별 코드 수정 내역(C Code Patch 결과). 화면의 '코드를 이렇게 고쳤다'에 쓴다."""

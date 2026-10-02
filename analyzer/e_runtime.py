@@ -66,7 +66,9 @@ async def run_worker(payload, *, module="analyzer.e_worker"):
             if not isinstance(code, str) or not re.fullmatch(r"[a-z_]{1,80}", code):
                 code = "e_runtime_failed"
             if payload["action"] != "deploy":
-                raise EWorkerError(code)
+                error = EWorkerError(code)
+                error.policy_results = reply.get("policy_results", [])
+                raise error
         elif process.returncode != 0:
             raise ValueError("e_worker_failed")
         return reply
@@ -82,7 +84,7 @@ async def run_worker(payload, *, module="analyzer.e_worker"):
 
 
 class EConnector:
-    def __init__(self, *, snapshot, repo_map, state_root, runtime_name, deployment_id, make_plan, worker=None, publish=False):
+    def __init__(self, *, snapshot, repo_map, state_root, runtime_name, deployment_id, make_plan, worker=None, publish=False, policy_sink=None):
         if not re.fullmatch(r"[a-z][a-z0-9-]{1,62}", runtime_name):
             raise ValueError("invalid_runtime_namespace")
         self.snapshot = Path(snapshot).absolute()
@@ -99,9 +101,20 @@ class EConnector:
         self.publish = publish
         self.worker = worker
         self.last_deployment = None
+        self.policy_sink = policy_sink
+        self.policy_attempt = -1
 
     async def invoke(self, payload):
-        return await (self.worker or run_worker)(payload)
+        if payload['action'] == 'intent': self.policy_attempt += 1
+        try:
+            reply = await (self.worker or run_worker)(payload)
+        except EWorkerError as error:
+            if self.policy_sink:
+                for report in getattr(error, 'policy_results', []): self.policy_sink(max(0,self.policy_attempt), report)
+            raise
+        if self.policy_sink:
+            for report in reply.get('policy_results', []): self.policy_sink(max(0,self.policy_attempt), report)
+        return reply
 
     def payload(self, action, **values):
         return {"action": action, "snapshot": str(self.snapshot),
