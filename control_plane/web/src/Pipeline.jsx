@@ -17,18 +17,19 @@ const SHARED = [
 ];
 const STAGE_LABEL = { ...Object.fromEntries(SHARED), deploy: "배포", verify: "직접 확인" };
 const DEPLOY_STEPS = {
-  plan: "변경 미리보기", push: "이미지 업로드", infra: "인프라", start: "실행", health: "상태 확인",
+  plan: "변경 미리보기", build: "이미지 확인", push: "이미지 업로드", infra: "인프라", start: "실행", health: "상태 확인",
   url: "주소 발급", smoke: "외부 접속 테스트", rollback: "롤백",
 };
 // 대상별 배포 단계의 기본 순서. 배포기가 이 밖의 단계를 보내면 뒤에 붙인다.
 const LANE = { aws: ["plan", "push", "infra", "start", "health", "url", "smoke"], local: ["start", "health", "url", "smoke"] };
-const MARK = { ok: "✓", fail: "✗", wait: "!", skip: "–", notrun: "" };
+const MARK = { ok: "✓", fail: "✗", wait: "!", skip: "–", notrun: "", gap: "…" };
 const HEADLINE = {
   LIVE: "배포 완료", FAILED: "배포 실패", ROLLED_BACK: "이전 버전으로 복구됨",
   DEPLOYING: "배포 중", CREATED: "대기 중", AWAITING_APPROVAL: "승인 대기",
 };
 
-function stageOf(e, patched) {
+function stageOf(e, patched, planned) {
+  if (e.step === "build" && planned) return "deploy"; // AWS Adapter가 변경 미리보기 뒤에 하는 이미지 확인
   if (e.step === "analyze" || e.step === "patch" || e.step === "build") return e.step;
   if (e.step === "policy") return patched ? "patchcheck" : "evidence";
   if (e.step === "health" && e.detail?.startsWith("조종실 직접 확인")) return "verify";
@@ -38,10 +39,11 @@ function stageOf(e, patched) {
 /** 한 대상의 이벤트(seq 순) → {stage: {status, first, last, ms, events}}. */
 function byStage(events) {
   const stages = {};
-  let patched = false;
+  let patched = false, planned = false;
   for (const e of events) {
     if (e.step === "patch") patched = true;
-    const st = (stages[stageOf(e, patched)] ??= { events: [], status: "started" });
+    if (e.step === "plan") planned = true;
+    const st = (stages[stageOf(e, patched, planned)] ??= { events: [], status: "started" });
     st.events.push(e);
     st.first ??= e.ts;
     st.last = e.ts;
@@ -129,28 +131,56 @@ function stageNote(key, st, ctx) {
   return null;
 }
 
-/** 대상 하나의 배포 단계들 [{step, label, status, ms}]. 실패한 뒤의 단계는 'notrun'(실행 안 됨). */
-function lane(target, deploy, running, live, now) {
+const GAP_MS = 15000;
+
+/** 대상 하나의 배포 단계들(실제 일어난 순서). 실패 뒤 단계는 'notrun', 기록 없는 15초 이상 구간은 'gap' 칸. */
+function lane(target, events, running, now) {
   const seen = {};
-  for (const e of deploy?.events ?? []) {
-    const cur = (seen[e.step] ??= { first: e.ts });
-    cur.status = e.status === "started" && cur.status && cur.status !== "started" ? cur.status : e.status;
-    cur.last = e.ts;
-    if (e.duration_ms != null) cur.ms = e.duration_ms;
+  const order = [];
+  let patched = false, planned = false, prev = null;
+  for (const e of events) {
+    if (e.step === "patch") patched = true;
+    if (e.step === "plan") planned = true;
+    if (stageOf(e, patched, planned) === "deploy") {
+      let cur = seen[e.step];
+      if (!cur) {
+        cur = seen[e.step] = { step: e.step, first: e.ts, from: prev ?? e.ts, events: [] };
+        order.push(cur);
+      }
+      cur.status = e.status === "started" && cur.status && cur.status !== "started" ? cur.status : e.status;
+      cur.last = e.ts;
+      cur.started ||= e.status === "started";
+      cur.events.push(e);
+    }
+    prev = e.ts;
   }
-  const base = LANE[target] ?? [];
-  const order = [...base, ...Object.keys(seen).filter((s) => !base.includes(s))];
-  const lastSeen = Math.max(-1, ...order.map((step, i) => (seen[step] ? i : -1)));
+  const nodes = [];
   let stopped = false;
-  return order.map((step, i) => {
-    const got = seen[step];
-    // 뒤 단계가 이미 왔는데 이 단계 기록이 없으면 배포기가 이 단계를 하지 않은 것(–)이다.
-    let status = got?.status ?? (i < lastSeen ? "skip" : stopped || !running ? (live ? "skip" : "notrun") : "pending");
-    if (status === "started" && !running) status = "notrun";
+  let prevEnd = -Infinity;
+  order.forEach((cur, i) => {
+    const later = i < order.length - 1;
+    let status = cur.status;
+    if (status === "started" && (later || !running)) status = later ? "ok" : "notrun"; // 다음 단계가 왔으면 끝난 것
     if (status === "fail") stopped = true;
-    const ms = got && (got.status === "started" ? now - Date.parse(got.first) : got.ms ?? Date.parse(got.last) - Date.parse(got.first));
-    return { step, label: DEPLOY_STEPS[step] ?? step, status, ms };
+    // '완료'만 보내는 단계는 직전 기록부터 이 단계 완료까지를 이 단계 시간으로 본다.
+    // 앞 칸이 이미 쓴 시간은 다시 세지 않는다.
+    const start = cur.started ? Date.parse(cur.first) : Math.max(Date.parse(cur.from), prevEnd);
+    const end = status === "started" ? now : Date.parse(later && cur.status === "started" ? order[i + 1].first : cur.last);
+    const ms = end - start;
+    prevEnd = end;
+    const prior = nodes.at(-1);
+    const gap = prior && cur.started ? Date.parse(cur.first) - Date.parse(order[i - 1].last) : 0;
+    if (gap > GAP_MS) {
+      const db = target === "aws" && order[i - 1].step === "infra" && cur.step === "start";
+      nodes.push({ step: `gap-${cur.step}`, label: db ? "DB 준비 (추정)" : "기록 없는 구간", status: "gap", ms: gap, gap: db ? "db" : "unknown" });
+    }
+    nodes.push({ step: cur.step, label: DEPLOY_STEPS[cur.step] ?? cur.step, status, ms, events: cur.events });
   });
+  for (const step of LANE[target] ?? []) {
+    if (!seen[step] && running && !stopped) nodes.push({ step, label: DEPLOY_STEPS[step] ?? step, status: "pending" });
+    else if (!seen[step] && stopped && order.length) nodes.push({ step, label: DEPLOY_STEPS[step] ?? step, status: "notrun" });
+  }
+  return nodes;
 }
 
 export function Badge({ status }) {
@@ -178,9 +208,11 @@ function Where({ place, detail }) {
   );
 }
 
-function Node({ status, label, time, note, flag }) {
+function Node({ status, label, time, note, flag, onClick, selected }) {
   return (
-    <li className={`node n-${status}`}>
+    <li className={`node n-${status}${onClick ? " clickable" : ""}${selected ? " selected" : ""}`} onClick={onClick ?? undefined}
+        role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined}
+        onKeyDown={onClick ? (e) => (e.key === "Enter" || e.key === " ") && onClick() : undefined}>
       <span className="dot">{MARK[status] ?? ""}</span>
       <span className="label">{label}</span>
       <span className="time">{time}</span>
@@ -190,7 +222,7 @@ function Node({ status, label, time, note, flag }) {
   );
 }
 
-const nodeTime = (status, ms) => (status === "started" ? clock(ms) : ["ok", "fail"].includes(status) ? seconds(ms) : status === "wait" ? "대기 중" : "");
+const nodeTime = (status, ms) => (status === "started" ? clock(ms) : ["ok", "fail", "gap"].includes(status) ? seconds(ms) : status === "wait" ? "대기 중" : "");
 
 function nextUp(targets, lanes) {
   const next = targets.map((t) => [t, lanes[t].find((n) => n.status === "pending")]).filter(([, n]) => n);
@@ -245,7 +277,8 @@ function NowBar({ deployment, shared, lanes, targets, now, started }) {
 }
 
 /** 배포 흐름: 공통 단계 트랙 → 대상별 레인. 진행 중인 칸은 움직이고, 실패 칸에는 '여기서 멈춤'. */
-function Flow({ deployment, targets, stages, ctx, now }) {
+function Flow({ deployment, targets, stages, perTarget, ctx, now }) {
+  const [open, setOpen] = useState(null);
   const running = !TERMINAL.includes(deployment.status);
   const shared = SHARED.map(([key, label]) => [key, label, sharedStage(key, deployment, targets.map((t) => stages[t]), now)])
     .filter(([, , st]) => st);
@@ -253,10 +286,8 @@ function Flow({ deployment, targets, stages, ctx, now }) {
   const lanes = Object.fromEntries(targets.map((t) => {
     const status = deployment.targets[t]?.status;
     const laneRunning = running && !["LIVE", "FAILED", "ROLLED_BACK"].includes(status);
-    const nodes = lane(t, stages[t].deploy, laneRunning, status === "LIVE", now);
-    // 배포기가 하지 않은 단계(–)는 레인에서 뺀다. 진행 중에는 앞으로 할 단계를 회색으로 보여 준다.
-    const shown = nodes.filter((n) => n.status !== "skip");
-    return [t, stop >= 0 ? shown.map((n) => ({ ...n, status: "notrun" })) : shown];
+    const nodes = lane(t, perTarget[t], laneRunning, now);
+    return [t, stop >= 0 ? nodes.map((n) => ({ ...n, status: "notrun" })) : nodes];
   }));
   return (
     <div className="card flow">
@@ -267,8 +298,11 @@ function Flow({ deployment, targets, stages, ctx, now }) {
         <ol className="track">
           {shared.map(([key, label, st], i) => {
             const status = stop >= 0 && i > stop ? "notrun" : st.status;
+            const id = `shared:${key}`;
+            const evs = targets.flatMap((t) => stages[t][key]?.events ?? []);
             return <Node key={key} label={label} status={status} time={nodeTime(status, st.ms)}
-                         note={status === "notrun" ? null : stageNote(key, st, ctx)} flag={i === stop ? "여기서 멈춤" : null} />;
+                         note={status === "notrun" ? null : stageNote(key, st, ctx)} flag={i === stop ? "여기서 멈춤" : null}
+                         selected={open?.id === id} onClick={evs.length ? () => setOpen(open?.id === id ? null : { id, title: `공통 › ${label}`, events: evs }) : null} />;
           })}
         </ol>
         {targets.map((t) => (
@@ -277,13 +311,61 @@ function Flow({ deployment, targets, stages, ctx, now }) {
             <ol className="track small">
               {lanes[t].map((n) => (
                 <Node key={n.step} label={n.label} status={n.status} time={nodeTime(n.status, n.ms)}
-                      flag={n.status === "fail" ? "여기서 멈춤" : null} />
+                      flag={n.status === "fail" ? "여기서 멈춤" : null} selected={open?.id === `${t}:${n.step}`}
+                      onClick={n.events || n.gap ? () => setOpen(open?.id === `${t}:${n.step}` ? null
+                        : { id: `${t}:${n.step}`, title: `${SHORT[t]} › ${n.label}`, events: n.events ?? [], gap: n.gap, ms: n.ms }) : null} />
               ))}
             </ol>
           </div>
         ))}
       </div>
+      {open && <StepDetail item={open} onClose={() => setOpen(null)} />}
       {stop >= 0 && shared[stop][2].fail && <Where place={`공통 › ${shared[stop][1]}`} detail={shared[stop][2].fail.detail} />}
+    </div>
+  );
+}
+
+const DETAIL_KEY = {
+  tag: "이미지 태그", digest: "고정된 버전(digest)", mode: "배포 방식", reason: "이유", url: "주소", services: "실행한 서비스",
+  changes: "자원 변경 예정", stage_plan: "자원 변경", app: "AWS 앱 이름", source_revision: "커밋", code: "단계 코드",
+};
+
+function detailRows(detail) {
+  const d = json(detail);
+  if (!d || typeof d !== "object") return null;
+  return Object.entries(d).map(([k, v]) => [DETAIL_KEY[k] ?? k,
+    v && typeof v === "object" ? Object.entries(v).map(([a, b]) => `${a} ${typeof b === "object" ? JSON.stringify(b) : b}`).join(" · ") : String(v)]);
+}
+
+/** 칸을 누르면 그 단계에서 배포기가 남긴 기록을 시간순으로 보여 준다. */
+function StepDetail({ item, onClose }) {
+  return (
+    <div className="step-detail">
+      <div className="row between">
+        <strong>{item.title}</strong>
+        <button className="small secondary" onClick={onClose}>닫기</button>
+      </div>
+      {item.gap && (
+        <p className="gap-note">
+          {seconds(item.ms)} 동안 배포기 기록이 없습니다.
+          {item.gap === "db" ? " A AWS Adapter 코드상 인프라 적용 직후 이 자리에서 DB 준비(bootstrap·migration 일회성 ECS 작업)가 실행됩니다 (adapters/aws/deployment.py). 화면은 이 구간을 '추정'으로 표시합니다."
+            : " 배포기가 이 구간의 시작·완료를 보내지 않았습니다."}
+        </p>
+      )}
+      <ol>
+        {item.events.map((e) => (
+          <li key={e.seq} className={`f-${e.status}`}>
+            <span className="at">{new Date(e.ts).toLocaleTimeString()}</span>
+            <span className={`tag tag-${e.target}`}>{SHORT[e.target]}</span>
+            <span>{e.status === "ok" ? "완료" : e.status === "fail" ? "실패" : "시작"}</span>
+            {e.detail && (detailRows(e.detail) ? (
+              <table className="changes"><tbody>
+                {detailRows(e.detail).map(([k, v]) => <tr key={k}><th>{k}</th><td className="mono">{v}</td></tr>)}
+              </tbody></table>
+            ) : <span className="detail">{explain(e.detail)?.what ?? describe(e.detail)}</span>)}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
@@ -375,10 +457,11 @@ function TargetResult({ target, deployment, stage, onRecheck }) {
 function mergedRows(events) {
   const rows = [];
   const open = {};
-  let patched = false;
+  let patched = false, planned = false;
   for (const e of events) {
     if (e.step === "patch") patched = true;
-    const stage = stageOf(e, patched);
+    if (e.step === "plan") planned = true;
+    const stage = stageOf(e, patched, planned);
     const label = stage === "deploy" ? DEPLOY_STEPS[e.step] ?? e.step : STAGE_LABEL[stage];
     const key = `${stage}:${e.step}`;
     if (open[key] != null && e.status !== "started") {
@@ -422,7 +505,8 @@ export function LiveFeed({ events, running }) {
 export function Pipeline({ deployment, events, targets, ctx }) {
   const now = useNow(!TERMINAL.includes(deployment.status));
   const stages = Object.fromEntries(targets.map((t) => [t, byStage(events.filter((e) => e.target === t))]));
-  return <Flow deployment={deployment} targets={targets} stages={stages} ctx={ctx} now={now} />;
+  const perTarget = Object.fromEntries(targets.map((t) => [t, events.filter((e) => e.target === t)]));
+  return <Flow deployment={deployment} targets={targets} stages={stages} perTarget={perTarget} ctx={ctx} now={now} />;
 }
 
 export function Results({ deployment, events, targets, onRecheck }) {

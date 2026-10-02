@@ -219,7 +219,7 @@ function PlanCompare({ plans, targets }) {
       <div className="structures">
         {targets.map((t) => (
           <div key={t}>
-            <h3>{TARGETS[t]} 구조</h3>
+            <h3>{TARGETS[t]} 구조{t === "aws" && <span className="dim"> · 점선 테두리 = 여러 앱이 같이 쓰는 공용 자원</span>}</h3>
             <Structure plan={plans[t]} />
           </div>
         ))}
