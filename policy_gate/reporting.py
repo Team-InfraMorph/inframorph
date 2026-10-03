@@ -1,17 +1,29 @@
-"""Versioned, safe policy results. Observations never authorize execution."""
+"""Rule execution ledger. A returned observation is not an execution capability."""
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-import hashlib
-import json
+from datetime import datetime, timezone
+import time
+import uuid
 import re
+from .catalog import identity, rules, fingerprint
 
-VERSION = '2.2.0'
+VERSION = '1.0.0'
+START_OBSERVER = ContextVar('policy_start_observer',default=None)
 OBSERVER = ContextVar('policy_observer', default=None)
 BINDING = ContextVar('policy_binding', default=None)
+EXECUTION = ContextVar('policy_execution', default=None)
+CHECKPOINT = ContextVar('policy_checkpoint', default=None)
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
 
 def bind(**values):
     if BINDING.get() is not None: BINDING.get().update(values)
+
+
 RULES = {
     'intent': ('I-001', '근거와 요구사항', '현재 소스의 관련 근거와 요구사항을 확인하세요.'),
     'plan': ('L-001', '배포 설계 일치', '검증된 요구사항과 서비스·설정을 일치시키세요.'),
@@ -44,57 +56,108 @@ CODES = {
 }
 
 
+def error_detail(error):
+    trusted = type(error).__name__ in {'PolicyError','SourcePolicyError','RecoveryStop','RuntimeFailure'}
+    code = str(error) if trusted and re.fullmatch('[a-z_]{1,80}', str(error)) else 'policy_check_failed'
+    if type(error).__name__ not in {'PolicyError','SourcePolicyError'} or 'unavailable' in code or code in {'policy_check_failed','policy_rules_incomplete'}:
+        decision = 'ERROR'
+    elif 'unsupported' in code or code in {'config_not_supported','unreviewed_runtime_source'}:
+        decision = 'UNSUPPORTED'
+    else:
+        decision = 'BLOCK'
+    candidate = getattr(error, 'path', None)
+    path = candidate if isinstance(candidate,str) and len(candidate)<=240 and re.fullmatch(r'[A-Za-z0-9_./-]+',candidate) and not candidate.startswith('/') and '..' not in candidate.split('/') else None
+    number = getattr(error,'line',None)
+    line = number if type(number) is int and number>0 else None
+    return dict(decision=decision,reason_code=code,path=path,line=line)
+
+
 def result(stage, error=None, binding=None):
-    stage = stage if stage in RULES else 'source'
-    rule, title, remedy = RULES[stage]
-    code = 'passed'
-    decision, complete = 'PASS', True
-    path = line = None
-    if error is not None:
-        trusted = type(error).__name__ in {'PolicyError','SourcePolicyError','RecoveryStop'}
-        code = str(error) if trusted and re.fullmatch('[a-z_]{1,80}', str(error)) else 'policy_check_failed'
-        if 'unavailable' in code or code == 'policy_check_failed': decision, complete = 'ERROR', False
-        elif 'unsupported' in code or code in {'config_not_supported','unreviewed_runtime_source'}: decision, complete = 'UNSUPPORTED', False
-        else: decision = 'BLOCK'
-        rule, title = CODES.get(code, (rule, '검사 조건을 충족하지 못했습니다.'))
-        candidate = getattr(error, 'path', None)
-        if isinstance(candidate,str) and len(candidate) <= 240 and re.fullmatch(r'[A-Za-z0-9_./-]+',candidate) and not candidate.startswith('/') and '..' not in candidate.split('/'):
-            path = candidate
-        number = getattr(error,'line',None)
-        if type(number) is int and number > 0: line = number
-    return {'version': VERSION, 'profile': 'reviewed-node22', 'stage': stage,
-            'decision': decision, 'complete': complete, 'rule_id': rule,
-            'reason_code': code, 'title': title, 'remedy': '' if error is None else remedy,
-            'path': path, 'line': line, 'binding': binding or {}}
+    """Compatibility diagnostic. No rule-level completion is inferred here."""
+    rule_id,title,remedy = RULES.get(stage, RULES['source'])
+    detail = error_detail(error) if error else dict(decision='PASS',reason_code='passed',path=None,line=None)
+    if error: rule_id,title = CODES.get(detail['reason_code'],(rule_id,'검사 조건을 충족하지 못했습니다.'))
+    return dict(family='diagnostic',execution_id=str(uuid.uuid4()),finished_at=now(),checkpoint=CHECKPOINT.get() or stage,version=VERSION,profile='reviewed-node22',stage=stage,complete=detail['decision'] not in {'ERROR','UNSUPPORTED'},
+                rule_id=rule_id,title=title,remedy=remedy if error else '',binding=binding or {},**detail)
 
 
 @contextmanager
-def observe(callback):
-    token = OBSERVER.set(callback)
+def observe(callback,start=None):
+    token = OBSERVER.set(callback); start_token=START_OBSERVER.set(start)
     try: yield
-    finally: OBSERVER.reset(token)
+    finally:
+        OBSERVER.reset(token);START_OBSERVER.reset(start_token)
+
+
+@contextmanager
+def checkpoint(name):
+    token = CHECKPOINT.set(name)
+    try: yield
+    finally: CHECKPOINT.reset(token)
+
+
+@contextmanager
+def rule(rule_id, *, applies=True, reason='condition_not_applicable'):
+    execution = EXECUTION.get()
+    record = None
+    if execution is not None:
+        record = next((r for r in execution['rules'] if r['rule_id']==rule_id),None)
+        if record is None or record['decision'] != 'NOT_RUN':
+            raise ValueError('invalid_policy_rule_execution')
+        record['started_at'] = now()
+    begin = time.monotonic()
+    evidence = {}
+    try:
+        yield evidence
+    except Exception as error:
+        if record is not None:
+            record.update(error_detail(error),finished_at=now(),duration_ms=round((time.monotonic()-begin)*1000),evidence=evidence)
+        raise
+    else:
+        if record is not None:
+            record.update(decision='PASS' if applies else 'NOT_APPLICABLE',reason_code='passed' if applies else reason,
+                          required=bool(applies),finished_at=now(),duration_ms=round((time.monotonic()-begin)*1000),evidence=evidence)
 
 
 def checked(stage):
     def decorate(fn):
         @wraps(fn)
         def run(*args, **kwargs):
-            binding = {}
+            meta=identity(); parent=EXECUTION.get()
+            records=[dict(rule_id=r['id'],revision=r['revision'],title=r['title'],expected=r['expected'],remedy=r['remedy'],
+                          decision='NOT_RUN',required=True,reason_code='upstream_not_completed',evidence={}) for r in rules(stage)]
+            report=dict(**meta,result_schema_version='1.0.0',execution_id=str(uuid.uuid4()),
+                        parent_execution_id=parent['execution_id'] if parent else None,
+                        stage=stage,checkpoint=CHECKPOINT.get() or stage,started_at=now(),rules=records,binding={})
             for value in args:
-                if hasattr(value,'model_dump'): value = value.model_dump(mode='json')
-                if isinstance(value,dict):
-                    binding['input_sha256'] = hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-                    break
-            token = BINDING.set(binding)
-            try: output = fn(*args, **kwargs)
-            except Exception as error:
-                if OBSERVER.get(): OBSERVER.get()(result(stage,error,binding))
+                if hasattr(value,'model_dump'): value=value.model_dump(mode='json')
+                if isinstance(value,dict): report['binding']['input_sha256']=fingerprint({k: __import__('hashlib').sha256(v).hexdigest() if isinstance(v,bytes) else v for k,v in value.items()});break
+            if START_OBSERVER.get():START_OBSERVER.get()(report)
+            token=EXECUTION.set(report); binding_token=BINDING.set(report['binding']); error=None
+            begin=time.monotonic()
+            try:
+                output=fn(*args,**kwargs)
+                if not records or any(r['decision']=='NOT_RUN' for r in records):
+                    from .gate import PolicyError
+                    raise PolicyError('policy_rules_incomplete')
+                if hasattr(output,'patched_digest'):
+                    bind(original_digest=output.original_digest,patched_digest=output.patched_digest,diff_sha256=output.diff_sha256,
+                         source_revision=output.source_revision)
+                return output
+            except Exception as exc:
+                error=exc
                 raise
             finally:
-                BINDING.reset(token)
-            if hasattr(output,'patched_digest'):
-                binding.update(original_digest=output.original_digest, patched_digest=output.patched_digest, diff_sha256=output.diff_sha256)
-            if OBSERVER.get(): OBSERVER.get()(result(stage,binding=binding))
-            return output
+                EXECUTION.reset(token); BINDING.reset(binding_token)
+                detail=error_detail(error) if error else dict(decision='PASS',reason_code='passed',path=None,line=None)
+                report.update(detail,finished_at=now(),duration_ms=round((time.monotonic()-begin)*1000),
+                              complete=detail['decision'] not in {'ERROR','UNSUPPORTED'} and not any(r['decision'] in {'NOT_RUN','ERROR','UNSUPPORTED'} for r in records),
+                              required_rules=[r['rule_id'] for r in records if r['required']],
+                              evaluated_rules=[r['rule_id'] for r in records if r['decision'] not in {'NOT_RUN','NOT_APPLICABLE'}])
+                failed=next((r for r in records if r['decision'] in {'BLOCK','ERROR','UNSUPPORTED'}),None)
+                report.update(rule_id=failed['rule_id'] if failed else (records[0]['rule_id'] if records else ''),
+                              title=failed['title'] if failed else RULES.get(stage,('','정책 검사',''))[1],
+                              remedy=failed['remedy'] if failed else '')
+                if OBSERVER.get(): OBSERVER.get()(report)
         return run
     return decorate

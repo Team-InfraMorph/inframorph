@@ -104,6 +104,9 @@ async def deploy(context, store):
         plan = (DemoModules().plan(intent) if context.demo else
                 Plan.model_validate(await asyncio.to_thread(call_json, context.planner_command,
                     {"intent": intent.model_dump(mode="json"), "target": "local"})))
+        from .policy_results import check
+        from policy_gate.gate import validate_plan
+        check(store,context.deployment_id,'local','plan',lambda:validate_plan(intent,plan),attempt=1)
         _check_plan(intent, plan, context.repo_map.commit)
         if plan_diff({"local": context.plan.model_dump(mode="json")}, {"local": plan.model_dump(mode="json")}):
             # A recovery cannot approve a new infrastructure shape on behalf of D.
@@ -115,10 +118,14 @@ async def deploy(context, store):
                                 module="control_plane.runtime_fault_worker")
 
     from .policy_results import save as save_policy
+    from .policy_lifecycle import guard, receipt
     connector = EConnector(snapshot=context.snapshot, repo_map=context.repo_map,
         state_root=context.state_root, runtime_name="cp-" + context.project_id,
         deployment_id=context.deployment_id, make_plan=make_plan,
         worker=fault_worker if context.fault != "none" else None, publish=context.publish,
+        policy_database=str(store.path.absolute()),
+        policy_guard=lambda: guard(store,context.deployment_id),
+        receipt_sink=lambda value: receipt(store,context.deployment_id,"local",value),
         policy_sink=lambda attempt, report: save_policy(store, context.deployment_id, "local", attempt, report))
     stage = "policy"
     try:

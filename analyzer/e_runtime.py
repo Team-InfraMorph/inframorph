@@ -84,7 +84,7 @@ async def run_worker(payload, *, module="analyzer.e_worker"):
 
 
 class EConnector:
-    def __init__(self, *, snapshot, repo_map, state_root, runtime_name, deployment_id, make_plan, worker=None, publish=False, policy_sink=None):
+    def __init__(self, *, snapshot, repo_map, state_root, runtime_name, deployment_id, make_plan, worker=None, publish=False, policy_sink=None, policy_database=None, policy_guard=None, receipt_sink=None):
         if not re.fullmatch(r"[a-z][a-z0-9-]{1,62}", runtime_name):
             raise ValueError("invalid_runtime_namespace")
         self.snapshot = Path(snapshot).absolute()
@@ -103,9 +103,18 @@ class EConnector:
         self.last_deployment = None
         self.policy_sink = policy_sink
         self.policy_attempt = -1
+        self.policy_database=policy_database
+        self.policy_guard=policy_guard
+        self.receipt_sink=receipt_sink
+        self.last_intent=None
+        self.last_candidate=None
+        self.last_artifact=None
 
     async def invoke(self, payload):
         if payload['action'] == 'intent': self.policy_attempt += 1
+        if self.policy_guard and payload["action"] != "cleanup":
+            payload["expected_policy"] = self.policy_guard()["policy_digest"]
+        payload.update(policy_database=self.policy_database,policy_attempt=max(0,self.policy_attempt))
         try:
             reply = await (self.worker or run_worker)(payload)
         except EWorkerError as error:
@@ -123,6 +132,7 @@ class EConnector:
 
     async def validate_intent(self, intent, signature):
         await self.invoke(self.payload("intent", intent=intent.model_dump(mode="json")))
+        self.last_intent=intent
         return Approval(approved=True, fingerprint=signature)
 
     async def validate_patch(self, candidate, signature):
@@ -131,8 +141,10 @@ class EConnector:
         return Approval(approved=True, fingerprint=signature)
 
     async def build(self, candidate, signature):
+        self.last_candidate=candidate
         reply = await self.invoke(self.payload("build", bundle=str(candidate.directory),
                                              plan=candidate.plan.model_dump(mode="json")))
+        self.last_artifact=reply["artifact"]
         return BuiltPatch(artifact=reply["artifact"], fingerprint=signature)
 
     async def cleanup(self):
@@ -158,6 +170,12 @@ class EConnector:
         if not reply["ok"]:
             return LocalCheck(ok=False, failure=classify_e_failure(reply["code"]))
         self.last_deployment = reply["deployment"]
+        if self.receipt_sink and self.last_candidate and self.last_intent:
+            self.receipt_sink(dict(snapshot=str(self.snapshot),bundle=str(self.last_candidate.directory),
+                repo_map=self.mapping.model_dump(mode="json"),intent=self.last_intent.model_dump(mode="json"),
+                plan=self.last_candidate.plan.model_dump(mode="json"),artifact=self.last_artifact,
+                image_id=self.last_deployment["image_id"],
+                **{k:self.last_candidate.manifest[k] for k in ("original_digest","patched_digest","diff_sha256")}))
         return LocalCheck(ok=True, url=reply["deployment"]["url"])
 
     def hooks(self):

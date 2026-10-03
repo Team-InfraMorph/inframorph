@@ -1,4 +1,5 @@
 import os
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -50,6 +51,20 @@ class ControlPlaneApiTest(unittest.TestCase):
         self.assertEqual(res.json()["repo_url"], REPO)
         self.assertEqual(res.json()["targets"], ["local", "aws"])
         restarted.close()
+
+    def test_saved_patch_is_visible_without_execution_runtime(self):
+        data = self.create().json()
+        patch = {"status": "changed", "files": [{"path": "app.js", "action": "modify", "diff": "-old\n+new"}], "verified": True}
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO deployment_patch_reviews VALUES (?, ?, ?, ?, ?)",
+                       (data["deployment_id"], "local", "initial", "test-fingerprint", json.dumps(patch)))
+        restarted = TestClient(create_app(db_path=self.db))
+        try:
+            response = restarted.get(f"/api/deployments/{data['deployment_id']}/patch")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["local"]["files"], patch["files"])
+        finally:
+            restarted.close()
 
     def test_invalid_inputs_are_rejected(self):
         cases = [

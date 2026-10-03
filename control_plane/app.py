@@ -129,6 +129,18 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
                                    verify=lambda t, url, d=deployment_id: verify(d, t, url))
             elif store.get_deployment(deployment_id)["status"] == Status.AWAITING_APPROVAL.value:
                 return  # 승인이 나면 approve가 이어서 실행한다
+            from .policy_lifecycle import audit
+            successor=store._one('SELECT parent_id,policy_digest FROM policy_successors WHERE deployment_id=?',(deployment_id,))
+            if successor:
+                with store._lock,store._conn:
+                    from .policy_results import read as policy_read
+                    from policy_gate.catalog import identity as policy_identity
+                    finished=store.get_deployment(deployment_id)
+                    summaries=policy_read(store,deployment_id).get('summaries',[])
+                    verified={r['target'] for r in summaries if r['decision']=='PASS' and r['policy_digest']==successor[1]}
+                    preserved={r[0] for r in store._all('SELECT target FROM policy_receipts WHERE deployment_id=?',(deployment_id,))}
+                    complete=(finished['status']=='LIVE' and set(finished['targets'])<=verified & preserved and successor[1]==policy_identity()['policy_digest'])
+                    audit(store,'policy_redeploy_finished',successor[0],new_deployment_id=deployment_id,status=finished['status'],policy_update_complete=complete)
             deployment_id = None
             if store.has_queued(project_id):
                 try:
@@ -251,6 +263,8 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
 
     app = FastAPI(title="InfraMorph Control Plane")
     app.state.store = store
+    from .policy_api import install as install_policy_api
+    install_policy_api(app,store,execute,runtime)
 
     @app.middleware("http")
     async def tunnel_only_webhook(request: Request, call_next):
@@ -383,8 +397,9 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
     def get_patch(deployment_id: str):
         """대상별 코드 수정 내역(C Code Patch 결과). 화면의 '코드를 이렇게 고쳤다'에 쓴다."""
         deployment = deployment_or_404(deployment_id)
-        if runtime is not None:
-            return store.get_runtime_patches(deployment_id)
+        saved = store.get_runtime_patches(deployment_id)
+        if saved or runtime is not None:
+            return saved
         folder = workdir / deployment_id / "patched"
         return {t: patch for t in deployment["targets"] if (patch := read_patch(folder / t))}
 

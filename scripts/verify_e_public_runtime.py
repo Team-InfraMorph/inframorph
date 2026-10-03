@@ -21,7 +21,7 @@ from policy_gate.gate import require
 from scripts.verify_e_boundaries import denied_paths, verify_bindings
 
 
-def verify(output):
+def verify(output, *, policy_lifecycle=False):
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     runtime = LocalRuntime(root=output / "runtime", b_modules=DemoModules(), publish=True)
@@ -36,7 +36,25 @@ def verify(output):
             state = output / "runtime/projects" / ("cp-" + project["project_id"])
             records = []
             for attempt in range(2):
-                did = client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
+                if attempt and policy_lifecycle:
+                    previous=did
+                    active=client.get('/api/policies').json()['active']
+                    response=client.post(f'/api/deployments/{did}/policy-rechecks',json={'target':'local'})
+                    require(response.status_code==202,'policy_recheck_request_failed')
+                    job=response.json()['job_id']
+                    jobs=client.get(f'/api/deployments/{did}/policy-history').json()['jobs']
+                    result=next(j for j in jobs if j['id']==job)['result']
+                    require(result['decision']=='PASS','policy_recheck_failed')
+                    response=client.post(f'/api/deployments/{did}/policy-reviews',json={'job_id':job,'policy_digest':active['policy_digest']})
+                    require(response.status_code==200,'policy_review_failed')
+                    response=client.post(f'/api/deployments/{did}/policy-redeploy',json={'commit':deployment['commit_sha'],'policy_digest':active['policy_digest']})
+                    require(response.status_code==202,'policy_redeploy_request_failed')
+                    did=response.json()['deployment_id']
+                    events=client.get(f'/api/deployments/{previous}/policy-history').json()['events']
+                    require(any(e['event']=='policy_redeploy_finished' and e['payload']['policy_update_complete'] for e in events),'policy_redeploy_completion_unverified')
+                    report.update(policy_recheck_passed=True,policy_review_bound=True,policy_redeploy_verified=True)
+                else:
+                    did = client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
                 deployment = client.get(f"/api/deployments/{did}").json()
                 require(deployment["status"] == "LIVE", "public_runtime_not_live")
                 target = deployment["targets"]["local"]
@@ -91,9 +109,10 @@ def verify(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--policy-lifecycle",action="store_true",help="Use the policy recheck/review/redeploy API for the second deployment")
     args = parser.parse_args()
     try:
-        verify(args.output_dir)
+        verify(args.output_dir,policy_lifecycle=args.policy_lifecycle)
     except Exception:
         print(json.dumps({"error": "public_runtime_verification_failed"}))
         return 1

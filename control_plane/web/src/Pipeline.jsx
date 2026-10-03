@@ -117,7 +117,9 @@ function sharedStage(key, deployment, perTarget, now) {
     // Local 배포기는 패치 검사를 따로 남기지 않고 'E가 패치를 승인함'(initial_patch_approved)으로만 남긴다.
     if (key === "patchcheck" && perTarget.some((s) => s.patch?.events.some((e) => /patch_approved/.test(e.detail ?? ""))))
       return { status: "ok", note: "E Policy Gate가 패치 승인" };
-    return { status: TERMINAL.includes(deployment.status) ? "skip" : "pending" };
+    return { status: TERMINAL.includes(deployment.status) ? "skip" : "pending",
+      ...(key === "patchcheck" && TERMINAL.includes(deployment.status)
+        ? { note: "단계 이벤트 없음 · 아래 정책 검사에서 확인" } : {}) };
   }
   const status = found.some((s) => s.status === "fail") ? "fail"
     : (key === "analyze" && perTarget.some((s) => s.design)) || found.every((s) => s.status === "ok") ? "ok" : "started";

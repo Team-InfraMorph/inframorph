@@ -4,6 +4,7 @@ import re
 import shlex
 from pathlib import Path
 from .structure import inspect_js, prisma_structure
+from .reporting import rule
 
 
 def fail(code, path=None, line=None):
@@ -25,66 +26,74 @@ def config_check(config, secrets):
 
 def intent_rules(intent, files):
     from schemas.common import parse_evidence
-    config_check(intent.config, intent.secrets)
-    schema = files.get('prisma/schema.prisma')
-    dbs = [s for s in intent.state if s.kind == 'relational_db']
-    if schema is not None:
-        provider, _, span = prisma_structure(schema)
-        if not dbs: fail('db_requirement_missing', 'prisma/schema.prisma')
-        for db in dbs:
-            if db.engine != provider: fail('db_provider_mismatch', 'prisma/schema.prisma')
-            valid = False
-            for ev in db.evidence:
-                name, line = parse_evidence(ev)
-                if name == 'prisma/schema.prisma':
-                    offset = sum(len(row) for row in schema.decode().splitlines(True)[:line-1])
-                    valid |= span[0] <= offset + len(schema.decode().splitlines()[line-1]) and offset <= span[1]
-            if not valid: fail('db_evidence_unrelated', 'prisma/schema.prisma')
-    elif dbs: fail('db_schema_missing', 'prisma/schema.prisma')
-    storage = [item for item in intent.state if item.kind == 'persistent_files']
-    if storage:
-        # Only the independently reviewed original storage module is a supported
-        # semantic profile; source-like strings in arbitrary code aren't proof.
-        from .gate import sha
-        from code_patch.runner import BASE_IMAGES
-        for item in storage:
-            name = 'src/images.js'
-            if item.path.rstrip('/') != 'uploads': fail('storage_path_unsupported')
-            if name not in files or sha(files[name]) != BASE_IMAGES:
-                fail('storage_evidence_unsupported', name)
-            parsed = inspect_js({name: files[name]})[name]
-            supported = [c for c in parsed.get('calls',[]) if c['name'] in {'writeFile','readFile'}]
-            related = False
-            for ev in item.evidence:
+    with rule('I-006') as evidence:
+        config_check(intent.config, intent.secrets)
+        evidence.update(setting_names=sorted(intent.config), secret_count=len(intent.secrets))
+    with rule('I-003') as evidence:
+        schema = files.get('prisma/schema.prisma')
+        dbs = [s for s in intent.state if s.kind == 'relational_db']
+        if schema is not None:
+            provider, _, span = prisma_structure(schema)
+            evidence.update(path='prisma/schema.prisma', observed=provider, claimed=[d.engine for d in dbs])
+            if not dbs: fail('db_requirement_missing', 'prisma/schema.prisma')
+            for db in dbs:
+                if db.engine != provider: fail('db_provider_mismatch', 'prisma/schema.prisma')
+                valid = False
+                for ev in db.evidence:
+                    name, line = parse_evidence(ev)
+                    if name == 'prisma/schema.prisma':
+                        offset = sum(len(row) for row in schema.decode().splitlines(True)[:line-1])
+                        valid |= span[0] <= offset + len(schema.decode().splitlines()[line-1]) and offset <= span[1]
+                if not valid: fail('db_evidence_unrelated', 'prisma/schema.prisma')
+        elif dbs: fail('db_schema_missing', 'prisma/schema.prisma')
+    with rule('I-004', applies=any(s.kind == 'persistent_files' for s in intent.state), reason='no_persistent_files') as evidence:
+        storage = [item for item in intent.state if item.kind == 'persistent_files']
+        evidence.update(references=[e for item in storage for e in item.evidence])
+        if storage:
+            # Only the independently reviewed original storage module is a supported
+            # semantic profile; source-like strings in arbitrary code aren't proof.
+            from .gate import sha
+            from code_patch.runner import BASE_IMAGES
+            for item in storage:
+                name = 'src/images.js'
+                if item.path.rstrip('/') != 'uploads': fail('storage_path_unsupported')
+                if name not in files or sha(files[name]) != BASE_IMAGES:
+                    fail('storage_evidence_unsupported', name)
+                parsed = inspect_js({name: files[name]})[name]
+                supported = [c for c in parsed.get('calls',[]) if c['name'] in {'writeFile','readFile'}]
+                related = False
+                for ev in item.evidence:
+                    file, line = parse_evidence(ev)
+                    if file != name: continue
+                    rows=files[name].decode().splitlines(True)
+                    start=sum(map(len, rows[:line-1])); end=start+len(rows[line-1])
+                    related |= any(c['start'] < end and c['end'] > start for c in supported)
+                if not related: fail('storage_evidence_unrelated', name)
+    with rule('I-002') as evidence:
+        evidence.update(services=[w.name for w in intent.workloads if w.kind.value=='worker'])
+        for w in intent.workloads:
+            if w.kind.value != 'worker': continue
+            try: parts = shlex.split(w.command)
+            except ValueError: fail('worker_command_unsupported')
+            if len(parts) != 2 or parts[0] != 'node' or not re.fullmatch(r'src/[A-Za-z0-9_/-]+\.js', parts[1]) or '..' in parts[1].split('/'):
+                fail('worker_command_unsupported')
+            name = parts[1]
+            if name not in files: fail('worker_entry_missing', name)
+            script_match = False
+            try: scripts = json.loads(files.get('package.json', b'{}')).get('scripts', {})
+            except ValueError: fail('package_invalid')
+            for ev in w.evidence:
                 file, line = parse_evidence(ev)
-                if file != name: continue
-                rows=files[name].decode().splitlines(True)
-                start=sum(map(len, rows[:line-1])); end=start+len(rows[line-1])
-                related |= any(c['start'] < end and c['end'] > start for c in supported)
-            if not related: fail('storage_evidence_unrelated', name)
-    for w in intent.workloads:
-        if w.kind.value != 'worker': continue
-        try: parts = shlex.split(w.command)
-        except ValueError: fail('worker_command_unsupported')
-        if len(parts) != 2 or parts[0] != 'node' or not re.fullmatch(r'src/[A-Za-z0-9_/-]+\.js', parts[1]) or '..' in parts[1].split('/'):
-            fail('worker_command_unsupported')
-        name = parts[1]
-        if name not in files: fail('worker_entry_missing', name)
-        script_match = False
+                if file == name and files[file].decode().splitlines()[line-1].strip(): script_match = True
+                if file == 'package.json' and any(v == w.command for v in scripts.values()):
+                    row = files[file].decode().splitlines()[line-1]
+                    script_match |= w.command in row
+            if not script_match: fail('worker_evidence_unrelated', name)
         try: scripts = json.loads(files.get('package.json', b'{}')).get('scripts', {})
         except ValueError: fail('package_invalid')
-        for ev in w.evidence:
-            file, line = parse_evidence(ev)
-            if file == name and files[file].decode().splitlines()[line-1].strip(): script_match = True
-            if file == 'package.json' and any(v == w.command for v in scripts.values()):
-                row = files[file].decode().splitlines()[line-1]
-                script_match |= w.command in row
-        if not script_match: fail('worker_evidence_unrelated', name)
-    try: scripts = json.loads(files.get('package.json', b'{}')).get('scripts', {})
-    except ValueError: fail('package_invalid')
-    worker_cmd = scripts.get('worker')
-    if worker_cmd and worker_cmd not in [w.command for w in intent.workloads if w.kind.value == 'worker']:
-        fail('worker_requirement_missing', 'package.json')
+        worker_cmd = scripts.get('worker')
+        if worker_cmd and worker_cmd not in [w.command for w in intent.workloads if w.kind.value == 'worker']:
+            fail('worker_requirement_missing', 'package.json')
 
 
 def plan_rules(intent, plan):
@@ -108,45 +117,51 @@ def plan_rules(intent, plan):
 
 
 def patch_rules(original, patched, plan, changed, js, *, profile="reviewed"):
-    name = 'prisma/schema.prisma'
-    if name in changed:
-        if name not in original or not plan.db: fail('prisma_transform_unsupported', name)
-        old, structure, _ = prisma_structure(original[name])
-        new, after, _ = prisma_structure(patched[name])
-        if structure != after: fail('prisma_structure_changed', name)
-        if new != 'postgresql': fail('prisma_provider_invalid', name)
-    before_js = inspect_js({k: original[k] for k in changed if k in original})
-    root = Path(__file__).resolve().parents[1]
-    templates = {str(p.relative_to(root / 'code_patch/templates')): p.read_bytes() for p in (root / 'code_patch/templates').glob('*.js')}
-    approved = inspect_js({f'src/{k}': v for k,v in templates.items()})
-    # Only reviewed source forms can receive the approved replacement module.
-    from code_patch.runner import BASE_IMAGES
-    from .gate import sha
-    for name in changed:
-        if not name.endswith(('.js','.cjs','.mjs')): continue
-        ast = js[name]['normalized']
-        if name in before_js and ast == before_js[name].get('normalized'): continue
-        if plan.storage and name in approved and ast == approved[name]['normalized']:
-            if name == 'src/storage.js' and name not in original: continue
-            if name == 'src/images.js' and (sha(original.get(name,b'')) == BASE_IMAGES or original.get(name) == templates['images.js']): continue
-        if profile == "corpus":
-            expected = {
-                'src/storage.js': b"async function readImage(key, storage) {\n  return storage.get(key);\n}\nmodule.exports = { readImage };\n",
-                'src/storage-adapter.js': b"module.exports = { get: async (key) => Buffer.from(key) };\n",
-            }
-            if name in expected and patched[name] == expected[name]: continue
-        # Fixed inert corpus transformations are a test-only profile selected by
-        # host-side callers, never by bundle/manifest or app name.
-        fail('patch_behavior_changed', name)
-    for name in ('package.json','package-lock.json'):
-        if name not in changed: continue
-        if not plan.storage: fail('dependency_change_forbidden', name)
-        trusted = root / 'code_patch/templates/package-lock.json'
-        if name == 'package-lock.json' and patched[name] != trusted.read_bytes(): fail('dependency_change_forbidden', name)
-        if name == 'package.json':
-            try:
-                a, b = json.loads(original[name]), json.loads(patched[name])
-                from code_patch.runner import SDK_VERSION
-                expected = dict(a); expected['dependencies'] = a.get('dependencies', {}) | {'@aws-sdk/client-s3': SDK_VERSION}
-                if b != expected: fail('dependency_change_forbidden', name)
-            except (ValueError, KeyError): fail('dependency_change_forbidden', name)
+    with rule('P-003', applies='prisma/schema.prisma' in changed, reason='schema_unchanged') as evidence:
+        name = 'prisma/schema.prisma'
+        if name in changed:
+            if name not in original or not plan.db: fail('prisma_transform_unsupported', name)
+            old, structure, _ = prisma_structure(original[name])
+            new, after, _ = prisma_structure(patched[name])
+            evidence.update(path=name,before=old,after=new)
+            if structure != after: fail('prisma_structure_changed', name)
+            if new != 'postgresql': fail('prisma_provider_invalid', name)
+    with rule('P-004', applies=any(n.endswith(('.js','.cjs','.mjs')) for n in changed), reason='javascript_unchanged') as evidence:
+        evidence.update(changed_paths=[n for n in changed if n.endswith(('.js','.cjs','.mjs'))])
+        before_js = inspect_js({k: original[k] for k in changed if k in original})
+        root = Path(__file__).resolve().parents[1]
+        templates = {str(p.relative_to(root / 'code_patch/templates')): p.read_bytes() for p in (root / 'code_patch/templates').glob('*.js')}
+        approved = inspect_js({f'src/{k}': v for k,v in templates.items()})
+        # Only reviewed source forms can receive the approved replacement module.
+        from code_patch.runner import BASE_IMAGES
+        from .gate import sha
+        for name in changed:
+            if not name.endswith(('.js','.cjs','.mjs')): continue
+            ast = js[name]['normalized']
+            if name in before_js and ast == before_js[name].get('normalized'): continue
+            if plan.storage and name in approved and ast == approved[name]['normalized']:
+                if name == 'src/storage.js' and name not in original: continue
+                if name == 'src/images.js' and (sha(original.get(name,b'')) == BASE_IMAGES or original.get(name) == templates['images.js']): continue
+            if profile == "corpus":
+                expected = {
+                    'src/storage.js': b"async function readImage(key, storage) {\n  return storage.get(key);\n}\nmodule.exports = { readImage };\n",
+                    'src/storage-adapter.js': b"module.exports = { get: async (key) => Buffer.from(key) };\n",
+                }
+                if name in expected and patched[name] == expected[name]: continue
+            # Fixed inert corpus transformations are a test-only profile selected by
+            # host-side callers, never by bundle/manifest or app name.
+            fail('patch_behavior_changed', name)
+    with rule('P-005', applies=bool(set(changed) & {'package.json','package-lock.json'}), reason='dependencies_unchanged') as evidence:
+        evidence.update(changed_paths=sorted(set(changed)&{'package.json','package-lock.json'}))
+        for name in ('package.json','package-lock.json'):
+            if name not in changed: continue
+            if not plan.storage: fail('dependency_change_forbidden', name)
+            trusted = root / 'code_patch/templates/package-lock.json'
+            if name == 'package-lock.json' and patched[name] != trusted.read_bytes(): fail('dependency_change_forbidden', name)
+            if name == 'package.json':
+                try:
+                    a, b = json.loads(original[name]), json.loads(patched[name])
+                    from code_patch.runner import SDK_VERSION
+                    expected = dict(a); expected['dependencies'] = a.get('dependencies', {}) | {'@aws-sdk/client-s3': SDK_VERSION}
+                    if b != expected: fail('dependency_change_forbidden', name)
+                except (ValueError, KeyError): fail('dependency_change_forbidden', name)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
 import PolicyCard from "./PolicyCard.jsx";
+import PolicyWorkspace from "./PolicyWorkspace.jsx";
 import { Badge, Pipeline, Results, TARGETS, TERMINAL, ordered } from "./Pipeline.jsx";
 import { AppCode } from "./CodeTree.jsx";
 import { PatchCard } from "./Patch.jsx";
@@ -254,8 +255,17 @@ export default function App() {
   const [intent, setIntent] = useState(null);
   const [repoMap, setRepoMap] = useState(null);
   const [patch, setPatch] = useState({});
+  const [patchLoading, setPatchLoading] = useState(false);
+  const [patchError, setPatchError] = useState(false);
   const [policy, setPolicy] = useState(null);
   const [policyError, setPolicyError] = useState(false);
+  const [policyHistory,setPolicyHistory]=useState(null);
+  const [route,setRoute]=useState(location.hash.slice(1)||'/deploy');
+  useEffect(()=>{
+    let scroll=0,previous=location.hash.slice(1)||'/deploy';
+    const change=()=>{const next=location.hash.slice(1)||'/deploy';if(next.startsWith('/policy')&&!previous.startsWith('/policy'))scroll=window.scrollY;setRoute(next);if(!next.startsWith('/policy')&&previous.startsWith('/policy'))requestAnimationFrame(()=>window.scrollTo(0,scroll));else if(!next.includes('section='))window.scrollTo(0,0);previous=next;};
+    window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change);
+  },[]);
   const [error, setError] = useState("");
 
   const project = projects.find((p) => p.project_id === projectId);
@@ -309,16 +319,20 @@ export default function App() {
     api.plans(selectedKey).then((value) => alive && setPlans(value)).catch(() => alive && setPlans({}));
     api.analysis(selectedKey).then((a) => { if (alive) { setIntent(a.intent); setRepoMap(a.repo_map ?? null); } })
       .catch(() => { if (alive) { setIntent(null); setRepoMap(null); } });
-    api.patch(selectedKey).then((value) => alive && setPatch(value)).catch(() => alive && setPatch({}));
+    setPatchLoading(true);
+    setPatchError(false);
+    api.patch(selectedKey).then((value) => { if (alive) setPatch(value); })
+      .catch(() => { if (alive) setPatchError(true); })
+      .finally(() => { if (alive) setPatchLoading(false); });
     return () => { alive = false; };
   }, [selectedKey, selectedStatus]);
 
   useEffect(() => {
-    setPolicy(null); setPolicyError(false);
+    setPolicy(null); setPolicyHistory(null); setPolicyError(false);
     if (!selectedKey) return;
     let alive = true;
-    const loadPolicy = () => api.policy(selectedKey).then(value => {
-      if (alive) { setPolicy(value); setPolicyError(false); }
+    const loadPolicy = () => Promise.all([api.policy(selectedKey),api.policyHistory(selectedKey)]).then(([value,history]) => {
+      if (alive) { setPolicy(value); setPolicyHistory(history); setPolicyError(false); }
     }).catch(() => { if (alive) setPolicyError(true); });
     loadPolicy();
     const timer = setInterval(loadPolicy, 1500);
@@ -361,6 +375,9 @@ export default function App() {
           ))}
         </select>}
       </header>
+      <nav className="global-nav" aria-label="주요 메뉴"><a aria-current={!route.startsWith('/policy')?'page':undefined} href="#/deploy">배포</a><a aria-current={route.startsWith('/policy')?'page':undefined} href="#/policy/1.0.0/overview">정책</a></nav>
+      {route.startsWith('/policy') && <PolicyWorkspace route={route}/>}
+      <div hidden={route.startsWith('/policy')}>
       <div className={`shell${project ? " with-side" : ""}`}>
       {project && <History deployments={deployments} selectedId={selected?.id} following={!selectedId} versions={versions}
                            onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)} onFollow={() => setSelectedId(null)}
@@ -436,16 +453,20 @@ export default function App() {
             </Section>
           )}
 
-          {(Object.keys(patch).length > 0 || policy?.results?.length > 0 || policyError) && (
+          {selected && (
             <Section n="4" title="코드 변경 · 정책 검사">
-              <PolicyCard data={policy} error={policyError} />
-              {Object.keys(patch).length > 0 && <PatchCard patch={patch} />}
+              <PolicyCard data={policy} error={policyError} history={policyHistory} deploymentId={selected.id}
+                onRecheck={target=>api.policyRecheck(selected.id,target).then(()=>api.policyHistory(selected.id)).then(setPolicyHistory)}
+                onReview={(job,digest)=>api.policyReview(selected.id,job,digest).then(()=>api.policyHistory(selected.id)).then(setPolicyHistory)}
+                onFailureReview={(execution,body)=>api.policyFailureReview(selected.id,execution,body).then(()=>api.policyHistory(selected.id)).then(setPolicyHistory)} />
+              <PatchCard patch={patch} loading={patchLoading} error={patchError} />
             </Section>
           )}
 
         </>
       )}
       </main>
+      </div>
       </div>
     </div>
   );
