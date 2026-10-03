@@ -16,6 +16,7 @@ export const api = {
   runtime: () => request("GET", "/runtime"),
   projects: () => request("GET", "/projects"),
   createProject: (body) => request("POST", "/projects", body),
+  deployRepo: (body) => request("POST", "/deploy", body),
   deploy: (projectId, demoVersion) => request("POST", `/projects/${projectId}/deploy`,
     demoVersion ? { demo_version: demoVersion } : undefined),
   retry: (deploymentId) => request("POST", `/deployments/${deploymentId}/retry`),

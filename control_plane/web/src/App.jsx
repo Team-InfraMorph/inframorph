@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
 import PolicyCard from "./PolicyCard.jsx";
-import { Badge, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
+import { Badge, Pipeline, Results, TARGETS, TERMINAL, ordered } from "./Pipeline.jsx";
 import { AppCode } from "./CodeTree.jsx";
 import { PatchCard } from "./Patch.jsx";
 
@@ -31,38 +31,59 @@ function save(key, value) {
   try { localStorage.setItem(key, value); } catch { /* 저장 못 해도 화면은 동작 */ }
 }
 
-function NewProject({ onCreated, awsEnabled }) {
-  const [repo, setRepo] = useState("https://github.com/Team-InfraMorph/demo-app");
-  const [branch, setBranch] = useState("main");
-  const [targets, setTargets] = useState(awsEnabled ? ["local", "aws"] : ["local"]);
-  const [error, setError] = useState("");
+const DEMO_REPO = "https://github.com/Team-InfraMorph/demo-app";
+const sameRepo = (a, b) => a.replace(/\/$/, "").replace(/\.git$/, "").toLowerCase() === b.replace(/\/$/, "").replace(/\.git$/, "").toLowerCase();
+// 배포 위치: Local 테스트는 항상 먼저 거치고, 통과하면 고른 곳에 배포한다.
+const DESTS = { onprem: ["온프레미스", ["local", "onprem"]], aws: ["AWS", ["local", "aws"]],
+  both: ["온프레미스 + AWS", ["local", "onprem", "aws"]], none: ["Local 테스트만", ["local"]] };
+const destOf = (targets = []) => targets.includes("onprem") && targets.includes("aws") ? "both"
+  : targets.includes("aws") ? "aws" : targets.includes("onprem") ? "onprem" : "none";
 
-  const toggle = (t) => setTargets((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
-  const submit = async (e) => {
+/** 한 화면에서 레포·브랜치·배포 위치를 고르고 바로 배포한다. 같은 레포·브랜치면 같은 앱으로 이어진다. */
+function DeployBar({ runtime, project, running, versions, lastCommit, onDeploy }) {
+  const [repo, setRepo] = useState(project?.repo_url ?? DEMO_REPO);
+  const [branch, setBranch] = useState(project?.branch ?? "main");
+  const [dest, setDest] = useState(null);
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    if (project) { setRepo(project.repo_url); setBranch(project.branch); setDest(null); setVersion(""); }
+  }, [project?.project_id]);
+  const allowed = { onprem: runtime?.onprem_enabled, aws: runtime?.aws_enabled,
+    both: runtime?.onprem_enabled && runtime?.aws_enabled, none: true };
+  const remembered = project && sameRepo(project.repo_url, repo) && project.branch === branch ? destOf(project.targets) : null;
+  const current = dest && allowed[dest] ? dest
+    : [remembered, "aws", "onprem", "none"].find((d) => d && allowed[d]);
+  const demo = versions.length > 0 && sameRepo(repo, DEMO_REPO);
+  const picked = version || versions.find((v) => v.commit_sha === lastCommit)?.id || versions[0]?.id;
+  const submit = (e) => {
     e.preventDefault();
-    setError("");
-    try {
-      onCreated(await api.createProject({ repo_url: repo, branch, targets }));
-    } catch (err) {
-      setError(err.message);
-    }
+    onDeploy({ repo_url: repo.trim(), branch: branch.trim(), targets: DESTS[current][1],
+               ...(demo ? { demo_version: picked } : {}) });
   };
-
   return (
-    <form className="card form" onSubmit={submit}>
-      <h2>새 프로젝트</h2>
-      <label>GitHub 레포 <input value={repo} onChange={(e) => setRepo(e.target.value)} /></label>
-      <label>브랜치 <input value={branch} onChange={(e) => setBranch(e.target.value)} /></label>
-      <fieldset>
-        <legend>배포 대상</legend>
-        {Object.entries(TARGETS).map(([t, label]) => (
-          <label key={t} className="check">
-            <input type="checkbox" disabled={t === "aws" && !awsEnabled} checked={targets.includes(t)} onChange={() => toggle(t)} /> {label}
-          </label>
-        ))}
-      </fieldset>
-      {error && <p className="error">{error}</p>}
-      <button type="submit" disabled={!targets.length}>만들기</button>
+    <form className="card deploybar" onSubmit={submit}>
+      <label className="db-repo">GitHub 레포 <input value={repo} onChange={(e) => setRepo(e.target.value)} /></label>
+      <label className="db-branch">브랜치 <input value={branch} onChange={(e) => setBranch(e.target.value)} /></label>
+      <div className="db-dest">
+        <span className="db-label">배포 위치</span>
+        <div className="seg" role="radiogroup" aria-label="배포 위치">
+          <span className="seg-fixed" title="항상 먼저 거칩니다">Local 테스트 →</span>
+          {Object.entries(DESTS).filter(([k]) => k !== "none").map(([k, [label]]) => (
+            <button type="button" key={k} role="radio" aria-checked={current === k} disabled={!allowed[k]}
+                    className={`seg-btn sb-${k}${current === k ? " on" : ""}`} onClick={() => setDest(k)}
+                    title={allowed[k] ? undefined : "이 조종실에 연결 설정이 없습니다"}>{label}</button>
+          ))}
+          <button type="button" role="radio" aria-checked={current === "none"} className={`seg-btn${current === "none" ? " on" : ""}`}
+                  onClick={() => setDest("none")}>테스트만</button>
+        </div>
+      </div>
+      {demo && <label className="db-version" title={runtime?.mapper_mode === "github" ? "선택한 버전의 커밋을 GitHub에서 가져와 배포합니다" : "선택한 버전의 고정된 데모 소스로 배포합니다"}>
+        테스트 버전{runtime?.mapper_mode === "github" ? " · GitHub" : ""} <select value={picked} onChange={(e) => setVersion(e.target.value)}>
+        {versions.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+      </select></label>}
+      <button type="submit" className="db-go" disabled={Boolean(running)}>
+        {!running ? "배포" : running.status === "AWAITING_APPROVAL" ? "승인 대기 중" : "배포 중…"}
+      </button>
     </form>
   );
 }
@@ -177,11 +198,18 @@ const versionOf = (versions, sha) => { const v = versions.find((x) => x.commit_s
 
 const TRIGGER_LONG = { manual: "수동 배포", push: "git push", rollback: "되돌리기" };
 
-/** 배포 기록: 최신이 위인 타임라인. 점 색 = 결과, 대상별 결과, 걸린 시간, 다시 한 범위. */
-function History({ deployments, selectedId, onSelect, onRollback, versions = [] }) {
+const SHORT_T = { local: "Local", onprem: "온프레미스", aws: "AWS" };
+
+/** 배포 기록(왼쪽): 배포 한 번 = 한 줄. 누르면 그 배포의 과정·결과·구조가 그대로 다시 열린다. */
+function History({ deployments, selectedId, following, onSelect, onFollow, onRollback, versions = [] }) {
   const canRollback = deployments.slice(1).some((x) => x.status === "LIVE");
   return (
-    <div className="card hist">
+    <aside className="card hist side">
+      <div className="hist-head">
+        <h2>배포 기록 <span className="dim">{deployments.length}건</span></h2>
+        <button className={`small ${following ? "secondary" : ""}`} disabled={following} onClick={onFollow}
+                title="새 배포가 시작되면 자동으로 따라갑니다">{following ? "최신 따라가는 중" : "최신으로"}</button>
+      </div>
       {!deployments.length && <p className="dim">아직 배포 기록이 없습니다</p>}
       <ol className="hlist">
         {deployments.map((d, i) => (
@@ -189,34 +217,34 @@ function History({ deployments, selectedId, onSelect, onRollback, versions = [] 
             <span className="hdot" />
             <div className="hmain">
               <div className="hline1">
-                <strong>{TRIGGER_LONG[d.triggered_by] ?? d.triggered_by}</strong>
-                <code className="hcommit">{versionOf(versions, d.commit_sha)}{d.commit_sha ? d.commit_sha.slice(0, 7) : "커밋 미정"}</code>
+                <code className="hid" title={d.id}>{d.id}</code>
                 <Badge status={d.status} />
                 {i === 0 && <span className="hlatest">최신</span>}
               </div>
               <div className="hline2">
-                <span title={new Date(d.created_at).toLocaleString()}>{ago(d.created_at)}</span>
-                {took(d) && <span>걸린 시간 {took(d)}</span>}
-                <span>{MODE[d.analysis_mode] ?? (d.triggered_by === "rollback" ? "이전 버전 재배포" : "전체 (처음부터)")}</span>
-                {Object.entries(d.targets ?? {}).map(([t, v]) => (
-                  <span key={t} className={`htgt ht-${v.status}`}>{TARGETS[t]?.split(" ")[0] ?? t} {v.status === "LIVE" ? "✓" : v.status === "FAILED" ? "✗" : "…"}</span>
+                <span title={new Date(d.created_at).toLocaleString()}>{new Date(d.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {ago(d.created_at)}</span>
+                {took(d) && <span>{took(d)}</span>}
+                <span>{TRIGGER_LONG[d.triggered_by] ?? d.triggered_by}</span>
+                <span className="mono">{versionOf(versions, d.commit_sha)}{d.commit_sha ? d.commit_sha.slice(0, 7) : "커밋 미정"}</span>
+              </div>
+              <div className="htgts">
+                {ordered(Object.keys(d.targets ?? {})).map((t) => (
+                  <span key={t} className={`htgt hg-${t} ht-${d.targets[t].status}`}>{SHORT_T[t] ?? t} {d.targets[t].status === "LIVE" ? "✓" : d.targets[t].status === "FAILED" ? "✗" : "…"}</span>
                 ))}
               </div>
-              {d.change_reasons?.length > 0 && <div className="hwhy">{d.change_reasons.join(" · ")}</div>}
+              {i === 0 && canRollback && TERMINAL.includes(d.status) && (
+                <button className="small secondary hroll" onClick={(e) => { e.stopPropagation(); onRollback(d.id); }}>직전 정상 버전으로 되돌리기</button>
+              )}
             </div>
-            {i === 0 && canRollback && TERMINAL.includes(d.status) && (
-              <button className="small secondary" onClick={(e) => { e.stopPropagation(); onRollback(d.id); }}>직전 정상 버전으로 되돌리기</button>
-            )}
           </li>
         ))}
       </ol>
-    </div>
+    </aside>
   );
 }
 
 export default function App() {
   const [runtime, setRuntime] = useState(null);
-  const [requestedVersion, setRequestedVersion] = useState("");
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(load("projectId"));
   const [deployments, setDeployments] = useState([]);
@@ -299,7 +327,6 @@ export default function App() {
 
   const choose = (id) => {
     setProjectId(id);
-    setRequestedVersion("");
     setSelectedId(null);
     setDeployments([]);
     setPlans({});
@@ -319,23 +346,26 @@ export default function App() {
     }
   };
 
-  const targets = project?.targets ?? [];
+  // 지난 배포는 그때 실제로 있던 대상만 보여 준다(나중에 대상을 추가해도 옛 기록에 빈 칸이 생기지 않게).
+  const targets = ordered(Object.keys(selected?.targets ?? {}).length ? Object.keys(selected.targets) : project?.targets ?? []);
   const versions = runtime?.demo_versions ?? [];
-  const canSelectVersion = versions.length > 0 && project?.repo_url.replace(/\/$/, "").replace(/\.git$/, "") === "https://github.com/Team-InfraMorph/demo-app";
-  const deployVersion = requestedVersion || versions.find((v) => v.commit_sha === deployments[0]?.commit_sha)?.id || versions[0]?.id;
   const running = deployments.find((d) => !TERMINAL.includes(d.status) && d.status !== "CREATED");
 
   return (
     <div className="app">
       <header>
         <h1>InfraMorph 조종실</h1>
-        <select value={projectId ?? ""} onChange={(e) => choose(e.target.value)}>
-          <option value="">+ 새 프로젝트</option>
+        {projects.length > 0 && <select aria-label="배포 기록을 볼 레포" value={projectId ?? ""} onChange={(e) => choose(e.target.value)}>
           {projects.map((p) => (
-            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch} · {p.targets.map((t) => t === "aws" ? "AWS" : "Local").join(" / ")} · {p.project_id.slice(-6)}</option>
+            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch} · {ordered(p.targets).map((t) => ({ local: "Local 테스트", onprem: "온프레미스", aws: "AWS" })[t] ?? t).join(" · ")} · {p.project_id.slice(-6)}</option>
           ))}
-        </select>
+        </select>}
       </header>
+      <div className={`shell${project ? " with-side" : ""}`}>
+      {project && <History deployments={deployments} selectedId={selected?.id} following={!selectedId} versions={versions}
+                           onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)} onFollow={() => setSelectedId(null)}
+                           onRollback={(id) => act(api.rollback, id)} />}
+      <main className="main">
       {runtime?.analysis_backend === "codex-cli" && <p className="usage">
         로컬 Codex 실제 분석 · {runtime.model} / {runtime.reasoning_effort} · ChatGPT 사용량 사용 · 팀 API 비용 $0
       </p>}
@@ -348,7 +378,16 @@ export default function App() {
       {runtime?.aws_enabled && <p className="usage">AWS 실제 배포 연결됨 · 프로젝트별로 앱과 데이터를 분리해 배포합니다.</p>}
       {error && <p className="error banner">{error}</p>}
 
-      {!project && <NewProject awsEnabled={runtime?.aws_enabled} onCreated={(p) => { choose(p.project_id); refresh(); }} />}
+      <DeployBar runtime={runtime} project={project} running={running} versions={versions} lastCommit={deployments[0]?.commit_sha}
+                 onDeploy={async (body) => {
+                   try {
+                     const res = await api.deployRepo(body);
+                     if (res.project_id !== projectId) choose(res.project_id);
+                     setSelectedId(null);
+                     refresh();
+                   } catch (err) { setError(err.message); }
+                 }} />
+      {!projects.length && <p className="dim empty-hint">레포와 배포 위치를 고르고 배포를 누르면 아래에 과정과 결과가 나타납니다.</p>}
 
       {project && (
         <>
@@ -356,6 +395,8 @@ export default function App() {
             <div className="toolbar-main">
               <strong className="repo">{project.repo_url.replace("https://github.com/", "")}</strong>
               <span className="dim"> · {project.branch}</span>
+              {selected && <code className="dep-id" title="이 화면이 보여 주는 배포">{selected.id}</code>}
+              {selected && selectedId && <button className="small secondary" onClick={() => setSelectedId(null)}>지난 배포 보는 중 · 최신으로</button>}
               {selected && (
                 <span className="meta">
                   {TRIGGER[selected.triggered_by]} · <span className="mono">{versionOf(versions, selected.commit_sha)}{selected.commit_sha?.slice(0, 7) ?? "커밋 미정"}</span>
@@ -364,22 +405,10 @@ export default function App() {
               )}
               {selected && <Badge status={selected.status} />}
             </div>
-            <div className="row">
-              {canSelectVersion && <label className="version-picker">테스트 버전 <select aria-label="테스트 버전" value={deployVersion}
-                disabled={running} onChange={(e) => setRequestedVersion(e.target.value)}>
-                {versions.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-              </select></label>}
-              <button disabled={running} onClick={() => act((id) => api.deploy(id, canSelectVersion ? deployVersion : undefined), project.project_id)}>
-                {!running ? "배포" : running.status === "AWAITING_APPROVAL" ? "승인 대기 중" : "배포 중…"}
-              </button>
-            </div>
           </div>
           {selected?.change_reasons.length > 0 && (
             <p className="dim reasons">판정 근거: {selected.change_reasons.join(" / ")}</p>
           )}
-          {canSelectVersion && <p className="dim">{runtime?.mapper_mode === "github"
-            ? "선택한 버전의 커밋을 GitHub에서 가져와 배포합니다." : "선택한 버전의 고정된 데모 소스로 배포합니다."}
-            {deployVersion === "v2" && " V2는 기존 웹 앱에 노트 수를 집계하는 worker가 추가됩니다."}</p>}
 
           {selected?.status === "AWAITING_APPROVAL" && <ApprovalBanner deployment={selected} onAct={act} />}
           {selected?.status === "FAILED" && intent && <p>
@@ -414,13 +443,10 @@ export default function App() {
             </Section>
           )}
 
-          <Section n="5" title="배포 기록 · 되돌리기">
-            <History deployments={deployments} selectedId={selected?.id} versions={versions}
-                     onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)}
-                     onRollback={(id) => act(api.rollback, id)} />
-          </Section>
         </>
       )}
+      </main>
+      </div>
     </div>
   );
 }

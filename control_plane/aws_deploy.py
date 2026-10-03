@@ -97,8 +97,9 @@ def bind(context, store):
             store.get_plans(context.deployment_id).get("aws") != context.aws_plan.model_dump(mode="json")):
         raise ValueError("aws_context_not_approved")
     if not deployment["approved_at"] and deployment["triggered_by"] != "rollback":
-        base = store.last_live(context.project_id, context.deployment_id, with_plans=True)
-        if base is None or plan_diff(store.get_plans(base["id"]), context_plans(context)):
+        plans = context_plans(context)
+        old = store.last_live_plans(context.project_id, context.deployment_id, plans)
+        if "aws" not in old or plan_diff(old, plans):
             raise ValueError("aws_context_not_approved")
 
 
