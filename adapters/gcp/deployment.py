@@ -1,12 +1,11 @@
 import json
-import secrets
-import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .contracts import BuildArtifact, FoundationOutputs, Plan
-from .errors import ContractError, DeploymentError
+from .database import MigrationReceipt, fingerprint
+from .errors import CommandError, ContractError, DeploymentError
 from .events import EventEmitter
 from .gcp_api import GcpApi
 from .image import ImagePublisher
@@ -15,6 +14,9 @@ from .naming import AppIdentity
 from .records import DeploymentRecord
 from .smoke import external_https_smoke
 from .terraform import TerraformManager, terraform_values
+
+
+PRISMA_SCHEMA_PATH = "/app/prisma/schema.prisma"
 
 
 @dataclass(frozen=True)
@@ -127,7 +129,7 @@ class DeploymentOrchestrator:
                 mutation_attempted = True
                 stage_outputs = self.terraform.apply(stage_plan)
                 self._emit("infra", "ok", detail=json.dumps({"stage_plan": stage_plan.summary}))
-                self._prepare_database(stage_outputs, previous)
+                self._prepare_database(stage_outputs, previous, request, self._schema_digest(local_image))
             else:
                 self._emit("infra", "ok", detail="no database: staging skipped, activating directly")
 
@@ -191,25 +193,42 @@ class DeploymentOrchestrator:
             self.identity.state_prefix,
         )
 
-    def _prepare_database(self, outputs: Dict[str, Any], previous: Optional[DeploymentRecord]) -> None:
-        url_secret = _require(outputs, "database_url_secret_id")
-        password_secret = _require(outputs, "database_password_secret_id")
+    def _schema_digest(self, image: Any) -> Optional[str]:
+        try:
+            digest = self.publisher.file_digest(image, PRISMA_SCHEMA_PATH)
+        except (CommandError, OSError):
+            return None
+        return digest if isinstance(digest, str) and len(digest) == 64 else None
+
+    def _prepare_database(
+        self,
+        outputs: Dict[str, Any],
+        previous: Optional[DeploymentRecord],
+        request: DeploymentRequest,
+        schema_digest: Optional[str],
+    ) -> Dict[str, str]:
+        # Terraform already wrote the app password and DATABASE_URL versions in
+        # the staging apply (Cloud Run rejects jobs whose secrets have no version).
         bootstrap_job = _require(outputs, "bootstrap_job_name")
         migration_job = _require(outputs, "migration_job_name")
         initialize = previous is None or not previous.terraform_values.get("service_db_enabled")
         if initialize:
-            password = secrets.token_urlsafe(36)
-            database_url = "postgresql://{}:{}@{}:{}/{}?sslmode=require".format(
-                urllib.parse.quote(self.identity.database_role, safe=""),
-                urllib.parse.quote(password, safe=""),
-                self.foundation.cloudsql_private_ip,
-                self.foundation.cloudsql_port,
-                self.identity.database_name,
-            )
-            self.gcp.put_secret(password_secret, password)
-            self.gcp.put_secret(url_secret, database_url)
             self.gcp.run_job(bootstrap_job, "database bootstrap")
-        self.gcp.run_job(migration_job, "database migration")
+        run_migration = lambda: self.gcp.run_job(migration_job, "database migration")
+        receipt = MigrationReceipt(request.record_path.with_name("gcp-database-receipt.json"))
+        if schema_digest is None:
+            receipt.completed = None
+            receipt.save()
+            run_migration()
+            migration = "executed"
+        else:
+            migration = receipt.run(fingerprint({
+                "schema": schema_digest,
+                "command": request.migration_command,
+                "database": self.identity.database_name,
+                "role": self.identity.database_role,
+            }), run_migration)
+        return {"bootstrap": "executed" if initialize else "reused", "migration": migration}
 
     def _recover(self, previous: Optional[DeploymentRecord], request: DeploymentRequest, cause: str) -> None:
         self._emit("rollback", "started", detail="deployment failed; evaluating previous successful state")

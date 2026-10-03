@@ -72,7 +72,7 @@ stdout은 DeployEvent JSONL(`target: gcp`)만 쓰고, 사람이 읽는 결과는
 
 1. 로컬 이미지 검증 → 배포용 계정·프로젝트 확인 → 기록과 실제 state로 first/resume/redeploy 판정
 2. Artifact Registry에 immutable tag push, digest 고정
-3. **DB 앱만** staging apply → (첫 DB 배포만) 비밀번호·`DATABASE_URL` secret 작성과 bootstrap job → migration job
+3. **DB 앱만** staging apply(Terraform이 앱 DB 비밀번호·`DATABASE_URL` secret version까지 생성) → (첫 DB 배포만) bootstrap job → (스키마가 바뀐 경우만) migration job
 4. activation apply (staging 직후면 refresh 생략) → 최신 revision이 트래픽 100%를 받는지 확인
 5. 외부 HTTPS health → 기록 저장
 

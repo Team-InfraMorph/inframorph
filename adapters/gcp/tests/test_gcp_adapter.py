@@ -1,4 +1,5 @@
 import copy
+from dataclasses import replace
 import io
 import json
 import re
@@ -270,7 +271,7 @@ class TerraformValueTests(unittest.TestCase):
     def test_values_match_the_app_module_variables_exactly(self):
         source = (REPOSITORY_ROOT / "terraform/gcp/app/variables.tf").read_text(encoding="utf-8")
         declared = set(re.findall(r'^variable "([a-z0-9_]+)"', source, re.MULTILINE))
-        defaults_only = {"app_resource_prefix", "http_min_instances", "max_instances"}
+        defaults_only = {"app_resource_prefix", "http_min_instances", "max_instances", "database_password_version"}
         self.assertEqual(set(self.values()), declared - defaults_only)
 
     def test_images_must_be_digest_pinned(self):
@@ -393,6 +394,12 @@ class GcpApiTests(unittest.TestCase):
         with self.assertRaises(CommandError):
             self.api([CommandResult("", "ERROR: permission denied", 1)]).state_exists("b", "o")
 
+    def test_missing_service_on_first_deploy_is_not_an_error(self):
+        api = self.api([CommandResult("", "ERROR: (gcloud.run.services.describe) Cannot find service [demo-app]", 1)])
+        self.assertEqual(api.live_services(["demo-app"]), {})
+        with self.assertRaises(CommandError):
+            self.api([CommandResult("", "ERROR: PERMISSION_DENIED", 1)]).live_services(["demo-app"])
+
     def test_job_retries_only_while_new_iam_grants_propagate(self):
         api = self.api([
             CommandError("Permission denied on secret: projects/1/secrets/im-x-database-url"),
@@ -507,6 +514,9 @@ class FakePublisher:
     def publish(self, image, artifact, foundation, build_id=None):
         return PublishedImage(image.image_id, "src-tag", "sha256:" + "a" * 64, DIGEST_URI)
 
+    def file_digest(self, image, path):
+        return "f" * 64
+
 
 class OrchestratorTests(unittest.TestCase):
     def run_deploy(self, plan=None, previous=None, terraform=None, gcp=None, compatible=False):
@@ -551,14 +561,9 @@ class OrchestratorTests(unittest.TestCase):
             [call for call in terraform.calls if call[0] in ("plan", "apply")],
             [("plan", False, True), ("apply", False), ("plan", True, False), ("apply", True)],
         )
-        self.assertEqual(gcp.calls[1:5], [
-            ("secret", "im-x-database-password"), ("secret", "im-x-database-url"),
-            ("job", "im-x-db-bootstrap"), ("job", "im-x-migration"),
-        ])
-        url = next(value for key, value in gcp.secrets.items() if key.endswith("database-url"))
-        self.assertTrue(url.startswith("postgresql://app_demo_app_"))
-        self.assertIn("@10.61.0.3:5432/", url)
-        self.assertTrue(url.endswith("?sslmode=require"))
+        # Terraform writes the secret versions inside staging; the Adapter only runs the jobs.
+        self.assertEqual(gcp.calls[1:3], [("job", "im-x-db-bootstrap"), ("job", "im-x-migration")])
+        self.assertFalse([call for call in gcp.calls if call[0] == "secret"])
         self.assertEqual([e["step"] for e in events if e["status"] == "ok"][-1], "smoke")
         self.assertTrue(all(e["target"] == "gcp" for e in events))
 
@@ -574,6 +579,59 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(stage["deployment_image_uri"], DIGEST_URI)
         self.assertEqual([item["name"] for item in stage["services"]], ["web"])
         self.assertEqual(terraform.applied[1]["service_image_uri"], DIGEST_URI)
+
+    def test_same_schema_skips_migration_but_changed_inputs_execute(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            request = DeploymentRequest("deploy-1", "bucket", "prisma db push", 600, False,
+                                        root / "work", root / "gcp-deployment.json")
+            gcp = FakeGcp()
+            orchestrator = DeploymentOrchestrator(
+                Plan.parse(plan_data()), BuildArtifact.parse(artifact_data()), load_foundation(),
+                FakeTerraform(), publisher=FakePublisher(), gcp=gcp,
+            )
+            outputs = FakeTerraform().apply(TerraformPlan(root, root / "plan", {
+                "activate_services": False, "services": [], "db_enabled": True,
+            }, {}))
+            orchestrator._prepare_database(outputs, None, request, "a" * 64)
+            gcp.calls.clear()
+            result = orchestrator._prepare_database(outputs, self.previous_record(), request, "a" * 64)
+            self.assertEqual(result["migration"], "reused")
+            self.assertNotIn(("job", "im-x-migration"), gcp.calls)
+            for changed_request, schema in ((request, "b" * 64),
+                    (replace(request, migration_command="prisma migrate deploy"), "a" * 64)):
+                gcp.calls.clear()
+                result = orchestrator._prepare_database(outputs, self.previous_record(), changed_request, schema)
+                self.assertEqual(result["migration"], "executed")
+                self.assertIn(("job", "im-x-migration"), gcp.calls)
+
+    def test_failed_or_unknown_schema_is_never_reused(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            request = DeploymentRequest("deploy-1", "bucket", "prisma db push", 600, False,
+                                        root / "work", root / "gcp-deployment.json")
+            gcp = FakeGcp()
+            orchestrator = DeploymentOrchestrator(
+                Plan.parse(plan_data()), BuildArtifact.parse(artifact_data()), load_foundation(),
+                FakeTerraform(), publisher=FakePublisher(), gcp=gcp,
+            )
+            outputs = FakeTerraform().apply(TerraformPlan(root, root / "plan", {
+                "activate_services": False, "services": [], "db_enabled": True,
+            }, {}))
+            previous = self.previous_record()
+            orchestrator._prepare_database(outputs, None, request, "a" * 64)
+            gcp.fail_job = "im-x-migration"
+            with self.assertRaises(DeploymentError):
+                orchestrator._prepare_database(outputs, previous, request, "b" * 64)
+            gcp.fail_job = None
+            gcp.calls.clear()
+            orchestrator._prepare_database(outputs, previous, request, "a" * 64)
+            self.assertIn(("job", "im-x-migration"), gcp.calls)
+            gcp.calls.clear()
+            orchestrator._prepare_database(outputs, previous, request, None)
+            orchestrator._prepare_database(outputs, previous, request, "a" * 64)
+            self.assertEqual([call for call in gcp.calls if call == ("job", "im-x-migration")],
+                             [("job", "im-x-migration"), ("job", "im-x-migration")])
 
     def test_app_without_database_activates_in_one_apply(self):
         record, terraform, gcp, _ = self.run_deploy(plan=plan_data(db=False))

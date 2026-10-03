@@ -20,7 +20,8 @@ IAM_RETRY_DELAY_SECONDS = 10
 # Terraform already waits for each Cloud Run operation, so these polls normally
 # succeed at once; keep the interval short because it is pure added latency.
 POLL_SECONDS = 2
-NOT_FOUND_MARKERS = ("not found", "404", "no urls matched", "does not exist")
+# gcloud wording differs per surface, e.g. "Cannot find service [x]" for Cloud Run.
+NOT_FOUND_MARKERS = ("not found", "404", "no urls matched", "does not exist", "cannot find")
 
 
 def _not_found(text: str) -> bool:

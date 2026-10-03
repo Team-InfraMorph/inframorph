@@ -1,6 +1,9 @@
+import hashlib
 import re
+import tempfile
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .contracts import BuildArtifact, FoundationOutputs, validate_digest
@@ -45,6 +48,19 @@ class ImagePublisher:
                 "local image platform {} does not match Builder artifact {}".format(platform, artifact.platform)
             )
         return LocalImage(artifact.image, image_id, platform)
+
+    def file_digest(self, image: LocalImage, path: str) -> Optional[str]:
+        """SHA-256 of one regular file in the image, read without starting it."""
+        container = self.runner.run(["docker", "create", image.image_id]).stdout.strip()
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                target = Path(folder) / "file"
+                self.runner.run(["docker", "cp", "{}:{}".format(container, path), str(target)])
+                if target.is_symlink() or not target.is_file():
+                    return None
+                return hashlib.sha256(target.read_bytes()).hexdigest()
+        finally:
+            self.runner.run(["docker", "rm", container], check=False)
 
     @staticmethod
     def immutable_tag(source_revision: str, build_id: Optional[str] = None) -> str:
