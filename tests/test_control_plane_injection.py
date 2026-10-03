@@ -143,7 +143,7 @@ class DeploymentInjectionTests(unittest.TestCase):
                     self.assertEqual(analysis["metrics"]["error"], error.code)
                     self.assertEqual(analysis["metrics"]["policy_fields"], ["config"] if index == 0 else [])
                     self.assertEqual(analysis["metrics"]["blocked_stage"], "intent_policy")
-                    self.assertEqual(analysis["metrics"]["model_calls"], 5)
+                    self.assertEqual(analysis["metrics"]["model_calls"], 6 if index == 0 else 5)
                     self.assertEqual(analysis["metrics"]["api_calls"], 0)
                     self.assertIsNone(analysis["intent"])
                     self.assertNotIn(canary, json.dumps([deployment, analysis]))

@@ -5,6 +5,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pydantic import ValidationError
 from analyzer.source_policy import SourcePolicyError, validate_demo_intent, validate_demo_plan
@@ -152,7 +153,11 @@ class VersionContractTests(unittest.TestCase):
             validate_patch(SOURCE,bundle,PLAN)
 
     def test_record_walkthrough(self):
-        with tempfile.TemporaryDirectory() as folder:
+        # Run the preserved 1.0.0 example under its own manifest, even when a
+        # newer policy is active. Do not rewrite historical records/examples.
+        from policy_gate.catalog import release
+        historical = release('1.0.0')
+        with tempfile.TemporaryDirectory() as folder, patch('policy_gate.catalog.release', return_value=historical):
             actual,diagnostics,summaries=record_walkthrough(Path(folder))
         self.assertEqual(example('logs.md'),actual)
         self.assertEqual(diagnostics[0]['payload'],dict(text='non_source_evidence',masked=False,truncated=False))

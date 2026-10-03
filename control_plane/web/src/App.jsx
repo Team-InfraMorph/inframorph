@@ -375,7 +375,7 @@ export default function App() {
           ))}
         </select>}
       </header>
-      <nav className="global-nav" aria-label="주요 메뉴"><a aria-current={!route.startsWith('/policy')?'page':undefined} href="#/deploy">배포</a><a aria-current={route.startsWith('/policy')?'page':undefined} href="#/policy/1.0.0/overview">정책</a></nav>
+      <nav className="global-nav" aria-label="주요 메뉴"><a aria-current={!route.startsWith('/policy')?'page':undefined} href="#/deploy">배포</a><a aria-current={route.startsWith('/policy')?'page':undefined} href="#/policy/1.1.0/overview">정책</a></nav>
       {route.startsWith('/policy') && <PolicyWorkspace route={route}/>}
       <div hidden={route.startsWith('/policy')}>
       <div className={`shell${project ? " with-side" : ""}`}>

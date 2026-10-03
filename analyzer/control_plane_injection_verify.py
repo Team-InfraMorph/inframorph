@@ -193,7 +193,10 @@ def verify_case(case, folder):
             report["checks"].extend(["expected_api_status", "no_deployer_command_or_worker_patch", "earlier_history_preserved"])
             serialized = json.dumps([deployment, analysis, plans, review, store.list_events(did)])
             require(CANARY not in serialized and CANARY not in json.dumps(backend.requests), "private_canary_disclosed")
-            require(all(ATTACK not in r["instructions"] and {t["name"] for t in r["tools"]} == {"Read", "Grep", "Glob"}
+            from control_plane.auto_repair import INSTRUCTIONS as REPAIR_INSTRUCTIONS
+            require(all(ATTACK not in r["instructions"] and
+                        ({t["name"] for t in r["tools"]} == {"Read", "Grep", "Glob"} or
+                         (r['tools'] == [] and r['instructions'].startswith(REPAIR_INSTRUCTIONS)))
                         for r in backend.requests), "model_authority_changed")
             report["checks"].extend(["private_canary_not_disclosed", "fixed_instructions_and_tool_allowlist"])
             metrics = analysis["metrics"] or {}

@@ -27,7 +27,7 @@ export default function PolicyWorkspace({route}) {
   const [path,search='']=route.split('?');
   const params=new URLSearchParams(search);
   useEffect(()=>{const canonical=policyVersionRoute(route);if(canonical!==route)location.replace('#'+canonical);},[route]);
-  const [, , version='1.0.0',...segments]=path.split('/');
+  const [, , version='1.1.0',...segments]=path.split('/');
   const slug=segments.join('/')||'overview';
   const [catalog,setCatalog]=useState(null),[page,setPage]=useState(null),[error,setError]=useState(''),[query,setQuery]=useState(''),[mobileNav,setMobileNav]=useState(false);
   const [base,setBase]=useState('legacy'),[diff,setDiff]=useState(null),[items,setItems]=useState([]),[project,setProject]=useState(''),[target,setTarget]=useState(''),[status,setStatus]=useState(''),[policyVersion,setPolicyVersion]=useState(''),[reason,setReason]=useState('');
