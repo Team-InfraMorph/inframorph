@@ -1,7 +1,7 @@
 from typing import Literal
 from pydantic import Field, model_validator
 
-from .common import SCHEMA_VERSION, ContractModel, EnvName, Evidence, Name, RelativePath, Revision, WorkloadKind
+from .common import SCHEMA_VERSION, ContractModel, EnvName, Evidence, Name, RelativePath, Revision, WorkloadKind, DbEngine
 
 class Workload(ContractModel):
     name: Name
@@ -28,7 +28,7 @@ class Workload(ContractModel):
 
 class StateItem(ContractModel):
     kind: Literal["relational_db", "persistent_files"]
-    engine: Literal["sqlite", "postgresql"] | None = None
+    engine: DbEngine | None = None
     orm: Literal["prisma"] | None = None
     path: RelativePath | None = None
     reason: str | None = None
