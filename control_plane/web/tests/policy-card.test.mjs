@@ -51,11 +51,12 @@ test('interruption overrides an earlier pass summary',()=>{
 test('history distinguishes execution count from event count',()=>{
  const html=render({history:{events:[{seq:1,execution_id:'a',event:'inspection_started',payload:{}},{seq:2,execution_id:'a',event:'inspection_finished',payload:{decision:'PASS'}}]}});for(const text of ['검사 1회','이벤트 2건','전체 로그','검사별 보기'])assert.ok(html.includes(text));
 });
-test('rule help keeps the recorded document revision and links to concrete procedure',()=>{
- const html=render({data:{results:[{...managed,document_revision:2}]}});
- assert.match(html,/rules\/I-003\?revision=2&amp;section=remedy/);
- const old=render({data:{results:[{...managed,document_revision:1}]}});
- assert.match(old,/rules\/I-003\?revision=1/);assert.doesNotMatch(old,/revision=2/);
+test('rule help uses policy version for new and historical records',()=>{
+ for(const extra of [{},{document_revision:1},{document_revision:4}]) {
+  const html=render({data:{results:[{...managed,...extra}]}});
+  assert.match(html,/rules\/I-003\?section=remedy/);
+  assert.doesNotMatch(html,/revision=/);
+ }
 });
 
 test('three targets use main labels without promoting incomplete onprem checks',()=>{

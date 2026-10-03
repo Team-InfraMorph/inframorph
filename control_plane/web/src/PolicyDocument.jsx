@@ -1,5 +1,5 @@
 // Deliberately small, non-executable Markdown renderer for repository policy docs.
-// Source HTML is plain text. Relative links remain in the selected policy revision.
+// Source HTML is plain text. Relative links remain in the selected policy version.
 const legacyAliases = {purpose:['목적과 검사'],inputs:['적용 조건'],cases:['정상 사례','위반·미지원 사례'],remedy:['수정 방법'],limits:['한계'],references:['이력과 검증']};
 export function parseHeading(line) {
   const match=/^(#{1,3})\s+(.+?)(?:\s+\{#([a-z][a-z0-9-]*)\})?$/.exec(line);
@@ -10,7 +10,13 @@ export function documentHeadings(body) {
   for(const line of body.split('\n')) {if(line.startsWith('```')){fenced=!fenced;continue;}const heading=!fenced&&parseHeading(line);if(heading)result.push(heading);}
   return result;
 }
-export function policyDocLink(href,{version,revision,slug}) {
+export function policyVersionRoute(route) {
+  const [path,search='']=route.split('?');
+  const params=new URLSearchParams(search);
+  params.delete('revision');
+  return path+(params.size?'?'+params:'');
+}
+export function policyDocLink(href,{version,slug}) {
   if(/^https:\/\//.test(href)) {try {const u=new URL(href);return u.protocol==='https:'&&!u.username&&!u.password?u.href:null;}catch{return null;}}
   if(/[\\\u0000-\u0020]/.test(href)||href.startsWith('/')||/^[a-z][a-z0-9+.-]*:/i.test(href))return null;
   const [path,fragment='']=href.split('#');
@@ -22,7 +28,7 @@ export function policyDocLink(href,{version,revision,slug}) {
     for(const part of path.slice(0,-3).split('/')) {if(part==='..'){if(!parts.length)return null;parts.pop();}else if(part!=='.'){if(!/^[A-Za-z0-9-]+$/.test(part))return null;parts.push(part);}}
     destination=parts.join('/');
   }
-  const params=new URLSearchParams();if(revision)params.set('revision',String(revision));if(fragment)params.set('section',fragment);
+  const params=new URLSearchParams();if(fragment)params.set('section',fragment);
   return `#/policy/${encodeURIComponent(version)}/${destination}${params.size?'?'+params:''}`;
 }
 function Inline({text,context}) {
@@ -58,8 +64,8 @@ function Blocks({lines,context}) {
   }
   return rendered;
 }
-export default function PolicyDocument({body,version,revision,slug}) {
-  return <div className="policy-prose" data-rule={slug.startsWith('rules/')}><Blocks lines={body.split('\n')} context={{version,revision,slug}}/></div>;
+export default function PolicyDocument({body,version,slug}) {
+  return <div className="policy-prose" data-rule={slug.startsWith('rules/')}><Blocks lines={body.split('\n')} context={{version,slug}}/></div>;
 }
 export function documentGroup(slug) {
   if(slug.startsWith('rules/'))return '규칙별 설명';

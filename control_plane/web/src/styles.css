@@ -600,7 +600,6 @@ dialog.policy-modal>.card {width:auto;margin:0;}
 .policy-prose p { margin:12px 0; }.policy-prose li { margin:10px 0;padding-left:4px; }.policy-prose ul,.policy-prose ol { padding-left:24px;margin:16px 0; }
 .policy-prose code { font-size:.87em;overflow-wrap:anywhere; }.policy-prose a { text-underline-offset:3px; }
 .policy-doc-context { display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--dim);padding-bottom:14px;border-bottom:1px solid var(--line); }
-.policy-doc-notice { background:var(--warn-bg);padding:14px;border-radius:8px;font-size:14px;line-height:1.7;margin-top:18px; }
 .policy-doc-table { max-width:100%;overflow-x:auto;margin:20px 0;border:1px solid var(--line);border-radius:8px; }
 .policy-doc-table table { border-collapse:collapse;width:100%;min-width:540px;font-size:13px;line-height:1.7;text-align:left; }
 .policy-doc-table th { background:var(--muted-bg);font-weight:650; }.policy-doc-table th,.policy-doc-table td { padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top; }.policy-doc-table td { min-width:100px;overflow-wrap:anywhere; }.policy-doc-table tr:last-child td{border-bottom:0}

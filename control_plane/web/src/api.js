@@ -16,7 +16,7 @@ async function request(method, path, body) {
 export const api = {
   policyStatistics: () => request('GET','/policies/statistics'),
   policies: () => request('GET','/policies'),
-  policyVersion: (version,revision) => request('GET',`/policies/${encodeURIComponent(version)}`+(revision?'?revision='+encodeURIComponent(revision):'')),
+  policyVersion: version => request('GET',`/policies/${encodeURIComponent(version)}`),
   policyCompare: (version,base) => request('GET',`/policies/${encodeURIComponent(version)}/compare?base=${encodeURIComponent(base)}`),
   policyImpacts: filters => request('GET','/policies/impacts?'+new URLSearchParams(Object.entries(filters).filter(([,v])=>v!==''))),
   policyHistory: id => request('GET',`/deployments/${id}/policy-history`),

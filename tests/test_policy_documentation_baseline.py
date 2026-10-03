@@ -22,7 +22,7 @@ from scripts.check_policy_catalog import validate_baselines
 from tests import test_e_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = ROOT/'policy_gate/docs/1.0.0/revisions/3'
+DOCS = ROOT/'policy_gate/docs/1.0.0'
 
 
 class WalkthroughTests(unittest.TestCase):
@@ -145,19 +145,20 @@ class WalkthroughTests(unittest.TestCase):
 class FrozenBaselineTests(unittest.TestCase):
     def test_repository_baseline(self):
         baseline = json.loads((ROOT/'policy_gate/baselines/1.0.0.json').read_text())
-        self.assertEqual(baseline['document_revisions'], [1,2,3])
-        self.assertEqual(identity()['document_revision'], 4)
+        self.assertNotIn('document_revisions',baseline)
+        self.assertNotIn('document_revision',identity())
+        self.assertTrue(all('/revisions/' not in name for name in baseline['documents']))
         validate_baselines()
 
     def test_baseline_detects_document_and_active_policy_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            folder = root/'policy_gate/docs/1.0.0/revisions/3'
+            folder = root/'policy_gate/docs/1.0.0'
             folder.mkdir(parents=True)
             doc = folder/'overview.md'
             doc.write_text('fixed document')
             meta = dict(version='1.0.0',policy_digest='a',rules_digest='b',implementation_digest='c')
-            baseline = dict(version='1.0.0',identity=meta,document_revisions=[3],
+            baseline = dict(version='1.0.0',identity=meta,
                             documents={str(doc.relative_to(root)):hashlib.sha256(doc.read_bytes()).hexdigest()})
             records = root/'policy_gate/baselines'
             records.mkdir()

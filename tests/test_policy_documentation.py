@@ -19,23 +19,19 @@ from tests.test_e_runtime import plan
 from builder.runtime import check_build_profile
 
 ROOT=Path(__file__).resolve().parents[1]
-DOCS=ROOT/'policy_gate/docs/1.0.0/revisions/4'
+DOCS=ROOT/'policy_gate/docs/1.0.0'
 
 class DocumentationContract(unittest.TestCase):
-    def test_revision_one_and_rule_contract_unchanged(self):
+    def test_one_document_set_and_unchanged_rule_contract(self):
         baseline=json.loads((DOCS/'review.json').read_text())['baseline']
-        current=identity()
-        self.assertEqual(current['rules_digest'],baseline['identity']['rules_digest'])
-        # Compare document revisions against the same implementation. A main rebase
-        # legitimately changes implementation identity; historical metadata stays intact.
-        previous=copy.deepcopy(release());previous['document_revision']=1
-        with patch('policy_gate.catalog.release',return_value=previous):old=identity()
-        for key in ('policy_digest','rules_digest','implementation_digest'):
-            self.assertEqual(current[key],old[key],key)
-        self.assertEqual(current['document_revision'],4)
-        self.assertNotEqual(current['documents_digest'],baseline['identity']['documents_digest'])
-        for name,digest in (baseline['revision1'] | baseline['revision2'] | baseline['revision3']).items():
+        self.assertEqual(identity()['rules_digest'],baseline['rules_digest'])
+        self.assertFalse((DOCS/'revisions').exists())
+        self.assertNotIn('document_revision',identity())
+        self.assertNotIn('document_revisions',release())
+        for name,digest in baseline['behavior_files'].items():
             self.assertEqual(hashlib.sha256((ROOT/name).read_bytes()).hexdigest(),digest,name)
+        for path in DOCS.rglob('*.md'):
+            self.assertNotIn('문서 revision',path.read_text(),path)
 
     def test_all_rules_have_sections_and_real_test_methods(self):
         review=json.loads((DOCS/'review.json').read_text())
@@ -61,33 +57,40 @@ class DocumentationContract(unittest.TestCase):
                 self.assertTrue(target.is_file(),(path,href))
                 if section:self.assertIn('{#'+section+'}',target.read_text(),href)
 
-    def test_read_api_revisions_and_unknown_document(self):
+    def test_read_api_uses_policy_version_and_accepts_old_links(self):
         from control_plane.app import create_app
         import tempfile
         with tempfile.TemporaryDirectory() as temp, TestClient(create_app(db_path=Path(temp)/'cp.db')) as client:
-            new=client.get('/api/policies/1.0.0').json()
-            self.assertEqual(new['document_revisions'],[1,2,3,4])
-            self.assertTrue(all(d['revision']==4 for d in new['documents']))
-            old=client.get('/api/policies/1.0.0?revision=1').json()
-            self.assertTrue(all(d['revision']==1 for d in old['documents']))
-            self.assertEqual(client.get('/api/policies/1.0.0/documents/flow?revision=1').status_code,409)
-            preserved=client.get('/api/policies/1.0.0/documents/rules/I-000?revision=3').json()
-            self.assertEqual(preserved['revision'],3)
-            self.assertIn('{#contract}',preserved['body'])
+            current=client.get('/api/policies/1.0.0').json()
+            self.assertNotIn('document_revisions',current)
+            self.assertTrue(all(d['version']=='1.0.0' and 'revision' not in d for d in current['documents']))
+            for revision in (1,4,99):
+                old=client.get(f'/api/policies/1.0.0?revision={revision}').json()
+                self.assertEqual(old,current)
+            doc=client.get('/api/policies/1.0.0/documents/rules/I-000?revision=3').json()
+            self.assertEqual(doc['source'],'policy_gate/docs/1.0.0/rules/I-000.md')
+            self.assertIn('{#contract}',doc['body'])
+            self.assertEqual(client.get('/api/policies/9.9.9').status_code,409)
+            self.assertEqual(client.get('/api/policies/1.0.0/documents/missing').status_code,409)
 
-    def test_document_revision_does_not_reactivate_or_queue_rechecks(self):
+    def test_document_only_edit_does_not_reactivate_or_queue_rechecks(self):
         import tempfile
+        from policy_gate.catalog import index
         from control_plane.db import Store
         from control_plane import policy_lifecycle as life
-        previous=copy.deepcopy(release());previous['document_revision']=3
-        with patch('policy_gate.catalog.release',return_value=previous):baseline=identity()
+        before=identity()
+        changed=copy.deepcopy(index('1.0.0'));changed[0]['sha256']='f'*64
+        with patch('policy_gate.catalog.index',return_value=changed):after=identity()
+        for key in ('policy_digest','rules_digest','implementation_digest'):
+            self.assertEqual(before[key],after[key],key)
+        self.assertNotEqual(before['documents_digest'],after['documents_digest'])
         with tempfile.TemporaryDirectory() as temp:
             store=Store(Path(temp)/'cp.db')
             try:
-                with patch('control_plane.policy_lifecycle.identity',return_value=baseline):life.activate(store)
-                before=store._one('SELECT COUNT(*) n FROM policy_events')['n']
                 life.activate(store)
-                self.assertEqual(store._one('SELECT COUNT(*) n FROM policy_events')['n'],before)
+                events=store._one('SELECT COUNT(*) n FROM policy_events')['n']
+                with patch('control_plane.policy_lifecycle.identity',return_value=after):life.activate(store)
+                self.assertEqual(store._one('SELECT COUNT(*) n FROM policy_events')['n'],events)
                 self.assertEqual(store._one('SELECT COUNT(*) n FROM policy_jobs')['n'],0)
             finally:store.close()
 

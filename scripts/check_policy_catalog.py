@@ -21,10 +21,8 @@ def validate_baselines(root=ROOT, current_identity=None):
         baseline = json.loads(path.read_text())
         assert path.stem == baseline['version'], 'baseline version differs'
         files = baseline['documents']
-        actual = set()
-        for revision in baseline['document_revisions']:
-            folder = root/'policy_gate/docs'/baseline['version']/'revisions'/str(revision)
-            actual.update(str(p.relative_to(root)) for p in folder.rglob('*') if p.is_file())
+        folder = root/'policy_gate/docs'/baseline['version']
+        actual = {str(p.relative_to(root)) for p in folder.rglob('*') if p.is_file()}
         assert actual == set(files), 'frozen document inventory changed'
         for name, digest in files.items():
             assert hashlib.sha256((root/name).read_bytes()).hexdigest() == digest, f'frozen document changed: {name}'
@@ -84,10 +82,10 @@ def validate(base=None):
                 assert (ROOT/name).is_file() and (ROOT/name).read_bytes()==old, f'policy baseline changed: {name}'
             if name.startswith('policy_gate/releases/') and json.loads(old)['status']=='released':
                 assert (ROOT/name).exists() and (ROOT/name).read_bytes()==old, f'released manifest changed: {name}'
-            if '/docs/' in name and '/revisions/' in name:
+            if name.startswith('policy_gate/docs/'):
                 version=name.split('/')[2]; manifest=previous(f'policy_gate/releases/{version}.json')
                 if manifest and json.loads(manifest)['status']=='released':
-                    assert (ROOT/name).exists() and (ROOT/name).read_bytes()==old, f'document revision overwritten: {name}'
+                    assert (ROOT/name).exists() and (ROOT/name).read_bytes()==old, f'released policy document overwritten: {name}'
         changed=any(previous(n) not in (None,(ROOT/n).read_bytes()) for n in IMPLEMENTATION)
         if changed and old_manifest:
             old=json.loads(old_manifest)

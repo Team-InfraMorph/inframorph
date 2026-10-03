@@ -66,15 +66,14 @@ def install(app,store,execute,runtime):
     def statistics():return dict(items=lifecycle.statistics(store))
 
     @router.get('/policies/{version}')
-    def policy(version:str,revision:int|None=None):
-        from policy_gate.catalog import ROOT
-        return checked(lambda:dict(release=release(version),documents=index(version,revision),document_revisions=sorted(int(p.name) for p in (ROOT/'docs'/version/'revisions').iterdir() if p.is_dir() and p.name.isdigit())))
+    def policy(version:str):
+        return checked(lambda:dict(release=release(version),documents=index(version)))
 
     @router.get('/policies/{version}/compare')
     def comparison(version:str,base:str):return checked(lambda:compare(base,version))
 
     @router.get('/policies/{version}/documents/{slug:path}')
-    def docs(version:str,slug:str,revision:int|None=None):return checked(lambda:document(version,slug,revision))
+    def docs(version:str,slug:str):return checked(lambda:document(version,slug))
 
     @router.get('/deployments/{did}/policy-history')
     def history(did:str):

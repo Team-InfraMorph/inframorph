@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "status": "development",
   "profile": "reviewed-node22",
-  "document_revision": 4,
   "result_schema_version": "1.0.0",
   "previous": null,
   "git_commit": null,
@@ -443,8 +442,5 @@
     }
   ],
   "redteam_revision": "488833528c3c9a389d0af05606c9bb1cdeaa1c99",
-  "document_revisions": [
-    1
-  ],
   "frozen_hashes": null
 }

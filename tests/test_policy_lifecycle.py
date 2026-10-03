@@ -253,11 +253,18 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(data['diagnostics'][0]['payload']['text'],'diagnostic_input_limit')
         self.assertNotIn('\x00',data['diagnostics'][1]['payload']['text'])
 
-    def test_old_document_revision_and_unknown_revision(self):
-        result=self.client.get('/api/policies/1.0.0?revision=1')
+    def test_policy_documents_have_one_version_and_old_record_fields_survive(self):
+        result=self.client.get('/api/policies/1.0.0')
         self.assertEqual(result.status_code,200)
-        self.assertTrue(all(d['revision']==1 and d['source'] and d['section_ids'] for d in result.json()['documents']))
-        self.assertEqual(self.client.get('/api/policies/1.0.0?revision=99').status_code,409)
+        self.assertTrue(all('revision' not in d and d['source'] and d['section_ids'] for d in result.json()['documents']))
+        report=self.report()
+        self.assertNotIn('document_revision',report)
+        # Stored records are not rewritten by the document management migration.
+        historical=copy.deepcopy(report);historical['document_revision']=4
+        save(self.store,self.did,'local',0,historical)
+        self.assertEqual(read(self.store,self.did)['results'][0]['document_revision'],4)
+        self.assertEqual(read(self.store,self.did)['results'][0]['decision'],report['decision'])
+        self.assertEqual(self.client.get('/api/policies/9.9.9').status_code,409)
 
     def test_patch_change_can_require_recheck_without_major(self):
         oldmeta=identity()|{'version':'1.0.0','policy_digest':'b'*64}

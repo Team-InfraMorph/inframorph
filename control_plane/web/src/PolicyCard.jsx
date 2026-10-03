@@ -6,7 +6,7 @@ const inspectionKind = row => row?.purpose==='policy_update'||row?.checkpoint===
 const labels = {PASS:'통과',BLOCK:'차단',UNSUPPORTED:'미지원',ERROR:'검사 오류',NOT_RUN:'미실행',NOT_APPLICABLE:'적용 제외'};
 const stages = {source:'지원 소스',profile:'배포 프로필',intent:'분석 근거',plan:'배포 설계',patch:'코드 변경',build_profile:'빌드 입력',build:'빌드 직전',policy_update:'정책 업데이트'};
 const time = value => value ? new Date(value).toLocaleString() : '시각 기록 없음';
-const docLink = row => `#/policy/${row.family === 'inframorph-policy' ? row.version : 'legacy'}/rules/${row.rule_id}?revision=${row.document_revision||1}`;
+const docLink = row => `#/policy/${row.family === 'inframorph-policy' ? row.version : 'legacy'}/rules/${row.rule_id}`;
 
 export default function PolicyCard({data,error,onRecheck,history,onReview,onFailureReview,deploymentId}) {
   const rows=data?.results ?? [];
@@ -55,7 +55,7 @@ export default function PolicyCard({data,error,onRecheck,history,onReview,onFail
                 {r.evidence && Object.keys(r.evidence).length>0 && <div><strong>관찰한 근거</strong><pre>{Object.entries(r.evidence).map(([key,value])=>`${({references:'근거 파일·줄',path:'파일',observed:'관찰값',claimed:'분석값',setting_names:'일반 설정 이름',secret_count:'비밀정보 이름 수',before:'변경 전',after:'변경 후',file_count:'검사 파일 수',changed_paths:'변경 파일',target:'배포 대상',source_revision:'소스 commit',services:'서비스',public_services:'공개 서비스',input_digest:'입력 해시'})[key]||key}: ${Array.isArray(value)?value.join(', '):typeof value==='object'?JSON.stringify(value):String(value)}`).join('\n')}</pre></div>}
                 {r.path&&<p><code>{r.path}{r.line?`:${r.line}`:''}</code></p>}
                 {r.decision!=='PASS'&&r.remedy&&<p>다음 조치: {r.remedy}</p>}
-                <p><a href={docLink({...row,rule_id:r.rule_id})}>{r.rule_id} · 규칙 설명 ↗</a>{row.family==='inframorph-policy'&&row.document_revision>=2&&<> · <a href={docLink({...row,rule_id:r.rule_id})+'&section='+(['BLOCK','ERROR','UNSUPPORTED'].includes(r.decision)?'remedy':'procedure')}>{['BLOCK','ERROR','UNSUPPORTED'].includes(r.decision)?'해결과 재검증':'처리 과정'} ↗</a></>}</p>
+                <p><a href={docLink({...row,rule_id:r.rule_id})}>{r.rule_id} · 규칙 설명 ↗</a>{row.family==='inframorph-policy'&&<> · <a href={docLink({...row,rule_id:r.rule_id})+'?section='+(['BLOCK','ERROR','UNSUPPORTED'].includes(r.decision)?'remedy':'procedure')}>{['BLOCK','ERROR','UNSUPPORTED'].includes(r.decision)?'해결과 재검증':'처리 과정'} ↗</a></>}</p>
                 <small className="dim">{r.reason_code}</small>
               </details>
             </li>)}</ul>
