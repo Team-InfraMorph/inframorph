@@ -113,6 +113,18 @@ class PolicyApiTests(unittest.TestCase):
         rows=self.client.get(f'/api/deployments/{self.did}/policy').json()['results']
         self.assertEqual(rows[-1]['decision'],'UNSUPPORTED')
 
+    def test_repeated_identical_check_is_stored_once_but_changes_are_kept(self):
+        for _ in range(3): save(self.app.state.store,self.did,'local',0,result('intent'))
+        # A different decision, stage, target or attempt is never collapsed into the duplicate.
+        save(self.app.state.store,self.did,'local',0,result('intent',PolicyError('evidence_file_missing')))
+        save(self.app.state.store,self.did,'local',0,result('patch'))
+        save(self.app.state.store,self.did,'local',1,result('intent'))
+        save(self.app.state.store,self.did,'aws',0,result('intent'))
+        rows=self.client.get(f'/api/deployments/{self.did}/policy').json()['results']
+        self.assertEqual([(r['target'],r['attempt'],r['stage'],r['decision']) for r in rows],
+                         [('local',0,'intent','PASS'),('local',0,'intent','BLOCK'),('local',0,'patch','PASS'),
+                          ('local',1,'intent','PASS'),('aws',0,'intent','PASS')])
+
     def test_analysis_records_real_intent_and_plan_checks(self):
         self.runtime.analyze(self.app.state.store,self.app.state.store.get_deployment(self.did))
         rows=self.client.get(f'/api/deployments/{self.did}/policy').json()['results']

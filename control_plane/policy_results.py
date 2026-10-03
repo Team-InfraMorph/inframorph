@@ -14,9 +14,16 @@ def save(store, deployment_id, target, attempt, value):
         raise ValueError('invalid_policy_scope')
     if value.get('decision') not in {'PASS','BLOCK','UNSUPPORTED','ERROR'}:
         raise ValueError('invalid_policy_result')
+    payload = json.dumps(value,ensure_ascii=False,sort_keys=True)
     with store._lock, store._conn:
+        # The same gate runs again inside the E worker before the build. An observation that
+        # repeats byte for byte carries no new fact, so only distinct results are kept.
+        if store._conn.execute('SELECT 1 FROM policy_results WHERE deployment_id=? AND target=?'
+                               ' AND attempt=? AND payload=? LIMIT 1',
+                               (deployment_id,target,attempt,payload)).fetchone():
+            return
         store._conn.execute('INSERT INTO policy_results(deployment_id,target,attempt,payload) VALUES (?,?,?,?)',
-                            (deployment_id,target,attempt,json.dumps(value,ensure_ascii=False)))
+                            (deployment_id,target,attempt,payload))
 
 
 def read(store, deployment_id):
