@@ -64,7 +64,7 @@ def _overall_status(statuses):
     return Status.LIVE
 
 
-# Only the trusted AWS adapter needs cloud configuration. Builders (even for AWS)
+# Only trusted cloud adapters receive cloud configuration. Builders
 # and C/E workers retain the minimal environment.
 AWS_ADAPTER_ENV = frozenset({
     "INFRAMORPH_FOUNDATION_OUTPUTS", "INFRAMORPH_AWS_ACCOUNT_ID",
@@ -74,6 +74,15 @@ AWS_ADAPTER_ENV = frozenset({
     "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_CONFIG_FILE",
     "AWS_SHARED_CREDENTIALS_FILE", "AWS_CA_BUNDLE", "AWS_SDK_LOAD_CONFIG",
     "AWS_ROLE_ARN", "AWS_ROLE_SESSION_NAME", "AWS_WEB_IDENTITY_TOKEN_FILE",
+})
+GCP_ADAPTER_ENV = frozenset({
+    "INFRAMORPH_GCP_FOUNDATION_OUTPUTS", "INFRAMORPH_GCP_PROJECT_ID",
+    "INFRAMORPH_GCP_TF_STATE_BUCKET", "INFRAMORPH_GCP_WORK_DIR",
+    "INFRAMORPH_GCP_DEPLOYMENT_RECORD", "INFRAMORPH_MIGRATION_COMMAND",
+    "INFRAMORPH_DEPLOY_TIMEOUT_SECONDS", "GCP_REGION", "CLOUDSDK_CONFIG",
+    "CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT", "CLOUDSDK_CORE_PROJECT",
+    "CLOUDSDK_CORE_DISABLE_PROMPTS", "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT",
+    "GOOGLE_PROJECT", "TF_IN_AUTOMATION", "TF_PLUGIN_CACHE_DIR",
 })
 
 
@@ -93,6 +102,10 @@ def module_environment(target, cmd):
             and list(cmd[1:3]) == ["-m", "adapters.aws"]
             and cmd[3] in {"deploy", "rollback"}):
         env.update({key: os.environ[key] for key in AWS_ADAPTER_ENV if key in os.environ})
+    if (target == "gcp" and len(cmd) >= 4
+            and list(cmd[1:3]) == ["-m", "adapters.gcp"]
+            and cmd[3] in {"deploy", "rollback"}):
+        env.update({key: os.environ[key] for key in GCP_ADAPTER_ENV if key in os.environ})
     return env
 
 
@@ -208,7 +221,7 @@ LOCAL_TEST_FAILED = "Local 테스트를 통과하지 못해 배포하지 않았�
 
 
 def run_deployment(store, deployment_id, cmds, timeout=DEFAULT_TIMEOUT_S, verify=None):
-    """Local 테스트가 있으면 먼저 돌리고, 통과해야 나머지 대상(온프레미스·AWS)을 동시에 배포한다.
+    """Local 테스트가 있으면 먼저 돌리고, 통과해야 나머지 대상(온프레미스·AWS·GCP)을 동시에 배포한다.
 
     대상마다 끝나는 즉시 조종실이 직접 확인한다(다른 대상이 끝나길 기다리지 않는다).
     cmds = {target: cmd} 또는 {target: (작업 위치, cmd)}. 팀원 모듈은 자기 checkout에서 실행해야 한다.
