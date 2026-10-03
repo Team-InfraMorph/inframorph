@@ -1,9 +1,9 @@
-# D API · C 분석/복구 · E Local · A AWS 연결
+# D API · C 분석/복구 · E Local · A AWS/GCP 연결
 
 `LocalRuntime`을 `create_app(runtime=...)`에 전달하면 D의 수동 배포·서명된 push·승인·롤백이 실제
 E Policy Gate → Builder → Local Adapter를 실행한다. Control Plane은 localhost에만 바인딩한다. 기본값은 비공개 Local 실행이다.
 운영자가 `--publish`를 지정하면 E가 검증한 앱의 web 서비스만 cloudflared로 공개한다. 이 옵션은 Plan·레포·모델 입력에서 받지 않는다.
-`--aws-config`를 지정하면 A AWS Adapter에도 실제 배포한다. `--codex`는 ChatGPT 사용량,
+`--aws-config` 또는 `--gcp-config`를 지정하면 각 A cloud Adapter에도 실제 배포한다. `--codex`는 ChatGPT 사용량,
 `--openai`는 팀 OpenAI API 크레딧을 사용한다.
 
 ## 실행
@@ -37,7 +37,7 @@ API 분석은 `gpt-6-luna / low`, 180초·예상 $0.10 한도이며 실패 시 C
 허용된 Local 복구 재분석도 같은 API를 쓰고 앞선 사용 비용을 예산에서 차감한다.
 키는 서버와 명시적으로 실행한 복구 worker만 사용한다. 분석 결과·context·화면에는 키를 저장하지 않으며,
 Mapper·Planner·빌드·AWS 자식 프로세스에는 전달하지 않는다. 분석 대상 레포의 `.env`는 로드하지 않는다.
-AWS를 함께 배포하려면 기존 `--aws-config`를 추가한다.
+AWS/GCP를 함께 배포하려면 각각 `--aws-config`, `--gcp-config`를 추가한다.
 
 ### 로컬 Codex로 실제 분석
 
@@ -194,6 +194,38 @@ AWS 실패 시 C의 Local 복구는 적용하지 않는다. A의 배포 기록 �
 새 모델 호출 없이 소스·Intent·Plan·Patch·이미지를 다시 검사하며 필요한 AWS 승인도 다시 거친다.
 거절된 분석만 있는 작업이나 실행 중인 프로젝트에는 이 기능을 적용하지 않는다.
 실제로 실행 중인 ECS 서비스에 대응하는 A 배포 기록이 없으면 자동으로 채택하지 않고 운영자 확인이 필요하다.
+
+## 실제 GCP 배포
+
+`--gcp-config`는 `terraform/gcp/foundation` 출력과 사용자 gcloud 설정을 GCP 전용 worker에만 전달한다.
+서비스 계정 JSON 키는 받지 않으며 Foundation deployer service account를 가장한다. 설정 JSON·Foundation 출력은
+현재 사용자 소유의 권한 600 절대 경로여야 하고, gcloud 설정 디렉터리는 다른 사용자가 쓸 수 없어야 한다.
+
+```json
+{
+  "foundation": "/absolute/private/gcp-foundation.outputs.json",
+  "project_id": "example-project",
+  "region": "asia-northeast3",
+  "gcloud_config_dir": "/absolute/private/gcloud",
+  "tools_dir": "/absolute/tools/bin",
+  "state_bucket": "inframorph-gcp-state",
+  "migration_command": "./node_modules/.bin/prisma db push --skip-generate",
+  "timeout_seconds": 1800
+}
+```
+
+`tools_dir`에는 `gcloud`, `terraform` 실행 파일이 있어야 한다. Foundation 적용 후 출력과 설정을 준비하고 실행한다.
+
+```sh
+terraform -chdir=terraform/gcp/foundation output -json > /absolute/private/gcp-foundation.outputs.json
+chmod 600 /absolute/private/gcp-foundation.outputs.json /absolute/private/gcp-runtime.json
+.venv/bin/python -m control_plane.runtime --github --codex \
+  --root .local/gcp-runtime --gcp-config /absolute/private/gcp-runtime.json --port 8000
+```
+
+현재 GCP Foundation 입력은 `apps_domain = "gcp.luckyfor.cc"`를 사용하도록 준비되어 있다. Foundation 적용 뒤
+`certificate_dns_authorization_records`의 CNAME과 `lb_ip_address`를 가리키는 `*.gcp.luckyfor.cc` A 레코드를
+DNS에 추가해야 인증서와 앱 주소가 활성화된다. 기존 AWS 레코드는 교체하지 않는다.
 
 ## 복구와 저장
 

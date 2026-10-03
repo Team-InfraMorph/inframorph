@@ -187,7 +187,7 @@ class DemoModules:
     def plan(self, intent, target="local"):
         # This is a fixture, not an attempt to implement B's mapping rules.
         case = "v2" if any(w.kind.value == "worker" for w in intent.workloads) else "v1"
-        if target not in {"local", "aws"}:
+        if target not in {"local", "aws", "gcp"}:
             raise ValueError("unsupported_target")
         if intent.config not in ({}, {"PORT": "3000"}):
             raise ValueError("unsupported_demo_config")

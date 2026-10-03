@@ -12,7 +12,7 @@ from .db import ConflictError
 
 class Scope(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    target: Literal['local','aws','onprem']
+    target: Literal['local','aws','gcp','onprem']
 
 
 class Review(BaseModel):

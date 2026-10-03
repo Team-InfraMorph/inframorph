@@ -26,11 +26,11 @@ class ServiceSpec(ContractModel):
         return self
 
 class DbPlan(ContractModel):
-    type: Literal["postgres_container", "rds_postgres"]
+    type: Literal["postgres_container", "rds_postgres", "cloudsql_postgres"]
     patch: Literal["sqlite_to_postgres"]
 
 class StoragePlan(ContractModel):
-    type: Literal["volume", "s3"]
+    type: Literal["volume", "s3", "gcs"]
     patch: Literal["fs_to_storage"]
     path: RelativePath
 
@@ -45,7 +45,7 @@ class Plan(ContractModel):
     storage: StoragePlan | None = None
     secrets: list[EnvName] = Field(default_factory=list)
     config: dict[EnvName, str] = Field(default_factory=dict)
-    logs: Literal["docker", "cloudwatch"]
+    logs: Literal["docker", "cloudwatch", "cloud_logging"]
     est_monthly_krw: int | None = Field(default=None, ge=0)
     mermaid: str = Field(min_length=1)
 
@@ -78,7 +78,7 @@ class Plan(ContractModel):
                     raise ValueError("Local 저장소는 volume입니다")
                 if self.config.get("STORAGE_DRIVER") != "fs":
                     raise ValueError("Local STORAGE_DRIVER는 fs입니다")
-        else:
+        elif self.target == Target.AWS:
             if self.logs != "cloudwatch":
                 raise ValueError("AWS 로그는 cloudwatch입니다")
             if self.db is not None and self.db.type != "rds_postgres":
@@ -88,4 +88,14 @@ class Plan(ContractModel):
                     raise ValueError("AWS 저장소는 s3입니다")
                 if self.config.get("STORAGE_DRIVER") != "s3":
                     raise ValueError("AWS STORAGE_DRIVER는 s3입니다")
+        elif self.target == Target.GCP:
+            if self.logs != "cloud_logging":
+                raise ValueError("GCP 로그는 cloud_logging입니다")
+            if self.db is not None and self.db.type != "cloudsql_postgres":
+                raise ValueError("GCP DB는 cloudsql_postgres입니다")
+            if self.storage is not None:
+                if self.storage.type != "gcs":
+                    raise ValueError("GCP 저장소는 gcs입니다")
+                if self.config.get("STORAGE_DRIVER") != "gcs":
+                    raise ValueError("GCP STORAGE_DRIVER는 gcs입니다")
         return self

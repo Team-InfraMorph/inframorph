@@ -49,7 +49,40 @@ test("S3 command contract, missing key and service failures, with no network", a
   }
 });
 
+test("GCS object contract, missing key and service failures, with no network", async () => {
+  const objects = new Map();
+  const calls = [];
+  let failure;
+  const bucket = { file(key) { return {
+    async save(data, options) {
+      calls.push(["save", key, data, options]);
+      if (failure) throw failure;
+      objects.set(key, Buffer.from(data));
+    },
+    async download() {
+      calls.push(["download", key]);
+      if (failure) throw failure;
+      if (!objects.has(key)) throw Object.assign(new Error("missing"), { code: 404 });
+      return [objects.get(key)];
+    },
+  }; } };
+  const client = { bucket(name) { assert.equal(name, "test-bucket"); return bucket; } };
+  const storage = createStorage({ env: { STORAGE_DRIVER: "gcs", GCS_BUCKET: "test-bucket" }, client });
+  const data = Buffer.from("gcs image");
+  const key = await storage.saveImage(data, "png");
+  assert.equal(calls[0][0], "save");
+  assert.deepEqual(calls[0][2], data);
+  assert.equal(calls[0][3].metadata.contentType, "image/png");
+  assert.equal(calls[0][3].preconditionOpts.ifGenerationMatch, 0);
+  assert.deepEqual(await storage.readImage(key), data);
+  assert.equal(await storage.readImage("00000000-0000-0000-0000-000000000000.png"), null);
+  failure = Object.assign(new Error("denied"), { code: 403 });
+  await assert.rejects(storage.readImage(key), { code: 403 });
+  await assert.rejects(storage.saveImage(data, "jpg"), { code: 403 });
+});
+
 test("invalid storage configuration fails early", () => {
   assert.throws(() => createStorage({ env: { STORAGE_DRIVER: "typo" } }), /Unsupported/);
   assert.throws(() => createStorage({ env: { STORAGE_DRIVER: "s3" } }), /required/);
+  assert.throws(() => createStorage({ env: { STORAGE_DRIVER: "gcs" } }), /required/);
 });

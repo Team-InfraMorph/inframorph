@@ -12,6 +12,7 @@ on:
       - 'code_patch/**'
       - 'control_plane/**'
       - 'adapters/aws/**'
+      - 'adapters/gcp/**'
       - 'tests/**'
       - 'requirements.txt'
       - 'scripts/verify_e_*.py'
@@ -82,5 +83,6 @@ jobs:
           node --version
           .venv/bin/python -m unittest discover -s tests -v
           .venv/bin/python -m unittest discover -s adapters/aws/tests -v
+          .venv/bin/python -m unittest discover -s adapters/gcp/tests -v
       - name: Verify all redteam host boundaries with actual C and E modules
         run: .venv/bin/python scripts/verify_e_redteam.py --corpus "$INFRAMORPH_REDTEAM_CORPUS" --output .local/redteam-result.json

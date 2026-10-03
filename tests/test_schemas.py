@@ -66,6 +66,14 @@ class ContractTests(unittest.TestCase):
         Intent.model_validate(intent_data())
         Plan.model_validate(plan_data())
 
+    def test_valid_gcp_plan(self):
+        data = plan_data()
+        data.update(target="gcp", logs="cloud_logging")
+        data["db"]["type"] = "cloudsql_postgres"
+        data["storage"]["type"] = "gcs"
+        data["config"]["STORAGE_DRIVER"] = "gcs"
+        Plan.model_validate(data)
+
     def test_wrong_version_is_rejected(self):
         data = intent_data()
         data["schema_version"] = "2.0.0"

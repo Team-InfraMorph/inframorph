@@ -19,6 +19,7 @@ from schemas.common import check_relative_path
 
 TEMPLATES = Path(__file__).with_name("templates")
 SDK_VERSION = "3.1144.0"
+GCS_SDK_VERSION = "8.2.0"
 BASE_IMAGES = "1804feff4814858f128b5b89ea0da32602f572a0eca910f8ab55b800310731e4"
 BASE_PRISMA = "eaf50f27b33e838a559239fef9a16eaeffdd08081a02d615e03d343f0dc5656c"
 BASE_DEPENDENCIES = {"@prisma/client": "6.19.3", "dotenv": "16.6.1", "express": "4.22.3"}
@@ -107,7 +108,8 @@ def transform(original: dict[str, bytes], plan: Plan) -> dict[str, bytes]:
         if not isinstance(package, dict):
             raise PatchError("unsupported_dependency_graph")
         base = BASE_DEPENDENCIES
-        updated = base | {"@aws-sdk/client-s3": SDK_VERSION}
+        updated = base | {"@aws-sdk/client-s3": SDK_VERSION,
+                          "@google-cloud/storage": GCS_SDK_VERSION}
         if (package.get("dependencies") not in (base, updated) or
                 package.get("devDependencies") != {"prisma": "6.19.3"} or
                 package.get("name") != "demo-app" or package.get("version") != "1.0.0" or
