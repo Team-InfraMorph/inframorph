@@ -47,7 +47,7 @@ class NoCacheHtml(StaticFiles):
             response.headers["Cache-Control"] = "no-cache"
         return response
 BUILD_TIMEOUT_S = float(os.environ.get("INFRAMORPH_BUILD_TIMEOUT", "900"))
-STAGE_NAMES = {"analyze": "AI 분석", "policy": "판단 검사", "patch": "코드 수정"}
+STAGE_NAMES = {"analyze": "AI 분석", "policy": "판단 검사", "plan": "배포 설계 검사", "patch": "코드 수정"}
 
 
 class ProjectIn(BaseModel):
@@ -264,8 +264,9 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         backend = getattr(runtime, "analysis_backend", "module")
         return {"analysis_backend": backend,
                 "aws_enabled": getattr(runtime, "aws_config", None) is not None,
-                "model": getattr(runtime, "analysis_model", None) if backend == "codex-cli" else None,
-                "reasoning_effort": REASONING_EFFORT if backend == "codex-cli" else None,
+                "model": getattr(runtime, "analysis_model", None) if backend in {"codex-cli", "openai"} else None,
+                "reasoning_effort": REASONING_EFFORT if backend in {"codex-cli", "openai"} else None,
+                "mapper_mode": getattr(runtime, "mapper_mode", "module"),
                 "demo_versions": getattr(runtime, "demo_versions", lambda: [])()}
 
     @app.post("/api/projects", status_code=201)

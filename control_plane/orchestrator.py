@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import threading
 import queue
 import time
@@ -78,6 +79,13 @@ AWS_ADAPTER_ENV = frozenset({
 
 def module_environment(target, cmd):
     env = child_environment()
+    # Only our explicitly selected API recovery worker receives this key.
+    # Its Mapper/Planner, builders, Docker and Codex children filter it again.
+    if (target == "local" and len(cmd) == 8 and cmd[0] == sys.executable
+            and list(cmd[1:4]) == ["-m", "control_plane.local_deploy", "--context"]
+            and cmd[5] == "--database" and cmd[7] == "--openai"
+            and os.environ.get("OPENAI_API_KEY")):
+        env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
     if (target == "aws" and len(cmd) >= 4
             and list(cmd[1:3]) == ["-m", "adapters.aws"]
             and cmd[3] in {"deploy", "rollback"}):

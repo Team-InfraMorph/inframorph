@@ -2,6 +2,8 @@
 // 오류 코드 출처: E policy_gate/gate.py, C analyzer·code_patch, A adapters/aws, 조종실 orchestrator.
 
 const CODES = {
+  plan_config_mismatch: ["분석 결과의 환경설정이 배포 설계에 반영되지 않았습니다", "Planner가 검증된 PORT 등 설정을 보존하는지 확인하세요."],
+  policy_gate_failed: ["정책 검사를 완료하지 못했습니다", "정책 검사 결과에서 실패한 규칙과 단계를 확인하세요."],
   // E Intent Gate: AI 판단의 근거 검사
   evidence_file_missing: ["AI가 근거로 든 파일이 실제 코드에 없습니다", "AI 판단을 믿을 수 없어 멈췄습니다. 분석을 다시 실행하세요."],
   evidence_line_missing: ["AI가 근거로 든 줄 번호가 실제 파일에 없습니다", "AI 판단을 믿을 수 없어 멈췄습니다. 분석을 다시 실행하세요."],

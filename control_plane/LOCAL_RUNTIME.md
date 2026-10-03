@@ -3,7 +3,8 @@
 `LocalRuntime`을 `create_app(runtime=...)`에 전달하면 D의 수동 배포·서명된 push·승인·롤백이 실제
 E Policy Gate → Builder → Local Adapter를 실행한다. Control Plane은 localhost에만 바인딩한다. 기본값은 비공개 Local 실행이다.
 운영자가 `--publish`를 지정하면 E가 검증한 앱의 web 서비스만 cloudflared로 공개한다. 이 옵션은 Plan·레포·모델 입력에서 받지 않는다.
-`--aws-config`를 지정하면 A AWS Adapter에도 실제 배포한다. 분석은 로컬 Codex로 유지할 수 있으며 팀 모델 API는 호출하지 않는다.
+`--aws-config`를 지정하면 A AWS Adapter에도 실제 배포한다. `--codex`는 ChatGPT 사용량,
+`--openai`는 팀 OpenAI API 크레딧을 사용한다.
 
 ## 실행
 
@@ -19,6 +20,24 @@ Python 3.12+, Node, Docker Compose/buildx가 필요하다. 저장소 최상위�
 이 명령의 B Mapper/Planner는 v1/v2 개발 fixture이며 Analyzer는 저장된 응답을 재생한다.
 파일 탐색·스키마 검증·패치·E 정책 검사·Docker 빌드·DB/파일 보존 검증은 실제 코드를 실행한다.
 응답 재생은 새 모델 추론이나 실제 B 구현 검증으로 계산하지 않는다. 다른 레포/커밋은 fixture 모드에서 거부한다.
+
+### GitHub Repo Mapper + OpenAI API
+
+서버 프로젝트 루트의 `.env`에 `OPENAI_API_KEY`를 넣은 뒤 다음 명령을 실행한다.
+시작 시 자동 로드하며 기존 환경변수가 우선한다. 다른 위치는 `--env-file /absolute/path/.env`로 지정한다.
+
+```sh
+.venv/bin/python -m control_plane.runtime --github --openai --model gpt-6-luna \
+  --root .local/github-api --port 8000
+```
+
+`--github`는 실제 `repo_mapper`와 `planner` 명령을 사용한다. V1/V2 선택은 GitHub의 해당 커밋을,
+버전을 지정하지 않은 수동 API 요청은 프로젝트 브랜치 HEAD를 가져온다. 스냅샷·계획 fixture로 대체하지 않는다.
+API 분석은 `gpt-6-luna / low`, 180초·예상 $0.10 한도이며 실패 시 Codex/replay로 바뀌지 않는다.
+허용된 Local 복구 재분석도 같은 API를 쓰고 앞선 사용 비용을 예산에서 차감한다.
+키는 서버와 명시적으로 실행한 복구 worker만 사용한다. 분석 결과·context·화면에는 키를 저장하지 않으며,
+Mapper·Planner·빌드·AWS 자식 프로세스에는 전달하지 않는다. 분석 대상 레포의 `.env`는 로드하지 않는다.
+AWS를 함께 배포하려면 기존 `--aws-config`를 추가한다.
 
 ### 로컬 Codex로 실제 분석
 
@@ -53,35 +72,35 @@ ChatGPT 로그인만 허용하며 팀 API로 전환하거나 실패 시 저장 �
 
 ### 웹에서 V2 배포 테스트
 
-`--demo`로 실행한 조종실의 demo-app 프로젝트에는 **테스트 버전** 선택이 표시된다.
+`--demo` 또는 `--github`로 실행한 조종실의 demo-app 프로젝트에는 **테스트 버전** 선택이 표시된다.
 기존 V1 프로젝트에서 **V2 · 노트 집계 worker 추가 → 배포**를 선택하면 V2의 고정된 SHA로
 새 분석을 시작한다. web+worker 설계와 worker 추가 승인 요청을 확인하고 **승인하고 배포**로 진행한다.
 프로젝트를 유지하므로 Local/AWS의 프로젝트별 주소와 데이터 저장소를 그대로 사용한다.
 이력에도 V1/V2와 커밋을 함께 표시한다. 선택은 GitHub 브랜치의 최신 소스를 가져오는 기능이 아니다.
 
 API는 `POST /api/projects/<id>/deploy`의 선택적 `{"demo_version":"v2"}`를 받으며,
-운영자의 demo runtime이 제공하는 버전만 허용한다. 실제 B 모드·다른 레포·임의 SHA 입력에서는
+운영자의 내장 runtime이 제공하는 버전만 허용한다. 외부 명령형 B 모드·다른 레포·임의 SHA 입력에서는
 이 선택을 거부한다. 선택한 SHA는 분석 전에 저장되고 실행 중인 프로젝트의 잠금을 우회하지 않는다.
 명시한 버전은 새로운 수동 요청으로 처리하므로 대기 중인 push의 원래 커밋을 바꾸지 않는다.
 본문이 없는 기존 수동 배포와 webhook/rollback 경로의 동작은 유지한다.
 AWS의 V2→V1 전환은 worker 리소스 제거를 포함하므로 현재 삭제 방지 정책에 따라 차단될 수 있다.
 
 새 Node/Prisma/PostgreSQL 이미지나 패키지가 로컬에 없으면 Docker 빌드가 다운로드할 수 있다.
-`.env`를 로드하지 않으며 팀 API 키를 하위 프로세스에 전달하지 않는다.
+서버의 `.env`만 시작 시 로드한다. `--openai`에서 명시한 Local 복구 worker 외에는 팀 API 키를 하위 프로세스에 전달하지 않는다.
 
 ## 실제 B 모듈의 명령 계약
 
-B 구현이 도착하면 다음 두 **운영자가 지정한 argv**를 등록한다. 저장소 내용은 stdin JSON 데이터로 전달하며 shell로 실행하지 않는다.
-`--demo`를 빼면 두 명령과 `--replay` 또는 `--codex`가 필수다. B가 없을 때 fixture로 자동 대체하지 않는다.
+내장 `--github` 연결 대신 다음 두 **운영자가 지정한 argv**를 등록할 수도 있다. 저장소 내용은 stdin JSON 데이터로 전달하며 shell로 실행하지 않는다.
+이 경로에서는 두 명령과 `--replay`, `--codex`, `--openai` 중 하나가 필수다. B가 없을 때 fixture로 자동 대체하지 않는다.
 
 ```sh
 .venv/bin/python -m control_plane.runtime --root .local/b-connected \
-  --mapper-command '["python", "-m", "repo_mapper.bridge"]' \
-  --planner-command '["python", "-m", "planner.bridge"]' \
+  --mapper-command '[".venv/bin/python", "-m", "repo_mapper"]' \
+  --planner-command '[".venv/bin/python", "-m", "planner"]' \
   --replay /absolute/path/to/replay.json
 ```
 
-위 모듈 이름은 연결 계약을 설명하는 예시이며 현재 B 구현이 아니다.
+위 명령은 현재 머지된 B 구현을 사용한다. Python 경로는 운영자의 실행 환경에 맞춘다.
 
 | 모듈 | stdin | stdout |
 |---|---|---|

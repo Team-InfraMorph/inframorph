@@ -101,7 +101,7 @@ function Usage({ deployment, metrics }) {
     .filter((name) => Object.hasOwn(POLICY_FIELD, name)).map((name) => POLICY_FIELD[name]);
   return <>
     {metrics.error && <p className="usage error">
-      AI 분석 실패: {ANALYSIS_ERROR[metrics.error] ?? explain(metrics.error)?.what ?? "분석 처리를 완료하지 못했어요."}
+      {ANALYSIS_STAGE[metrics.blocked_stage] ?? "AI 분석"} 실패: {ANALYSIS_ERROR[metrics.error] ?? explain(metrics.error)?.what ?? "해당 단계를 완료하지 못했어요."}
       {ANALYSIS_STAGE[metrics.blocked_stage] && <> 단계: {ANALYSIS_STAGE[metrics.blocked_stage]}.</>}
       {fields.length > 0 && <> 확인 항목: {fields.join(", ")}.</>}
       <span className="dim"> ({metrics.error})</span>
@@ -276,10 +276,11 @@ export default function App() {
     let alive = true;
     setPlans({});
     setIntent(null);
+    setRepoMap(null);
     setPatch({});
     api.plans(selectedKey).then((value) => alive && setPlans(value)).catch(() => alive && setPlans({}));
     api.analysis(selectedKey).then((a) => { if (alive) { setIntent(a.intent); setRepoMap(a.repo_map ?? null); } })
-      .catch(() => alive && setIntent(null));
+      .catch(() => { if (alive) { setIntent(null); setRepoMap(null); } });
     api.patch(selectedKey).then((value) => alive && setPatch(value)).catch(() => alive && setPatch({}));
     return () => { alive = false; };
   }, [selectedKey, selectedStatus]);
@@ -304,6 +305,7 @@ export default function App() {
     setPlans({});
     setPatch({});
     setIntent(null);
+    setRepoMap(null);
     setEvents([]);
     save("projectId", id ?? "");
   };
@@ -337,6 +339,12 @@ export default function App() {
       {runtime?.analysis_backend === "codex-cli" && <p className="usage">
         로컬 Codex 실제 분석 · {runtime.model} / {runtime.reasoning_effort} · ChatGPT 사용량 사용 · 팀 API 비용 $0
       </p>}
+      {runtime?.analysis_backend === "openai" && <p className="usage">
+        OpenAI API 실제 분석 · {runtime.model} / {runtime.reasoning_effort} · 팀 API 크레딧 사용
+      </p>}
+      {runtime?.mapper_mode === "github" && <p className="usage">
+        GitHub Repo Mapper 연결됨 · 선택한 커밋의 소스를 직접 가져와 분석합니다.
+      </p>}
       {runtime?.aws_enabled && <p className="usage">AWS 실제 배포 연결됨 · 프로젝트별로 앱과 데이터를 분리해 배포합니다.</p>}
       {error && <p className="error banner">{error}</p>}
 
@@ -369,7 +377,8 @@ export default function App() {
           {selected?.change_reasons.length > 0 && (
             <p className="dim reasons">판정 근거: {selected.change_reasons.join(" / ")}</p>
           )}
-          {canSelectVersion && <p className="dim">선택한 버전의 고정된 데모 소스로 배포합니다.
+          {canSelectVersion && <p className="dim">{runtime?.mapper_mode === "github"
+            ? "선택한 버전의 커밋을 GitHub에서 가져와 배포합니다." : "선택한 버전의 고정된 데모 소스로 배포합니다."}
             {deployVersion === "v2" && " V2는 기존 웹 앱에 노트 수를 집계하는 worker가 추가됩니다."}</p>}
 
           {selected?.status === "AWAITING_APPROVAL" && <ApprovalBanner deployment={selected} onAct={act} />}
