@@ -19,7 +19,8 @@ from tests.test_e_runtime import plan
 from builder.runtime import check_build_profile
 
 ROOT=Path(__file__).resolve().parents[1]
-DOCS=ROOT/'policy_gate/docs/1.0.0'
+ACTIVE_VERSION=json.loads((ROOT/'policy_gate/active.json').read_text())['version']
+DOCS=ROOT/'policy_gate/docs'/ACTIVE_VERSION
 
 class DocumentationContract(unittest.TestCase):
     def test_one_document_set_and_unchanged_rule_contract(self):

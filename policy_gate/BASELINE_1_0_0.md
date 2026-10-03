@@ -7,7 +7,7 @@
 | 규칙 | 구현·기록·문서 | 주요 회귀 근거 | 한계 |
 |---|---|---|---|
 | G-002 | 모두 연결 | test_policy_hardening 초기 소스 거부, C/E 연결 테스트 | 검토된 demo-app 해시 프로필 |
-| G-003 | 모두 연결 | test_control_plane_runtime, test_control_plane_gcp, test_e_integration | Local/AWS/GCP 지원 프로필 제한 |
+| G-003 | 모두 연결 | test_control_plane_runtime, test_e_integration | Local/AWS 지원 프로필 제한 |
 | I-000 | 모두 연결 | test_e_runtime unknown/revision | 미해결 입력은 실행 불가 |
 | I-001 | 모두 연결 | test_e_runtime missing_evidence | 파일·줄 존재 검사, 의미 증명 아님 |
 | I-006 | 모두 연결 | test_policy_hardening config | 허용 설정·비밀 이름 충돌만 검사 |
