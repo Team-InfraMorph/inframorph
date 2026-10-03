@@ -65,8 +65,10 @@ def rollback_removal_approved(context, store, previous, deployment):
     if deployment.get("rollback_of") != previous.deployment_id:
         return False
     source = store.get_deployment(previous.deployment_id)
-    target = store.last_live(context.project_id, previous.deployment_id, with_plans=True)
-    if (source is None or source["project_id"] != context.project_id or target is None
+    if source is None or source["project_id"] != context.project_id:
+        return False
+    target = store.last_live_for_targets(context.project_id, previous.deployment_id, source["targets"])
+    if (target is None
             or source["commit_sha"] != previous.source_revision
             or deployment["commit_sha"] != target["commit_sha"]):
         return False
@@ -95,7 +97,7 @@ def approved_worker_removals(context, store, previous):
         approved = True
     if not approved:
         raise ContractError("aws_worker_removal_requires_approval")
-    base = store.last_live(context.project_id, context.deployment_id, with_plans=True)
+    base = store.last_live_for_targets(context.project_id, context.deployment_id, ["aws"])
     identity = AppIdentity.from_app(app_name(context.project_id))
     if (base is None or base["id"] != previous.deployment_id or base["commit_sha"] != previous.source_revision
             or previous.app_id != identity.app_id

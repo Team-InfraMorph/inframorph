@@ -186,6 +186,10 @@ python -m adapters.aws rollback --state-dir <state> --execute --deployment-id <i
 - 사용자가 `되돌리기`를 요청한 경우 해당 요청 자체를 복원에 필요한 worker 제거 승인으로 인정한다.
   단, `rollback_of`가 현재 AWS 성공 기록을 가리키고 복원할 커밋·AWS Plan이 그 배포 직전의 성공 기록과
   정확히 일치해야 한다. `rollback` 표시만 있거나 대기 중 기준 배포가 바뀐 경우에는 허용하지 않는다.
+- 배포 대상을 바꿔도 worker 제거 기준은 마지막으로 성공한 **AWS 대상**의 기록이다. 중간에 실행한
+  Local 테스트나 다른 대상의 실패가 AWS 기준을 바꾸지 않는다. 롤백은 요청한 대상이 모두 성공했던
+  가장 최근 공통 커밋으로 돌아가며, Local-only 롤백에 AWS·온프레미스를 추가하지 않는다.
+  대기열에 있는 롤백도 저장된 Plan의 대상 범위를 유지한다.
 - Control Plane은 검증된 고정 오류 코드만 화면에 전달한다. `aws_plan_destructive_change` 등은
   적용 전에 차단된 이유를 표시하고, 알 수 없는 공급자 오류는 비공개 `failure.json`에만 남긴다.
 - ECS 환경변수 이름은 중복 없이 생성한다. HTTP 서비스의 `PORT`는 Plan의 포트 하나만 사용하며 worker에는 주입하지 않는다.

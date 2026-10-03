@@ -112,7 +112,7 @@ class WorkerRemovalTests(unittest.TestCase):
             terraform_values={"services": [{"name": "worker", "kind": "worker", "public": False, "port": None}]})
         self.store = Mock()
         self.store.get_deployment.return_value = {"approved_at": "now", "approval_reasons": ["aws: 서비스 worker 제거"]}
-        self.store.last_live.return_value = {"id": self.previous.deployment_id, "commit_sha": self.previous.source_revision}
+        self.store.last_live_for_targets.return_value = {"id": self.previous.deployment_id, "commit_sha": self.previous.source_revision}
         self.store.get_plans.return_value = {"aws": {"services": self.previous.terraform_values["services"]}}
 
     @staticmethod
@@ -146,7 +146,7 @@ class WorkerRemovalTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "requires_approval"):
                 approved_worker_removals(self.context, self.store, self.previous)
         self.store.get_deployment.return_value = {"approved_at": "now", "approval_reasons": ["aws: 서비스 worker 제거"]}
-        self.store.last_live.return_value = {"id": "different", "commit_sha": self.previous.source_revision}
+        self.store.last_live_for_targets.return_value = {"id": "different", "commit_sha": self.previous.source_revision}
         with self.assertRaisesRegex(ContractError, "base_mismatch"):
             approved_worker_removals(self.context, self.store, self.previous)
 
