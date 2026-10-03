@@ -103,6 +103,8 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
   location            = var.region
   deletion_protection = false
   labels              = local.revision_labels
+  # Worker pools may still be a beta surface; BETA is also accepted once GA.
+  launch_stage = "BETA"
 
   scaling {
     manual_instance_count = 1
