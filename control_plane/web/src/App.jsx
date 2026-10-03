@@ -171,10 +171,13 @@ function took(d) {
   return s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`;
 }
 
+/** 데모 모드에서 고정 커밋이면 "V1 "·"V2 " 접두어. */
+const versionOf = (versions, sha) => { const v = versions.find((x) => x.commit_sha === sha); return v ? `${v.id.toUpperCase()} ` : ""; };
+
 const TRIGGER_LONG = { manual: "수동 배포", push: "git push", rollback: "되돌리기" };
 
 /** 배포 기록: 최신이 위인 타임라인. 점 색 = 결과, 대상별 결과, 걸린 시간, 다시 한 범위. */
-function History({ deployments, selectedId, onSelect, onRollback }) {
+function History({ deployments, selectedId, onSelect, onRollback, versions = [] }) {
   const canRollback = deployments.slice(1).some((x) => x.status === "LIVE");
   return (
     <div className="card hist">
@@ -186,7 +189,7 @@ function History({ deployments, selectedId, onSelect, onRollback }) {
             <div className="hmain">
               <div className="hline1">
                 <strong>{TRIGGER_LONG[d.triggered_by] ?? d.triggered_by}</strong>
-                <code className="hcommit">{d.commit_sha ? d.commit_sha.slice(0, 7) : "커밋 미정"}</code>
+                <code className="hcommit">{versionOf(versions, d.commit_sha)}{d.commit_sha ? d.commit_sha.slice(0, 7) : "커밋 미정"}</code>
                 <Badge status={d.status} />
                 {i === 0 && <span className="hlatest">최신</span>}
               </div>
@@ -212,6 +215,7 @@ function History({ deployments, selectedId, onSelect, onRollback }) {
 
 export default function App() {
   const [runtime, setRuntime] = useState(null);
+  const [requestedVersion, setRequestedVersion] = useState("");
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(load("projectId"));
   const [deployments, setDeployments] = useState([]);
@@ -279,6 +283,7 @@ export default function App() {
 
   const choose = (id) => {
     setProjectId(id);
+    setRequestedVersion("");
     setSelectedId(null);
     setDeployments([]);
     setPlans({});
@@ -298,7 +303,10 @@ export default function App() {
   };
 
   const targets = project?.targets ?? [];
-  const running = selected && !TERMINAL.includes(selected.status) && selected.status !== "CREATED";
+  const versions = runtime?.demo_versions ?? [];
+  const canSelectVersion = versions.length > 0 && project?.repo_url.replace(/\/$/, "").replace(/\.git$/, "") === "https://github.com/Team-InfraMorph/demo-app";
+  const deployVersion = requestedVersion || versions.find((v) => v.commit_sha === deployments[0]?.commit_sha)?.id || versions[0]?.id;
+  const running = deployments.find((d) => !TERMINAL.includes(d.status) && d.status !== "CREATED");
 
   return (
     <div className="app">
@@ -327,19 +335,27 @@ export default function App() {
               <span className="dim"> · {project.branch}</span>
               {selected && (
                 <span className="meta">
-                  {TRIGGER[selected.triggered_by]} · <span className="mono">{selected.commit_sha?.slice(0, 7) ?? "커밋 미정"}</span>
+                  {TRIGGER[selected.triggered_by]} · <span className="mono">{versionOf(versions, selected.commit_sha)}{selected.commit_sha?.slice(0, 7) ?? "커밋 미정"}</span>
                   {selected.analysis_mode && ` · ${MODE[selected.analysis_mode]}`}
                 </span>
               )}
               {selected && <Badge status={selected.status} />}
             </div>
-            <button disabled={running} onClick={() => act(api.deploy, project.project_id)}>
-              {!running ? "배포" : selected.status === "AWAITING_APPROVAL" ? "승인 대기 중" : "배포 중…"}
-            </button>
+            <div className="row">
+              {canSelectVersion && <label className="version-picker">테스트 버전 <select aria-label="테스트 버전" value={deployVersion}
+                disabled={running} onChange={(e) => setRequestedVersion(e.target.value)}>
+                {versions.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+              </select></label>}
+              <button disabled={running} onClick={() => act((id) => api.deploy(id, canSelectVersion ? deployVersion : undefined), project.project_id)}>
+                {!running ? "배포" : running.status === "AWAITING_APPROVAL" ? "승인 대기 중" : "배포 중…"}
+              </button>
+            </div>
           </div>
           {selected?.change_reasons.length > 0 && (
-            <p className="dim reasons">push 판정 근거: {selected.change_reasons.join(" / ")}</p>
+            <p className="dim reasons">판정 근거: {selected.change_reasons.join(" / ")}</p>
           )}
+          {canSelectVersion && <p className="dim">선택한 버전의 고정된 데모 소스로 배포합니다.
+            {deployVersion === "v2" && " V2는 기존 웹 앱에 노트 수를 집계하는 worker가 추가됩니다."}</p>}
 
           {selected?.status === "AWAITING_APPROVAL" && <ApprovalBanner deployment={selected} onAct={act} />}
           {selected?.status === "FAILED" && intent && <p>
@@ -374,7 +390,7 @@ export default function App() {
           )}
 
           <Section n="5" title="배포 기록 · 되돌리기">
-            <History deployments={deployments} selectedId={selected?.id}
+            <History deployments={deployments} selectedId={selected?.id} versions={versions}
                      onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)}
                      onRollback={(id) => act(api.rollback, id)} />
           </Section>
