@@ -384,10 +384,12 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         saved = store.get_deployment_analysis(deployment_id)
         cached = store.get_analysis(deployment["project_id"], deployment["commit_sha"]) if deployment["commit_sha"] else None
         repo_map = cached["repo_map"] if cached else None  # 화면의 '앱 코드 구조' 트리(B Repo Mapper 출력)
+        from .auto_repair import with_usage
         if saved is not None:
-            return {"intent": saved["intent"], "metrics": saved["metrics"], "repo_map": repo_map,
+            return {"intent": saved["intent"], "metrics": with_usage(store, deployment_id, saved["metrics"]), "repo_map": repo_map,
                     "initial_intent": saved["initial"]["intent"], "recovery": saved.get("recovery")}
-        return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"], "repo_map": repo_map}
+        return {"intent": cached["intent"] if cached else None,
+                "metrics": deployment["analysis_metrics"], "repo_map": repo_map}
 
     @app.get("/api/deployments/{deployment_id}/policy")
     def get_policy(deployment_id: str):

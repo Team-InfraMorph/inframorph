@@ -75,7 +75,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_actual_rules_have_evidence_and_no_missing_success(self):
         report=self.report()
-        self.assertEqual(report['family'],'inframorph-policy');self.assertEqual(report['version'],'1.0.0')
+        self.assertEqual(report['family'],'inframorph-policy');self.assertEqual(report['version'],identity()['version'])
         self.assertEqual(report['decision'],'PASS');self.assertTrue(report['complete'])
         self.assertEqual(set(report['required_rules']),set(report['evaluated_rules']))
         db=next(r for r in report['rules'] if r['rule_id']=='I-003')
@@ -179,7 +179,7 @@ class LifecycleTests(unittest.TestCase):
     def test_documents_are_versioned_and_unknown_version_is_not_latest(self):
         docs=index('1.0.0');self.assertGreater(len(docs),18)
         response=self.client.get('/api/policies').json()
-        self.assertEqual(response['active']['version'],'1.0.0');self.assertEqual(response['legacy']['family'],'legacy')
+        self.assertEqual(response['active']['version'],identity()['version']);self.assertEqual(response['legacy']['family'],'legacy')
         self.assertNotEqual(self.client.get('/api/policies/9.9.9').status_code,200)
         self.assertEqual(self.client.get('/api/policies/1.0.0/compare?base=legacy').json()['major'],True)
         self.assertEqual(self.client.get('/api/policies/1.0.0/compare?base=1.0.0').json()['changes'],[])
@@ -188,7 +188,7 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'policy_history_incomplete'):compare('0.9.0','1.0.0')
 
     def test_compare_accumulates_intermediate_patch_requirement(self):
-        baseline=release();mid=copy.deepcopy(baseline);latest=copy.deepcopy(baseline)
+        baseline=release('1.0.0');mid=copy.deepcopy(baseline);latest=copy.deepcopy(baseline)
         mid.update(version='1.0.1',previous='1.0.0',changes=[{'id':'fix','recheck':True}])
         latest.update(version='1.1.0',previous='1.0.1',changes=[{'id':'docs','recheck':False}])
         with patch('policy_gate.catalog.release',side_effect=lambda v:{'1.0.0':baseline,'1.0.1':mid,'1.1.0':latest}[v]):

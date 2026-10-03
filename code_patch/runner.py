@@ -150,7 +150,8 @@ def make_diff(original: dict[str, bytes], patched: dict[str, bytes]) -> tuple[st
     return "".join(chunks), changes
 
 
-def patch_snapshot(snapshot_dir: Path, repo_map: RepoMap | dict, plan: Plan | dict, output_dir: Path) -> dict:
+def patch_snapshot(snapshot_dir: Path, repo_map: RepoMap | dict, plan: Plan | dict, output_dir: Path,
+                   *, replacements: dict[str, bytes] | None = None) -> dict:
     """Publish a new directory containing source/, patch.diff and manifest.json.
 
     Caller must supply a frozen snapshot of repo_map.commit. Revision strings
@@ -170,7 +171,18 @@ def patch_snapshot(snapshot_dir: Path, repo_map: RepoMap | dict, plan: Plan | di
         if not output.parent.is_dir():
             raise PatchError("output_parent_missing")
         original, excluded = read_snapshot(root, mapping)
-        patched = transform(original, plan)
+        if replacements is None:
+            patched = transform(original, plan)
+        else:
+            # Host-owned publication only. Replacements are still untrusted and
+            # MUST pass the independent gate before a build can consume them.
+            if (not isinstance(replacements, dict) or set(replacements) - ALLOWED_PATHS or
+                    any(not isinstance(v, bytes) or len(v) > Limits().max_file_bytes
+                        for v in replacements.values())):
+                raise PatchError("patch_allowlist_violation")
+            patched = original | replacements
+            if sum(map(len, patched.values())) > Limits().max_snapshot_bytes:
+                raise PatchError("snapshot_too_large")
         diff, changes = make_diff(original, patched)
         if Redactor().contains_secret(diff):
             raise PatchError("secret_in_diff")

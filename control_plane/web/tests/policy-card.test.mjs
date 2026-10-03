@@ -19,6 +19,16 @@ test('retry and targets remain distinct',()=>{const html=render({data:{results:[
 test('unsupported and error are separate from blocked',()=>{const html=render({data:{results:[{...row,decision:'UNSUPPORTED',complete:false},{...row,seq:2,decision:'ERROR'}]}});assert.match(html,/미지원/);assert.match(html,/검사 오류/);assert.match(html,/검사 미완료/);});
 test('source-controlled text is escaped',()=>{const html=render({data:{results:[{...row,path:'<img src=x onerror=alert(1)>',title:'<script>bad</script>'}]}});assert.doesNotMatch(html,/<script>|<img/);assert.match(html,/&lt;script/);});
 test('failed refresh does not render stale success',()=>{const html=render({error:true,data:{results:[{...row,decision:'PASS'}]}});assert.match(html,/불러오지 못/);assert.doesNotMatch(html,/policy-pass/);});
+test('policy repairs show all three attempts and distinguish validation from deployment',()=>{
+ const repairs=[1,2,3].map(attempt=>({attempt,target:'local',stage:'patch',reason:'javascript_syntax_invalid',status:attempt===3?'passed':'failed',result_code:attempt===3?'policy_repair_validated':'javascript_syntax_invalid',diff:'-broken\n+fixed',metrics:{model_calls:1,input_tokens:20,output_tokens:10}}));
+ const html=render({data:{results:[row],repairs,max_repair_attempts:3}});
+ for(const value of ['3 / 최대 3회','1회','2회','3회','정책 재검사 통과','Local 테스트','-broken','+fixed'])assert.ok(html.includes(value),value);
+ assert.doesNotMatch(html,/배포 성공/);
+});
+test('repair proposal text is escaped and terminal reason is visible',()=>{
+ const html=render({data:{repairs:[{attempt:3,stage:'intent',target:'local',status:'failed',reason:'intent_source_mismatch',result_code:'policy_repair_limit_reached',diff:'<script>bad</script>'}]}});
+ assert.match(html,/자동 수정이 중단/);assert.match(html,/policy_repair_limit_reached/);assert.doesNotMatch(html,/<script>/);
+});
 
 const managed={...row,family:'inframorph-policy',version:'1.0.0',status:'development',execution_id:'run-1',policy_digest:'abc',checkpoint:'build',rules:[{rule_id:'I-003',decision:'BLOCK',title:'DB 근거',expected:'DB provider 일치',evidence:{observed:'sqlite',claimed:['postgresql']},remedy:'DB 요구 수정'}],required_rules:['I-003'],evaluated_rules:['I-003']};
 test('managed version displays without development label or legacy history',()=>{const html=render({data:{results:[managed]}});assert.match(html,/1\.0\.0/);assert.doesNotMatch(html,/개발 중|개발중/);assert.doesNotMatch(html,/단계별 요약만 보존됨/);});

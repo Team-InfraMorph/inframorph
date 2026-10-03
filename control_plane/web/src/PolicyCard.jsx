@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'react';
 import {ordered, TARGETS} from './Pipeline.jsx';
 const targetName = target => TARGETS[target] || target;
-const inspectionKind = row => row?.purpose==='policy_update'||row?.checkpoint==='policy_update'?'정책 재검사':row?.attempt?'재시도':'최초 검사';
+const inspectionKind = row => row?.purpose==='policy_update'||row?.checkpoint==='policy_update'?'정책 재검사':row?.attempt?`재시도 ${row.attempt}회`:'최초 검사';
 
 const labels = {PASS:'통과',BLOCK:'차단',UNSUPPORTED:'미지원',ERROR:'검사 오류',NOT_RUN:'미실행',NOT_APPLICABLE:'적용 제외'};
 const stages = {source:'지원 소스',profile:'배포 프로필',intent:'분석 근거',plan:'배포 설계',patch:'코드 변경',build_profile:'빌드 입력',build:'빌드 직전',policy_update:'정책 업데이트'};
@@ -33,7 +33,8 @@ export default function PolicyCard({data,error,onRecheck,history,onReview,onFail
   const impact=history?.impacts?.find(x=>x.target===actualTarget);
   const job=history?.jobs?.filter(x=>x.target===actualTarget).at(-1);
   return <section className="card policy-card" id="policy-inspections" aria-label="정책 검사 결과">
-    <div className="policy-heading"><div><h2>정책 검사</h2><p className="dim">정책 통과와 실제 배포·공개 접속 확인은 별도 결과입니다.</p></div><a href="#/policy/1.0.0/overview">정책 문서 ↗</a></div>
+    <div className="policy-heading"><div><h2>정책 검사</h2><p className="dim">정책 통과와 실제 배포·공개 접속 확인은 별도 결과입니다.</p></div><a href={`#/policy/${row?.family==='inframorph-policy'?row.version:'1.1.0'}/overview`}>정책 문서 ↗</a></div>
+    {!error && <RepairHistory rows={data?.repairs} limit={data?.max_repair_attempts} />}
     {error ? <p role="alert">정책 결과를 불러오지 못했습니다. 마지막 기록을 최신 통과 결과로 사용할 수 없습니다.</p>
       : !rows.length ? <p className="policy-empty">아직 기록된 정책 검사 결과가 없습니다.</p>
       : <>
@@ -81,6 +82,24 @@ export default function PolicyCard({data,error,onRecheck,history,onReview,onFail
     <PolicyHistory key={deploymentId} results={rows} history={history} target={actualTarget} selectable={rows.map(r=>r.execution_id)} onSelect={id=>{const found=rows.find(r=>r.execution_id===id);if(found){setTarget(found.target);setSelected(id);}}}/>
     {actionError&&<p role="alert">{actionError}</p>}
   </section>;
+}
+
+export function RepairHistory({rows=[],limit=3}) {
+  if (!rows.length) return null;
+  const stage = {intent:'분석 결과',plan:'배포 계획',patch:'코드 패치'};
+  const state = {running:'수정 중',passed:'정책 재검사 통과',failed:'수정 실패',interrupted:'중단됨'};
+  const last=rows.at(-1);
+  return <div className="policy-detail" aria-label="AI 자동 수정 이력">
+    <h3>AI 자동 수정 · {rows.length} / 최대 {limit}회</h3>
+    <p>배포용 복사본과 분석·계획만 수정합니다. 원본 저장소와 Policy는 유지하며, 배포 전 Local 테스트를 통과해야 합니다.</p>
+    {last.status!=='running' && last.status!=='passed' && <p role="status">자동 수정이 중단됐습니다. 마지막 사유: <code>{last.result_code||last.reason}</code></p>}
+    {rows.map(r=><details className="policy-detail" key={r.attempt} open={r.status==='running'}>
+      <summary>{r.attempt}회 · {targetName(r.target)} · {stage[r.stage]||r.stage} · {state[r.status]||r.status}</summary>
+      <p>차단 사유: <code>{r.reason}</code>{r.result_code&&<> → <code>{r.result_code}</code></>}</p>
+      <p className="dim">{r.metrics?.backend==='replay'?'응답 재생':'모델 호출'} {r.metrics?.model_calls??0}회 · 입력 {r.metrics?.input_tokens??0} / 출력 {r.metrics?.output_tokens??0} 토큰{r.metrics?.usage_complete===false?' · 사용량 확인 미완료':''}</p>
+      {r.diff&&<><pre>{r.diff}</pre>{r.diff_truncated&&<p>긴 수정 내역은 일부만 표시됩니다.</p>}</>}
+    </details>)}
+  </div>;
 }
 
 

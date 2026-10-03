@@ -25,6 +25,7 @@ from .db import Store
 from .results import finish_run
 from .runtime import (LocalContext, analysis_session, analysis_limits, context_plans,
                       record_analysis_diagnostics, requirements_clarifier)
+from .auto_repair import repair, history as repair_history, RepairStopped
 
 
 def load_context(path):
@@ -80,6 +81,8 @@ def send(event):
 
 
 def public_failure_code(stage, error):
+    if isinstance(error, RepairStopped):
+        return str(error)
     if isinstance(error, EWorkerError):
         return str(error)
     # E exposes fixed codes. Never publish arbitrary worker/source error text.
@@ -147,7 +150,26 @@ async def deploy(context, store):
         files = tuple(sorted(set(context.repo_map.tree) | {c["path"] for c in manifest["changes"]}))
         candidate = PatchedCandidate(directory, manifest, context.plan, files)
         _assert_patch(candidate, context.repo_map)
-        approval = await connector.validate_patch(candidate, candidate.fingerprint)
+        try:
+            approval = await connector.validate_patch(candidate, candidate.fingerprint)
+        except EWorkerError as error:
+            if deployment.get('analysis_mode') == 'rebuild_only' or deployment.get('triggered_by') == 'rollback':
+                raise
+            async def validate_repair(proposed, attempt):
+                connector.policy_attempt = attempt
+                approved = await connector.validate_patch(proposed, proposed.fingerprint)
+                if not approved.approved or approved.fingerprint != proposed.fingerprint:
+                    raise RepairStopped('policy_repair_unapproved')
+            def notify(attempt, status, code):
+                emit(context, 'patch', status, code)
+            candidate = await repair(store=store, did=context.deployment_id, mapping=context.repo_map,
+                source=context.snapshot, stage='patch', target='local', initial=candidate, error=error,
+                validate=validate_repair,
+                session=lambda: analysis_session(context.analysis_backend, context.analysis_model, context.replay),
+                limits=analysis_limits(context.analysis_backend), initial_metrics=context.metrics,
+                output_dir=context.output_dir, notify=notify)
+            manifest = candidate.manifest
+            approval = Approval(approved=True, fingerprint=candidate.fingerprint)
         store.save_validated_patch(context.deployment_id, candidate, context.repo_map, approval, "initial")
         emit(context, stage, "ok", "initial_patch_approved")
         stage = "build"
@@ -167,6 +189,10 @@ async def deploy(context, store):
             finish_run(store, context.deployment_id, "succeeded")
             return 0
         retry_store = RetryStore(Path(context.output_dir) / "retry-state.sqlite")
+        if repair_history(store, context.deployment_id):
+            # Local health recovery regenerates a deterministic patch. It must
+            # not silently replace a model-repaired bundle after a failed test.
+            raise RepairStopped('policy_repair_local_test_failed')
         previous = Metrics(**{k: v for k, v in context.metrics.items() if k in {f.name for f in fields(Metrics)}})
         async with analysis_session(context.analysis_backend, context.analysis_model, context.replay) as backend:
             result = await recover_local(deployment_id=context.deployment_id, repo_map=context.repo_map,

@@ -215,7 +215,10 @@ def deploy(context, store, config):
         stage = "patch"
         events.emit(stage, "started", "aws_patch_started")
         bundle = folder / "patch"
-        manifest = patch_snapshot(context.snapshot, context.repo_map, plan, bundle)
+        from .auto_repair import approved_local_patch
+        manifest = approved_local_patch(store, context, plan, bundle)
+        if manifest is None:
+            manifest = patch_snapshot(context.snapshot, context.repo_map, plan, bundle)
         files = tuple(sorted(set(context.repo_map.tree) | {c["path"] for c in manifest["changes"]}))
         candidate = PatchedCandidate(bundle, manifest, plan, files)
         policy_check(store, context.deployment_id, "aws", "patch", lambda: validate_patch(context.snapshot, bundle, plan))

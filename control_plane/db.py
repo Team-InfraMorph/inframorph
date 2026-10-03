@@ -124,6 +124,8 @@ class Store:
             self._conn.executescript(SCHEMA)
             from .policy_results import DDL as POLICY_DDL
             self._conn.executescript(POLICY_DDL)
+            from .auto_repair import DDL as REPAIR_DDL
+            self._conn.executescript(REPAIR_DDL)
             from .policy_lifecycle import DDL as LIFECYCLE_DDL
             self._conn.executescript(LIFECYCLE_DDL)
             from .results import DDL
@@ -166,6 +168,7 @@ class Store:
     def recover_interrupted(self):
         """서버가 꺼질 때 진행 중이던 배포는 결과를 알 수 없으므로 FAILED로 둔다."""
         with self._lock, self._conn:
+            self._conn.execute("UPDATE policy_repairs SET status='interrupted',result_code='policy_repair_interrupted' WHERE status='running'")
             self._conn.execute(
                 "UPDATE deployment_targets SET status=? WHERE status=?", (Status.FAILED.value, Status.DEPLOYING.value)
             )
@@ -220,6 +223,8 @@ class Store:
         for key in ("change_reasons", "approval_reasons"):
             data[key] = json.loads(data[key]) if data.get(key) else []
         data["analysis_metrics"] = json.loads(data["analysis_metrics"]) if data.get("analysis_metrics") else None
+        from .auto_repair import with_usage
+        data['analysis_metrics'] = with_usage(self, row['id'], data['analysis_metrics'])
         targets = self._all(
             "SELECT target, status, url, verification FROM deployment_targets WHERE deployment_id=? ORDER BY target",
             (row["id"],),
