@@ -36,6 +36,16 @@ BRANCH = re.compile(r"[A-Za-z0-9._/-]{1,100}")
 SSE_POLL_S = 0.5
 WEBHOOK_PATH = "/api/webhooks/github"
 WEB_DIST = Path(__file__).resolve().parent / "web" / "dist"
+
+
+class NoCacheHtml(StaticFiles):
+    """index.html은 매번 새로 받게 한다. 이름에 해시가 붙은 assets/ 파일만 브라우저가 캐시한다(새 빌드가 바로 보이게)."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if not path.startswith("assets/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 BUILD_TIMEOUT_S = float(os.environ.get("INFRAMORPH_BUILD_TIMEOUT", "900"))
 STAGE_NAMES = {"analyze": "AI 분석", "policy": "판단 검사", "patch": "코드 수정"}
 
@@ -330,11 +340,12 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         """이 배포 커밋의 분석 결과(C의 intent). 화면의 'AI가 이해한 앱'에 쓴다."""
         deployment = deployment_or_404(deployment_id)
         saved = store.get_deployment_analysis(deployment_id)
-        if saved is not None:
-            return {"intent": saved["intent"], "metrics": saved["metrics"],
-                    "initial_intent": saved["initial"]["intent"], "recovery": saved.get("recovery")}
         cached = store.get_analysis(deployment["project_id"], deployment["commit_sha"]) if deployment["commit_sha"] else None
-        return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"]}
+        repo_map = cached["repo_map"] if cached else None  # 화면의 '앱 코드 구조' 트리(B Repo Mapper 출력)
+        if saved is not None:
+            return {"intent": saved["intent"], "metrics": saved["metrics"], "repo_map": repo_map,
+                    "initial_intent": saved["initial"]["intent"], "recovery": saved.get("recovery")}
+        return {"intent": cached["intent"] if cached else None, "metrics": deployment["analysis_metrics"], "repo_map": repo_map}
 
     @app.get("/api/deployments/{deployment_id}/policy")
     def get_policy(deployment_id: str):
@@ -474,7 +485,7 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         }, status_code=202)
 
     if WEB_DIST.is_dir():  # npm run build 결과가 있으면 API와 같은 주소에서 화면을 낸다
-        app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
+        app.mount("/", NoCacheHtml(directory=WEB_DIST, html=True), name="web")
     return app
 
 
