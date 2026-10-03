@@ -368,7 +368,7 @@ export default function App() {
         <h1>InfraMorph 조종실</h1>
         {projects.length > 0 && <select aria-label="배포 기록을 볼 레포" value={projectId ?? ""} onChange={(e) => choose(e.target.value)}>
           {projects.map((p) => (
-            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch} · {ordered(p.targets).map((t) => ({ local: "Local 테스트", onprem: "온프레미스", aws: "AWS" })[t] ?? t).join(" · ")} · {p.project_id.slice(-6)}</option>
+            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch} · {ordered(p.targets).map((t) => ({ local: "Local 테스트", onprem: "온프레미스", aws: "AWS", gcp: "GCP" })[t] ?? t).join(" · ")} · {p.project_id.slice(-6)}</option>
           ))}
         </select>}
       </header>
