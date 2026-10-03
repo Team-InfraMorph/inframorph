@@ -1,4 +1,4 @@
-"""Executable evidence for revision 2 documentation; no changes to gate semantics."""
+"""Executable evidence for current documentation; no changes to gate semantics."""
 import ast
 import copy
 import hashlib
@@ -19,7 +19,7 @@ from tests.test_e_runtime import plan
 from builder.runtime import check_build_profile
 
 ROOT=Path(__file__).resolve().parents[1]
-DOCS=ROOT/'policy_gate/docs/1.0.0/revisions/2'
+DOCS=ROOT/'policy_gate/docs/1.0.0/revisions/3'
 
 class DocumentationContract(unittest.TestCase):
     def test_revision_one_and_rule_contract_unchanged(self):
@@ -32,9 +32,9 @@ class DocumentationContract(unittest.TestCase):
         with patch('policy_gate.catalog.release',return_value=previous):old=identity()
         for key in ('policy_digest','rules_digest','implementation_digest'):
             self.assertEqual(current[key],old[key],key)
-        self.assertEqual(current['document_revision'],2)
+        self.assertEqual(current['document_revision'],3)
         self.assertNotEqual(current['documents_digest'],baseline['identity']['documents_digest'])
-        for name,digest in baseline['revision1'].items():
+        for name,digest in (baseline['revision1'] | baseline['revision2']).items():
             self.assertEqual(hashlib.sha256((ROOT/name).read_bytes()).hexdigest(),digest,name)
 
     def test_all_rules_have_sections_and_real_test_methods(self):
@@ -66,8 +66,8 @@ class DocumentationContract(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as temp, TestClient(create_app(db_path=Path(temp)/'cp.db')) as client:
             new=client.get('/api/policies/1.0.0').json()
-            self.assertEqual(new['document_revisions'],[1,2])
-            self.assertTrue(all(d['revision']==2 for d in new['documents']))
+            self.assertEqual(new['document_revisions'],[1,2,3])
+            self.assertTrue(all(d['revision']==3 for d in new['documents']))
             old=client.get('/api/policies/1.0.0?revision=1').json()
             self.assertTrue(all(d['revision']==1 for d in old['documents']))
             self.assertEqual(client.get('/api/policies/1.0.0/documents/flow?revision=1').status_code,409)
@@ -76,7 +76,7 @@ class DocumentationContract(unittest.TestCase):
         import tempfile
         from control_plane.db import Store
         from control_plane import policy_lifecycle as life
-        previous=copy.deepcopy(release());previous['document_revision']=1
+        previous=copy.deepcopy(release());previous['document_revision']=2
         with patch('policy_gate.catalog.release',return_value=previous):baseline=identity()
         with tempfile.TemporaryDirectory() as temp:
             store=Store(Path(temp)/'cp.db')

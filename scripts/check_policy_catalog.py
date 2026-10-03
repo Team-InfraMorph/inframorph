@@ -2,6 +2,7 @@
 """Validate policy assets and release immutability without importing app inputs."""
 import argparse
 import ast
+import hashlib
 import json
 import re
 import subprocess
@@ -11,6 +12,25 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from policy_gate.catalog import release,identity,index,fingerprint,IMPLEMENTATION
+
+
+def validate_baselines(root=ROOT, current_identity=None):
+    """Check local policy baselines separately from release/tag metadata."""
+    meta = identity() if current_identity is None else current_identity
+    for path in sorted((root/'policy_gate/baselines').glob('*.json')):
+        baseline = json.loads(path.read_text())
+        assert path.stem == baseline['version'], 'baseline version differs'
+        files = baseline['documents']
+        actual = set()
+        for revision in baseline['document_revisions']:
+            folder = root/'policy_gate/docs'/baseline['version']/'revisions'/str(revision)
+            actual.update(str(p.relative_to(root)) for p in folder.rglob('*') if p.is_file())
+        assert actual == set(files), 'frozen document inventory changed'
+        for name, digest in files.items():
+            assert hashlib.sha256((root/name).read_bytes()).hexdigest() == digest, f'frozen document changed: {name}'
+        if meta['version'] == baseline['version']:
+            for key in ('policy_digest', 'rules_digest', 'implementation_digest'):
+                assert meta[key] == baseline['identity'][key], f'frozen policy identity changed: {key}'
 
 
 def validate(base=None):
@@ -35,6 +55,7 @@ def validate(base=None):
         assert doc and doc['body'].startswith(f"# {rule['id']} · {rule['title']}"), f'doc mismatch {rule["id"]}'
     pin=json.loads((ROOT/'validation/redteam-source.json').read_text())
     assert current['redteam_revision']==pin['revision'], 'redteam revision differs'
+    validate_baselines()
     for path in (ROOT/'policy_gate/releases').glob('*.json'):
         value=json.loads(path.read_text());version=value['version']
         assert re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',version) and path.stem==version
@@ -59,6 +80,8 @@ def validate(base=None):
         old_manifest=previous(f"policy_gate/releases/{json.loads(old_active)['version']}.json") if old_active else None
         for name in names:
             old=previous(name)
+            if name.startswith('policy_gate/baselines/'):
+                assert (ROOT/name).is_file() and (ROOT/name).read_bytes()==old, f'policy baseline changed: {name}'
             if name.startswith('policy_gate/releases/') and json.loads(old)['status']=='released':
                 assert (ROOT/name).exists() and (ROOT/name).read_bytes()==old, f'released manifest changed: {name}'
             if '/docs/' in name and '/revisions/' in name:
