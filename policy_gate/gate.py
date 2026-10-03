@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from schemas import Intent, Plan
 from schemas.common import check_revision, parse_evidence
+from .reporting import checked, bind
 
 EXCLUDED_DIRS = {
     ".git",
@@ -155,6 +156,7 @@ def model(cls, value):
         raise PolicyError("schema_invalid") from None
 
 
+@checked("intent")
 def validate_intent(value, snapshot, source_revision):
     try:
         check_revision(source_revision)
@@ -164,6 +166,7 @@ def validate_intent(value, snapshot, source_revision):
     require(intent.source_revision == source_revision, "revision_mismatch")
     require(not intent.unknowns, "unresolved_intent")
     files, _ = read_tree(snapshot, filter_source=True)
+    bind(snapshot_digest=digest(files), source_revision=source_revision)
     for entity in [*intent.workloads, *intent.state]:
         for evidence in entity.evidence:
             name, line = parse_evidence(evidence)
@@ -171,7 +174,8 @@ def validate_intent(value, snapshot, source_revision):
             require(
                 line <= len(files[name].decode().splitlines()), "evidence_line_missing"
             )
-    # Schema checks public workloads and Node 22; this gate checks real evidence.
+    from .rules import intent_rules
+    intent_rules(intent, files)
     return intent
 
 
@@ -229,7 +233,8 @@ class VerifiedArtifact:
     files: object
 
 
-def validate_patch(snapshot, bundle, plan, *, allowed_paths=DEFAULT_PATHS):
+@checked("patch")
+def validate_patch(snapshot, bundle, plan, *, allowed_paths=DEFAULT_PATHS, profile="reviewed"):
     plan = model(Plan, plan)
     original, _ = read_tree(snapshot, filter_source=True)
     all_bundle, _ = read_tree(bundle)
@@ -292,13 +297,14 @@ def validate_patch(snapshot, bundle, plan, *, allowed_paths=DEFAULT_PATHS):
         report.get("status") == ("patched" if changed else "unchanged"),
         "patch_status_mismatch",
     )
-    # Inspect all resulting JS, so an unchanged dangerous file cannot slip into a build.
+    from .structure import inspect_js
+    js = inspect_js(patched)
+    for name, parsed in js.items():
+        if parsed.get("error"):
+            error = PolicyError(parsed["error"]); error.path = name; raise error
+        if parsed["forbidden"]:
+            error = PolicyError("forbidden_code_pattern"); error.path = name; raise error
     for name, data in patched.items():
-        if name.endswith((".js", ".cjs", ".mjs")):
-            require(
-                not re.search(rb"child_process|\beval\s*\(|\bFunction\s*\(", data),
-                "forbidden_code_pattern",
-            )
         require(
             not re.search(
                 rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}",
@@ -335,7 +341,8 @@ def validate_patch(snapshot, bundle, plan, *, allowed_paths=DEFAULT_PATHS):
             require(applied == patched, "diff_source_mismatch")
         except (OSError, subprocess.SubprocessError):
             raise PolicyError("diff_checker_unavailable") from None
-    syntax_check(patched)
+    from .rules import patch_rules
+    patch_rules(original, patched, plan, changed, js, profile=profile)
     return VerifiedArtifact(
         plan.source_revision,
         plan.target.value,
@@ -344,3 +351,12 @@ def validate_patch(snapshot, bundle, plan, *, allowed_paths=DEFAULT_PATHS):
         sha(patch),
         MappingProxyType(dict(patched)),
     )
+
+
+@checked("plan")
+def validate_plan(intent, value):
+    from .rules import plan_rules
+    intent, plan = model(Intent, intent), model(Plan, value)
+    bind(intent_digest=sha(intent.model_dump_json().encode()), plan_digest=sha(plan.model_dump_json().encode()), source_revision=plan.source_revision)
+    plan_rules(intent, plan)
+    return plan

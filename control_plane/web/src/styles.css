@@ -431,3 +431,14 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .ht-LIVE { color: var(--ok); }
 .ht-FAILED { color: var(--fail); }
 .hwhy { margin-top: 4px; font-size: 12px; color: var(--dim); }
+
+/* ── 정책 검사 결과 (E Policy Gate) ───────────── */
+.policy-card { margin-bottom: 12px; }
+.policy-card h2 { font-size: 15px; margin: 0 0 4px; }
+.policy-results { list-style: none; padding: 0; margin: 8px 0 0; }
+.policy-results li { padding: 10px 0; border-top: 1px solid var(--line); }
+.policy-results p { margin: 4px 0; overflow-wrap: anywhere; }
+.policy-decision { margin-left: 10px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.policy-pass { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.policy-block, .policy-error { background: color-mix(in srgb, var(--fail) 16%, transparent); color: var(--fail); }
+.policy-unsupported { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }

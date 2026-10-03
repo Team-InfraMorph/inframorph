@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
+import PolicyCard from "./PolicyCard.jsx";
 import { Badge, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
 import { AppCode } from "./CodeTree.jsx";
 import { PatchCard } from "./Patch.jsx";
@@ -225,6 +226,8 @@ export default function App() {
   const [intent, setIntent] = useState(null);
   const [repoMap, setRepoMap] = useState(null);
   const [patch, setPatch] = useState({});
+  const [policy, setPolicy] = useState(null);
+  const [policyError, setPolicyError] = useState(false);
   const [error, setError] = useState("");
 
   const project = projects.find((p) => p.project_id === projectId);
@@ -280,6 +283,18 @@ export default function App() {
     api.patch(selectedKey).then((value) => alive && setPatch(value)).catch(() => alive && setPatch({}));
     return () => { alive = false; };
   }, [selectedKey, selectedStatus]);
+
+  useEffect(() => {
+    setPolicy(null); setPolicyError(false);
+    if (!selectedKey) return;
+    let alive = true;
+    const loadPolicy = () => api.policy(selectedKey).then(value => {
+      if (alive) { setPolicy(value); setPolicyError(false); }
+    }).catch(() => { if (alive) setPolicyError(true); });
+    loadPolicy();
+    const timer = setInterval(loadPolicy, 1500);
+    return () => { alive = false; clearInterval(timer); };
+  }, [selectedKey]);
 
   const choose = (id) => {
     setProjectId(id);
@@ -383,9 +398,10 @@ export default function App() {
             </Section>
           )}
 
-          {Object.keys(patch).length > 0 && (
-            <Section n="4" title="코드 변경 내역">
-              <PatchCard patch={patch} />
+          {(Object.keys(patch).length > 0 || policy?.results?.length > 0 || policyError) && (
+            <Section n="4" title="코드 변경 · 정책 검사">
+              <PolicyCard data={policy} error={policyError} />
+              {Object.keys(patch).length > 0 && <PatchCard patch={patch} />}
             </Section>
           )}
 

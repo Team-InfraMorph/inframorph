@@ -60,6 +60,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+      - name: Test and build policy UI
+        working-directory: control_plane/web
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node --test tests/policy-card.test.mjs
+          npm run build
       - name: Test gates, contracts and recovery without cloud credentials
         run: |
           node --version

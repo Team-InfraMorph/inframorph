@@ -22,6 +22,7 @@ export const api = {
   deployments: (projectId) => request("GET", `/projects/${projectId}/deployments`),
   plans: (deploymentId) => request("GET", `/deployments/${deploymentId}/plans`),
   analysis: (deploymentId) => request("GET", `/deployments/${deploymentId}/analysis`),
+  policy: (deploymentId) => request("GET", `/deployments/${deploymentId}/policy`),
   patch: (deploymentId) => request("GET", `/deployments/${deploymentId}/patch`),
   approve: (deploymentId) => request("POST", `/deployments/${deploymentId}/approve`),
   reject: (deploymentId) => request("POST", `/deployments/${deploymentId}/reject`),

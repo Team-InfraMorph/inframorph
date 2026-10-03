@@ -135,7 +135,7 @@ class CorpusIntegrationTests(unittest.TestCase):
 
     def test_all_cases_execute_real_host_boundaries(self):
         report = verify(self.corpus)
-        self.assertEqual((report["passed"], report["failed"], report["not_run"]), (25, 0, 0))
+        self.assertEqual((report["passed"], report["failed"], report["not_run"]), (39, 0, 0))
         self.assertEqual(report["live_model_behavior"], "not_measured")
 
     def test_expectation_tampering_and_missing_case_cannot_turn_green(self):

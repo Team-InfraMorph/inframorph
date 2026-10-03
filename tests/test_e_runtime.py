@@ -47,7 +47,7 @@ class GateTests(unittest.TestCase):
         (self.original / "src/storage.js").write_text("module.exports = {};\n")
         self.bundle = self.root / "bundle"
         self.bundle.mkdir()
-        self.make_bundle({"src/storage.js": b"module.exports = { version: 2 };\n"})
+        self.make_bundle({"src/storage.js": b"module.exports = {}; // version 2 documentation\n"})
 
     def make_bundle(self, after):
         import shutil

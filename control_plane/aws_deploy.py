@@ -15,7 +15,8 @@ from analyzer.snapshot import Snapshot
 from analyzer.source_policy import validate_demo_intent, validate_demo_plan
 from analyzer.recovery import Approval, PatchedCandidate, _assert_patch
 from code_patch import patch_snapshot
-from policy_gate.gate import validate_intent, validate_patch
+from policy_gate.gate import validate_intent, validate_patch, validate_plan
+from .policy_results import check as policy_check
 from builder.runtime import build
 from adapters.aws.contracts import Plan as AwsPlan, BuildArtifact as AwsArtifact, FoundationOutputs
 from adapters.aws.deployment import DeploymentOrchestrator, DeploymentRequest
@@ -128,7 +129,8 @@ def deploy(context, store, config):
             raise ValueError("runtime_source_changed")
         validate_demo_intent(context.intent, context.snapshot, context.repo_map)
         validate_demo_plan(plan, context.repo_map, target="aws")
-        validate_intent(context.intent, context.snapshot, context.repo_map.commit)
+        policy_check(store, context.deployment_id, "aws", "intent", lambda: validate_intent(context.intent, context.snapshot, context.repo_map.commit))
+        policy_check(store, context.deployment_id, "aws", "plan", lambda: validate_plan(context.intent, plan))
         events.emit("policy", "ok", "aws_intent_source_approved")
         stage = "patch"
         events.emit(stage, "started", "aws_patch_started")
@@ -136,13 +138,13 @@ def deploy(context, store, config):
         manifest = patch_snapshot(context.snapshot, context.repo_map, plan, bundle)
         files = tuple(sorted(set(context.repo_map.tree) | {c["path"] for c in manifest["changes"]}))
         candidate = PatchedCandidate(bundle, manifest, plan, files)
-        validate_patch(context.snapshot, bundle, plan)
+        policy_check(store, context.deployment_id, "aws", "patch", lambda: validate_patch(context.snapshot, bundle, plan))
         _assert_patch(candidate, context.repo_map)
         store.save_validated_patch(context.deployment_id, candidate, context.repo_map,
                                    Approval(approved=True, fingerprint=candidate.fingerprint), "initial")
         events.emit(stage, "ok", "aws_patch_approved")
         stage = "build"
-        artifact = build(context.snapshot, bundle, plan, deployment_id=context.deployment_id, sink=send)
+        artifact = policy_check(store, context.deployment_id, "aws", "build", lambda: build(context.snapshot, bundle, plan, deployment_id=context.deployment_id, sink=send))
         _assert_patch(candidate, context.repo_map)
         aws_artifact = AwsArtifact.parse(artifact.model_dump(mode="json"))
         private_json(folder / "build.aws.json", artifact.model_dump(mode="json"))
