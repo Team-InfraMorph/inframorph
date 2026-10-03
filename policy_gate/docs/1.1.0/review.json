@@ -1,0 +1,173 @@
+{
+  "policy_version": "1.1.0",
+  "rule_ids": [
+    "I-001",
+    "I-003",
+    "P-004",
+    "G-002",
+    "G-003",
+    "I-000",
+    "I-006",
+    "I-004",
+    "I-002",
+    "L-001",
+    "L-002",
+    "P-001",
+    "P-006",
+    "P-007",
+    "P-002",
+    "P-003",
+    "P-005",
+    "X-001"
+  ],
+  "required_sections": [
+    "purpose",
+    "inputs",
+    "procedure",
+    "decisions",
+    "evidence",
+    "remedy",
+    "cases",
+    "limits",
+    "history",
+    "references"
+  ],
+  "tests": {
+    "I-001": [
+      "tests.test_policy_documentation.DocumentedScenarios.test_evidence_boundaries",
+      "tests.test_e_runtime.GateTests.test_missing_evidence"
+    ],
+    "I-003": [
+      "tests.test_policy_hardening.RuleTests.test_db_claim_and_evidence_are_related",
+      "tests.test_policy_hardening.RuleTests.test_omitted_db_is_blocked",
+      "tests.test_policy_documentation.DocumentedScenarios.test_db_failure_stops_following_rules"
+    ],
+    "P-004": [
+      "tests.test_policy_hardening.RuleTests.test_arbitrary_behavior_inside_allowed_file_is_blocked",
+      "tests.test_policy_hardening.RuleTests.test_ast_preserves_regex_and_directives",
+      "tests.test_policy_documentation.DocumentedScenarios.test_unchanged_js_still_calls_parser"
+    ],
+    "G-002": [
+      "tests.test_control_plane_runtime.RuntimeTests.test_source_package_rename_does_not_bypass_the_reviewed_profile",
+      "tests.test_policy_documentation.DocumentedScenarios.test_storage_omission_is_blocked_by_source_profile",
+      "tests.test_policy_documentation_contracts.VersionContractTests.test_source_evidence_reasons_and_links",
+      "tests.test_policy_documentation_contracts.VersionContractTests.test_record_walkthrough"
+    ],
+    "G-003": [
+      "tests.test_control_plane_runtime.RuntimeTests.test_plan_cannot_inject_node_execution_options",
+      "tests.test_policy_documentation.DocumentedScenarios.test_profile_and_plan_rules"
+    ],
+    "I-000": [
+      "tests.test_e_runtime.GateTests.test_unknown_or_revision",
+      "tests.test_e_runtime.GateTests.test_symlink_and_hardlink",
+      "tests.test_policy_documentation.DocumentedScenarios.test_unreadable_source_classification"
+    ],
+    "I-006": [
+      "tests.test_policy_hardening.RuleTests.test_unsupported_config_and_parser_failure_are_not_pass",
+      "tests.test_policy_documentation.DocumentedScenarios.test_config_decision_branches"
+    ],
+    "I-004": [
+      "tests.test_policy_documentation.DocumentedScenarios.test_storage_omission_is_blocked_by_source_profile",
+      "tests.test_policy_documentation.DocumentedScenarios.test_storage_evidence_branches"
+    ],
+    "I-002": [
+      "tests.test_policy_documentation.DocumentedScenarios.test_worker_omission",
+      "tests.test_e_runtime.LocalTests.test_worker_no_shell_or_port"
+    ],
+    "L-001": [
+      "tests.test_e_runtime.GateTests.test_excess_public",
+      "tests.test_policy_documentation.DocumentedScenarios.test_profile_and_plan_rules",
+      "tests.test_policy_documentation_contracts.VersionContractTests.test_plan_example_passes_profile_and_relationship",
+      "tests.test_policy_documentation_contracts.VersionContractTests.test_plan_contract_boundaries"
+    ],
+    "L-002": [
+      "tests.test_policy_hardening.RuleTests.test_plan_cannot_add_workers_or_override_secrets",
+      "tests.test_policy_documentation.DocumentedScenarios.test_profile_and_plan_rules"
+    ],
+    "P-001": [
+      "tests.test_e_runtime.GateTests.test_tampered_content",
+      "tests.test_e_runtime.GateTests.test_added_deleted_and_renamed_paths",
+      "tests.test_e_runtime.GateTests.test_manifest_version_rejected",
+      "tests.test_policy_documentation_contracts.VersionContractTests.test_manifest_example_is_real_generator_output",
+      "tests.test_policy_documentation_contracts.VersionContractTests.test_manifest_comparisons_and_metadata_boundary"
+    ],
+    "P-006": [
+      "tests.test_policy_hardening.RuleTests.test_comments_and_strings_do_not_trigger_execution_rule",
+      "tests.test_e_runtime.GateTests.test_forbidden_and_syntax",
+      "tests.test_policy_documentation.DocumentedScenarios.test_parser_failure_ledger"
+    ],
+    "P-007": [
+      "tests.test_policy_documentation.DocumentedScenarios.test_secret_pattern_ledger"
+    ],
+    "P-002": [
+      "tests.test_e_runtime.GateTests.test_manifest_and_diff_must_agree_with_source",
+      "tests.test_policy_documentation.DocumentedScenarios.test_diff_failure_ledger"
+    ],
+    "P-003": [
+      "tests.test_policy_hardening.RuleTests.test_prisma_preserves_models_defaults_and_directives",
+      "tests.test_policy_documentation.DocumentedScenarios.test_prisma_transform_ledger"
+    ],
+    "P-005": [
+      "tests.test_policy_documentation.DocumentedScenarios.test_dependency_transform_ledger"
+    ],
+    "X-001": [
+      "tests.test_e_runtime.GateTests.test_build_profile_requires_reviewed_lock",
+      "tests.test_e_runtime.GateTests.test_rejected_gate_never_invokes_docker",
+      "tests.test_policy_documentation.DocumentedScenarios.test_build_profile_boundaries"
+    ]
+  },
+  "baseline": {
+    "rules_digest": "e8243f118e1710d183f0a6d7f4c0af7130e14c6605d54211a09ecb661e945129",
+    "behavior_files": {
+      "policy_gate/gate.py": "37daa2a0117928fa09911eb8b037ec68874ee45d9c2d9b7d9f5c3a2b584b7aaf",
+      "policy_gate/rules.py": "0a0d22c961c3233afd8b32dd29a2004a3ac5e3aad35019ab6d7a64bc79507877",
+      "policy_gate/structure.py": "42db8a200d7606598eb5c015a4cd07ac25dde913a2c2498c3310ff45d148c027",
+      "analyzer/source_policy.py": "120bb827c24d0fa86631a235f46d3cdf41428779ac80e73c0c2c48cc699d3349",
+      "builder/runtime.py": "857fd196253c2996a740a46610e8a660dd751a2cd8c2b1e4e7926a6387bc7791"
+    },
+    "previous_commit": "b003fd9b6b0fd007eee90ebf01e2b3db518f8d41"
+  },
+  "implementation_references": {
+    "I-001": "policy_gate/gate.py · validate_intent",
+    "I-003": "policy_gate/rules.py · intent_rules / config_check",
+    "P-004": "policy_gate/rules.py · patch_rules; policy_gate/structure.py · inspect_js / prisma_structure",
+    "G-002": "analyzer/source_policy.py · validate_demo_intent",
+    "G-003": "analyzer/source_policy.py · validate_demo_plan",
+    "I-000": "policy_gate/gate.py · validate_intent",
+    "I-006": "policy_gate/rules.py · intent_rules / config_check",
+    "I-004": "policy_gate/rules.py · intent_rules / config_check",
+    "I-002": "policy_gate/rules.py · intent_rules / config_check",
+    "L-001": "policy_gate/gate.py · validate_plan; schemas/plan.py · Plan / ServiceSpec",
+    "L-002": "policy_gate/rules.py · plan_rules / config_check",
+    "P-001": "policy_gate/gate.py · validate_patch",
+    "P-006": "policy_gate/gate.py · validate_patch; policy_gate/inspect_js.cjs · AST 방문; policy_gate/structure.py · inspect_js",
+    "P-007": "policy_gate/gate.py · validate_patch",
+    "P-002": "policy_gate/gate.py · validate_patch",
+    "P-003": "policy_gate/rules.py · patch_rules; policy_gate/structure.py · inspect_js / prisma_structure",
+    "P-005": "policy_gate/rules.py · patch_rules; policy_gate/structure.py · inspect_js / prisma_structure",
+    "X-001": "builder/runtime.py · check_build_profile"
+  },
+  "verified_on": "2026-10-03",
+  "verification": {
+    "status": "passed",
+    "python_tests": 467,
+    "focused_tests_included": 69,
+    "aws_mock_tests": 43,
+    "ui_tests": 34,
+    "redteam_cases_included": 39,
+    "redteam_commit": "488833528c3c9a389d0af05606c9bb1cdeaa1c99",
+    "ui_build": "passed",
+    "catalog_rules": 18,
+    "browser": "version_selection_and_legacy_links_checked",
+    "remote_deployment": "not_run",
+    "integrated_main": "d49ebee289e51fbb652bc7a64ff47a2f6da37a8c"
+  },
+  "walkthrough_tests": [
+    "tests.test_policy_documentation_baseline.WalkthroughTests.test_missing_evidence_then_repair",
+    "tests.test_policy_documentation_baseline.WalkthroughTests.test_db_analysis_then_approved_transform",
+    "tests.test_policy_documentation_baseline.WalkthroughTests.test_unrelated_patch_then_regenerate",
+    "tests.test_policy_documentation_baseline.ExecutionFlowTests.test_local_failure_prevents_remote_commands",
+    "tests.test_policy_documentation_contracts.VersionContractTests.test_record_walkthrough"
+  ],
+  "inherited_explanation_baseline": "1.0.0"
+}

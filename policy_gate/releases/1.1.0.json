@@ -1,0 +1,431 @@
+{
+  "family": "inframorph-policy",
+  "version": "1.1.0",
+  "status": "development",
+  "profile": "reviewed-node22",
+  "result_schema_version": "1.0.0",
+  "previous": "1.0.0",
+  "git_commit": null,
+  "pull_request": null,
+  "tag": null,
+  "rules": [
+    {
+      "id": "G-002",
+      "revision": 2,
+      "stage": "source",
+      "title": "지원 소스와 분석 일치",
+      "expected": "검토된 실행 소스와 분석 조건이 일치해야 합니다.",
+      "remedy": "검토된 demo-app 소스와 실행 조건을 사용하세요.",
+      "document": "rules/G-002",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py",
+        "tests/test_demo_board.py"
+      ],
+      "implementation": "analyzer/source_policy.py",
+      "reason_codes": [
+        "intent_source_mismatch",
+        "invalid_source_evidence",
+        "non_source_evidence",
+        "unreviewed_runtime_source"
+      ],
+      "applicability": "rule('G-002')"
+    },
+    {
+      "id": "G-003",
+      "revision": 2,
+      "stage": "profile",
+      "title": "지원 배포 프로필",
+      "expected": "대상 환경에 맞는 검토된 배포 설계여야 합니다.",
+      "remedy": "지원하는 Local/AWS 프로필을 확인하세요.",
+      "document": "rules/G-003",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py",
+        "tests/test_demo_board.py"
+      ],
+      "implementation": "analyzer/source_policy.py",
+      "reason_codes": [
+        "plan_source_mismatch"
+      ],
+      "applicability": "rule('G-003')"
+    },
+    {
+      "id": "I-000",
+      "revision": 1,
+      "stage": "intent",
+      "title": "분석 형식과 소스 식별",
+      "expected": "분석 형식·revision·미해결 요구사항을 확인합니다.",
+      "remedy": "현재 소스 기준으로 분석을 완료하세요.",
+      "document": "rules/I-000",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "revision_invalid",
+        "revision_mismatch",
+        "unresolved_intent"
+      ],
+      "applicability": "rule('I-000')"
+    },
+    {
+      "id": "I-001",
+      "revision": 1,
+      "stage": "intent",
+      "title": "근거 파일과 줄",
+      "expected": "인용한 파일과 줄이 현재 소스에 존재해야 합니다.",
+      "remedy": "현재 commit에 존재하는 근거를 제시하세요.",
+      "document": "rules/I-001",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "evidence_file_missing",
+        "evidence_line_missing"
+      ],
+      "applicability": "rule('I-001')"
+    },
+    {
+      "id": "I-006",
+      "revision": 1,
+      "stage": "intent",
+      "title": "일반 설정과 비밀정보 분리",
+      "expected": "지원 설정만 사용하고 비밀정보 이름을 덮어쓰지 않아야 합니다.",
+      "remedy": "설정 이름·값과 비밀정보 충돌을 확인하세요.",
+      "document": "rules/I-006",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [],
+      "applicability": "rule('I-006')"
+    },
+    {
+      "id": "I-003",
+      "revision": 1,
+      "stage": "intent",
+      "title": "DB 종류와 근거 일치",
+      "expected": "DB 종류·요구 누락·datasource 근거를 확인합니다.",
+      "remedy": "Prisma datasource에 맞게 DB 요구와 근거를 수정하세요.",
+      "document": "rules/I-003",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "db_evidence_unrelated",
+        "db_provider_mismatch",
+        "db_requirement_missing",
+        "db_schema_missing"
+      ],
+      "applicability": "rule('I-003')"
+    },
+    {
+      "id": "I-004",
+      "revision": 1,
+      "stage": "intent",
+      "title": "파일 저장 근거",
+      "expected": "검토된 저장 코드의 읽기·쓰기와 근거가 연결되어야 합니다.",
+      "remedy": "지원 저장 코드와 uploads 경로의 근거를 확인하세요.",
+      "document": "rules/I-004",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "storage_evidence_unrelated",
+        "storage_evidence_unsupported",
+        "storage_path_unsupported"
+      ],
+      "applicability": "rule('I-004', applies=any((s.kind == 'persistent_files' for s in intent.state)), reason='no_persistent_files')"
+    },
+    {
+      "id": "I-002",
+      "revision": 1,
+      "stage": "intent",
+      "title": "worker 실행 근거",
+      "expected": "worker 명령·파일·근거와 요구 누락을 확인합니다.",
+      "remedy": "지원하는 worker 진입 파일과 실행 명령을 확인하세요.",
+      "document": "rules/I-002",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "package_invalid",
+        "worker_command_unsupported",
+        "worker_entry_missing",
+        "worker_evidence_unrelated",
+        "worker_requirement_missing"
+      ],
+      "applicability": "rule('I-002')"
+    },
+    {
+      "id": "L-001",
+      "revision": 1,
+      "stage": "plan",
+      "title": "설계 형식",
+      "expected": "대상과 노출 조건을 포함한 설계 형식을 확인합니다.",
+      "remedy": "설계 형식과 공개 서비스 조건을 확인하세요.",
+      "document": "rules/L-001",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [],
+      "applicability": "rule('L-001')"
+    },
+    {
+      "id": "L-002",
+      "revision": 1,
+      "stage": "plan",
+      "title": "분석과 설계 일치",
+      "expected": "서비스·상태·비밀정보·설정·자원 범위가 분석과 일치해야 합니다.",
+      "remedy": "검증된 분석에 맞춰 설계를 수정하세요.",
+      "document": "rules/L-002",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [],
+      "applicability": "rule('L-002')"
+    },
+    {
+      "id": "P-001",
+      "revision": 1,
+      "stage": "patch",
+      "title": "패치 묶음과 변경 범위",
+      "expected": "원본·패치·manifest 해시 및 허용 파일 범위를 확인합니다.",
+      "remedy": "동일 소스로 패치를 다시 만들고 허용 범위를 지키세요.",
+      "document": "rules/P-001",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "artifact_digest_mismatch",
+        "bundle_extra_file",
+        "bundle_incomplete",
+        "change_manifest_mismatch",
+        "deletion_forbidden",
+        "manifest_gate_flag_missing",
+        "manifest_invalid",
+        "manifest_version_unsupported",
+        "patch_allowlist_violation",
+        "patch_status_mismatch",
+        "revision_or_target_mismatch",
+        "sensitive_source_path"
+      ],
+      "applicability": "rule('P-001')"
+    },
+    {
+      "id": "P-006",
+      "revision": 1,
+      "stage": "patch",
+      "title": "JavaScript 실행 구문",
+      "expected": "지원 구문으로 파싱하고 금지 실행 구문을 확인합니다.",
+      "remedy": "금지된 실행 구문을 제거하거나 지원 구문을 사용하세요.",
+      "document": "rules/P-006",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "forbidden_code_pattern"
+      ],
+      "applicability": "rule('P-006')"
+    },
+    {
+      "id": "P-007",
+      "revision": 1,
+      "stage": "patch",
+      "title": "소스 내 비밀정보",
+      "expected": "탐지 가능한 비밀키 패턴이 포함되지 않아야 합니다.",
+      "remedy": "소스의 비밀정보를 제거하고 안전한 설정 경로를 사용하세요.",
+      "document": "rules/P-007",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "secret_in_source"
+      ],
+      "applicability": "rule('P-007')"
+    },
+    {
+      "id": "P-002",
+      "revision": 1,
+      "stage": "patch",
+      "title": "diff와 결과물 일치",
+      "expected": "diff를 실제 적용한 결과가 제출한 소스와 일치해야 합니다.",
+      "remedy": "패치와 결과 소스를 동일한 작업에서 생성하세요.",
+      "document": "rules/P-002",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "diff_apply_failed",
+        "diff_checker_unavailable",
+        "diff_source_mismatch"
+      ],
+      "applicability": "rule('P-002')"
+    },
+    {
+      "id": "P-003",
+      "revision": 1,
+      "stage": "patch",
+      "title": "Prisma 구조 보존",
+      "expected": "DB provider 전환 외 모델·설정 토큰을 보존해야 합니다.",
+      "remedy": "승인된 DB 전환 외 구조 변경을 제거하세요.",
+      "document": "rules/P-003",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "prisma_provider_invalid",
+        "prisma_structure_changed",
+        "prisma_transform_unsupported"
+      ],
+      "applicability": "rule('P-003', applies='prisma/schema.prisma' in changed, reason='schema_unchanged')"
+    },
+    {
+      "id": "P-004",
+      "revision": 1,
+      "stage": "patch",
+      "title": "허용된 코드 변환",
+      "expected": "동일 AST 또는 승인된 저장 템플릿 변환만 허용합니다.",
+      "remedy": "저장 변환과 무관한 코드 변경을 제거하세요.",
+      "document": "rules/P-004",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "patch_behavior_changed"
+      ],
+      "applicability": "rule('P-004', applies=any((n.endswith(('.js', '.cjs', '.mjs')) for n in changed)), reason='javascript_unchanged')"
+    },
+    {
+      "id": "P-005",
+      "revision": 1,
+      "stage": "patch",
+      "title": "의존성 변경 범위",
+      "expected": "승인된 저장 SDK와 잠금 파일 변경만 허용합니다.",
+      "remedy": "검토된 의존성과 잠금 파일을 사용하세요.",
+      "document": "rules/P-005",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "policy_gate/gate.py + policy_gate/rules.py",
+      "reason_codes": [
+        "dependency_change_forbidden"
+      ],
+      "applicability": "rule('P-005', applies=bool(set(changed) & {'package.json', 'package-lock.json'}), reason='dependencies_unchanged')"
+    },
+    {
+      "id": "X-001",
+      "revision": 1,
+      "stage": "build_profile",
+      "title": "빌드 입력 프로필",
+      "expected": "검토된 의존성과 Prisma generator 구성을 확인합니다.",
+      "remedy": "검토된 lock과 빌드 프로필을 사용하세요.",
+      "document": "rules/X-001",
+      "introduced": "1.0.0",
+      "tests": [
+        "tests/test_policy_lifecycle.py",
+        "tests/test_e_runtime.py",
+        "tests/test_policy_hardening.py"
+      ],
+      "implementation": "builder/runtime.py",
+      "reason_codes": [
+        "build_profile_incomplete",
+        "package_invalid",
+        "unreviewed_dependencies",
+        "unreviewed_dependency_lock",
+        "unsupported_prisma_generators",
+        "unsupported_prisma_output"
+      ],
+      "applicability": "rule('X-001')"
+    }
+  ],
+  "changes": [
+    {
+      "id": "reviewed-demo-board",
+      "kind": "support",
+      "rule_ids": [
+        "G-002",
+        "G-003"
+      ],
+      "targets": [
+        "local",
+        "aws"
+      ],
+      "profiles": [
+        "reviewed-node22"
+      ],
+      "recheck": false,
+      "review": false,
+      "redeploy": false,
+      "reason": "검토된 체험 V1·V2 파일 묶음을 Local 전용으로 추가합니다. 기존 V1·V2 판정 조건은 유지합니다.",
+      "regression_tests": [
+        "tests/test_demo_board.py"
+      ],
+      "failure_references": []
+    }
+  ],
+  "redteam_revision": "488833528c3c9a389d0af05606c9bb1cdeaa1c99",
+  "frozen_hashes": null
+}

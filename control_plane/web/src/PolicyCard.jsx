@@ -33,7 +33,7 @@ export default function PolicyCard({data,error,onRecheck,history,onReview,onFail
   const impact=history?.impacts?.find(x=>x.target===actualTarget);
   const job=history?.jobs?.filter(x=>x.target===actualTarget).at(-1);
   return <section className="card policy-card" id="policy-inspections" aria-label="정책 검사 결과">
-    <div className="policy-heading"><div><h2>정책 검사</h2><p className="dim">정책 통과와 실제 배포·공개 접속 확인은 별도 결과입니다.</p></div><a href="#/policy/1.0.0/overview">정책 문서 ↗</a></div>
+    <div className="policy-heading"><div><h2>정책 검사</h2><p className="dim">정책 통과와 실제 배포·공개 접속 확인은 별도 결과입니다.</p></div><a href={`#/policy/${row?.family === "inframorph-policy" ? row.version : "1.0.0"}/overview`}>정책 문서 ↗</a></div>
     {error ? <p role="alert">정책 결과를 불러오지 못했습니다. 마지막 기록을 최신 통과 결과로 사용할 수 없습니다.</p>
       : !rows.length ? <p className="policy-empty">아직 기록된 정책 검사 결과가 없습니다.</p>
       : <>
@@ -73,10 +73,10 @@ export default function PolicyCard({data,error,onRecheck,history,onReview,onFail
           </details>}
         </>}
       </>}
-    {impact && <aside className="policy-impact"><strong>현재 정책 변경 영향</strong><p>{impact.impact.reason==='target_scope_requires_review'?'온프레미스는 Local에서 검증한 이미지를 사용합니다. 대상별 정책 재검사 자료는 아직 연결되지 않았습니다.':impact.impact.reason==='current_policy'?'현재 활성 정책으로 검사한 배포입니다.':impact.impact.review?'새 정책으로 재검사하고 배포별 검토가 필요합니다.':'변경 영향을 확인하세요.'}</p><a href="#/policy/1.0.0/impacts">배포 영향과 필요한 조치 ↗</a>
+    {impact && <aside className="policy-impact"><strong>현재 정책 변경 영향</strong><p>{impact.impact.reason==='target_scope_requires_review'?'온프레미스는 Local에서 검증한 이미지를 사용합니다. 대상별 정책 재검사 자료는 아직 연결되지 않았습니다.':impact.impact.reason==='current_policy'?'현재 활성 정책으로 검사한 배포입니다.':impact.impact.review?'새 정책으로 재검사하고 배포별 검토가 필요합니다.':'변경 영향을 확인하세요.'}</p><a href={`#/policy/${impact?.active?.version || row?.version || "1.0.0"}/impacts`}>배포 영향과 필요한 조치 ↗</a>
       {onRecheck&&<button className="secondary" disabled={pending||error} onClick={()=>act(()=>onRecheck(actualTarget))}>정책 재검사</button>}
       {job?.result && <p>최근 재검사: {labels[job.result.decision]||'재검사 불가'} · {job.result.reason_code}</p>}
-      {job?.result?.decision==='PASS'&&!job.reviewed&&<a href="#/policy/1.0.0/impacts">변경 내용을 확인하고 검토하기</a>}
+      {job?.result?.decision==='PASS'&&!job.reviewed&&<a href={`#/policy/${impact?.active?.version || row?.version || "1.0.0"}/impacts`}>변경 내용을 확인하고 검토하기</a>}
     </aside>}
     <PolicyHistory key={deploymentId} results={rows} history={history} target={actualTarget} selectable={rows.map(r=>r.execution_id)} onSelect={id=>{const found=rows.find(r=>r.execution_id===id);if(found){setTarget(found.target);setSelected(id);}}}/>
     {actionError&&<p role="alert">{actionError}</p>}

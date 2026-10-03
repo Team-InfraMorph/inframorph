@@ -187,6 +187,13 @@ class LocalRuntime:
     def demo_versions(self):
         return self.b.versions() if isinstance(self.b, (DemoModules, GitHubModules)) else []
 
+    def validate_demo_selection(self, project, version, targets):
+        revision = self.demo_revision(project, version)
+        selected = next(item for item in self.demo_versions() if item["id"] == version)
+        if not set(targets or project.get("targets", ["local"])) <= set(selected["supported_targets"]):
+            raise ValueError("demo_target_unsupported")
+        return revision
+
     def demo_revision(self, project, version):
         if project["repo_url"].rstrip("/").removesuffix(".git") != "https://github.com/Team-InfraMorph/demo-app":
             raise ValueError("demo_repository_required")
@@ -214,6 +221,11 @@ class LocalRuntime:
             folder.mkdir(parents=True, exist_ok=False, mode=0o700)
             folder_created = True
             mapped = self.b.map(project, deployment, folder)
+            from analyzer.source_policy import board_profile
+            board = board_profile(mapped.repo_map.commit)
+            if board and (project["repo_url"].rstrip("/").removesuffix(".git") != "https://github.com/Team-InfraMorph/demo-app"
+                          or not targets <= set(board["supported_targets"])):
+                raise SourcePolicyError("plan_source_mismatch")
             stage = "snapshot"
             replay = (None if self.analysis_backend != "replay" else
                       Path(self.replay or self.b.replay(mapped.repo_map)).absolute())

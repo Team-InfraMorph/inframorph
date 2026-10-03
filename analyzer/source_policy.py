@@ -27,6 +27,15 @@ class SourcePolicyError(ValueError):
         super().__init__(self.code)
 
 
+def board_profiles():
+    """Host-owned exact commits and file bundles, never supplied by a repository."""
+    return json.loads(Path(__file__).with_name("board-profiles.json").read_text())
+
+
+def board_profile(revision):
+    return next((p for p in board_profiles() if p["commit_sha"] == revision), None)
+
+
 @checked('source')
 def validate_demo_intent(value, source, mapping):
     with rule('G-002') as evidence:
@@ -39,6 +48,12 @@ def validate_demo_intent(value, source, mapping):
         required["src/server.js"] = profile["server"]
         if worker:
             required["src/worker.js"] = [profile["worker"]]
+        board = board_profile(mapping.commit)
+        evidence_files = set(required) | {"package.json"}
+        if board:
+            if set(files) != set(board["files"]):
+                raise SourcePolicyError("unreviewed_runtime_source")
+            required = {name: [digest] for name, digest in board["files"].items()}
         for name, hashes in required.items():
             if name not in files or hashlib.sha256(files[name]).hexdigest() not in hashes:
                 raise SourcePolicyError("unreviewed_runtime_source")
@@ -82,7 +97,7 @@ def validate_demo_intent(value, source, mapping):
         for entity in [*intent.workloads, *intent.state]:
             for citation in entity.evidence:
                 name, line = parse_evidence(citation)
-                if name not in set(required) | {"package.json"}:
+                if name not in evidence_files:
                     raise SourcePolicyError("non_source_evidence")
                 rows = files[name].decode().splitlines()
                 if line > len(rows) or not rows[line - 1].strip():
@@ -102,6 +117,10 @@ def validate_demo_plan(value, mapping, *, target="local"):
         actual = [(s.name, s.kind.value, s.port, s.health, s.public, s.command) for s in plan.services]
         config = dict(plan.config)
         config.pop("PORT", None)
+        board = board_profile(mapping.commit)
+        # UI assets identify a board even when a caller supplies an unregistered SHA.
+        if any(name.startswith("src/web/") for name in mapping.tree) and (board is None or target not in board["supported_targets"]):
+            raise SourcePolicyError("plan_source_mismatch")
         if target not in {"local", "aws"}:
             raise SourcePolicyError("plan_source_mismatch")
         if (plan.source_revision != mapping.commit or plan.app != "demo-app" or plan.target.value != target or

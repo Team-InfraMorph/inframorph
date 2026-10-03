@@ -168,6 +168,7 @@ class EConnector:
                 await task
             raise
         if not reply["ok"]:
+            self.last_execution_failure = {"code": reply["code"], "rollback_verified": reply.get("rollback_verified", False)}
             return LocalCheck(ok=False, failure=classify_e_failure(reply["code"]))
         self.last_deployment = reply["deployment"]
         if self.receipt_sink and self.last_candidate and self.last_intent:
