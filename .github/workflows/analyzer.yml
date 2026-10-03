@@ -11,6 +11,7 @@ on:
       - 'tests/**'
       - 'requirements.txt'
       - '.github/workflows/analyzer.yml'
+      - 'scripts/prepare_demo_board_sources.py'
 
 permissions:
   contents: read
@@ -29,6 +30,8 @@ jobs:
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
+      - name: Fetch and verify pinned demo-app V3 sources
+        run: .venv/bin/python scripts/prepare_demo_board_sources.py
       - name: Test Analyzer, Code Patch and shared contracts without API calls
         run: |
           node --version

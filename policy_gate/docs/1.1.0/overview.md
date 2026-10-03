@@ -30,4 +30,4 @@ InfraMorph는 AI가 읽은 앱 요구를 배포 설계와 코드 변환으로 �
 
 ## 체험 보드 지원 {#board-support}
 
-검토된 체험 V1·V2는 Local에서 지원합니다. [체험 보드 계약](board.md#scope)에서 파일 검사와 실행 확인 범위를 확인하세요. 기존 [자동 복구](auto-repair.md) 흐름은 유지됩니다.
+검토된 V3 체험 보드는 Local에서 지원합니다. [체험 보드 계약](board.md#scope)에서 파일 검사와 실행 확인 범위를 확인하세요. 기존 [자동 복구](auto-repair.md) 흐름은 유지됩니다.

@@ -16,6 +16,7 @@ on:
       - 'requirements.txt'
       - 'scripts/verify_e_*.py'
       - 'scripts/verify_demo_board*.py'
+      - 'scripts/prepare_demo_board_sources.py'
       - 'scripts/redteam_boundaries.py'
       - 'scripts/check_policy_catalog.py'
       - 'validation/redteam-source.json'
@@ -78,6 +79,8 @@ jobs:
           else
             .venv/bin/python scripts/check_policy_catalog.py
           fi
+      - name: Fetch and verify pinned demo-app V3 sources
+        run: .venv/bin/python scripts/prepare_demo_board_sources.py
       - name: Test gates, contracts and recovery without cloud credentials
         run: |
           node --version

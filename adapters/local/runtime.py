@@ -375,7 +375,7 @@ def deploy(
             checks = {}
             if board:
                 checks['assets'] = check_assets(url, board, request)
-                if board['id'] == 'board-v2':
+                if board['id'] == 'v3':
                     checks['worker'] = check_worker(execute, args, url, info['Id'], request)
             if previous:
                 smoke(url, record=previous["record"])

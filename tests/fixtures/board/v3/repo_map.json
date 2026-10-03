@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "commit": "f7b3983d1955391b5752ad051718d9b6cde2ebdc",
+  "commit": "0d5d90b4310e6e510ce3c564f032c52beb973558",
   "tree": [
     "package-lock.json",
     "package.json",
@@ -16,7 +16,8 @@
     "src/web/assets/storage.json",
     "src/web/edition.json",
     "src/web/index.html",
-    "src/web/style.css"
+    "src/web/style.css",
+    "src/worker.js"
   ],
   "deps": [
     "@prisma/client",
@@ -29,7 +30,8 @@
     "provider": "sqlite"
   },
   "entrypoints": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "worker": "node src/worker.js"
   },
   "routes": [
     "GET /health",
@@ -48,6 +50,11 @@
       "type": "env",
       "at": "prisma/schema.prisma:7",
       "name": "DATABASE_URL"
+    },
+    {
+      "type": "process",
+      "at": "package.json:12",
+      "name": null
     }
   ]
 }

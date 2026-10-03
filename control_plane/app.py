@@ -81,13 +81,13 @@ class ProjectIn(BaseModel):
 
 class DeployIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    demo_version: Literal["v1", "v2", "board-v1", "board-v2"] | None = None
+    demo_version: Literal["v1", "v2", "v3"] | None = None
     targets: list[Target] | None = Field(default=None, min_length=1)  # 이번 배포의 대상. 없으면 프로젝트 기본값
 
 
 class RepoDeployIn(ProjectIn):
     """한 화면에서 레포·브랜치·대상을 고르고 바로 배포. 같은 레포·브랜치면 같은 프로젝트(같은 앱)를 쓴다."""
-    demo_version: Literal["v1", "v2", "board-v1", "board-v2"] | None = None
+    demo_version: Literal["v1", "v2", "v3"] | None = None
 
 
 def _sse(event, data, seq=None):

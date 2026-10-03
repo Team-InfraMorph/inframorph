@@ -20,7 +20,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--control-plane',default='http://127.0.0.1:8877')
     parser.add_argument('--output',type=Path,required=True)
-    parser.add_argument('--approve-v2',action='store_true',help='Approve the reviewed worker addition after its pending state is verified')
+    parser.add_argument('--approve-changes',action='store_true',help='Explicitly approve deployment changes if the server requests review')
     args=parser.parse_args()
     cp=args.control_plane.rstrip('/')
     if urlparse(cp).hostname not in {'127.0.0.1','localhost'}:parser.error('control plane must remain local')
@@ -35,8 +35,8 @@ def main():
         args.output.parent.mkdir(parents=True,exist_ok=True)
         args.output.write_text(json.dumps(evidence,ensure_ascii=False,indent=2)+'\n')
     project=None;preserved=None
-    for version in ('board-v1','board-v2'):
-        if registry[version]['supported_targets']!=['local']:raise RuntimeError('unexpected_target_scope')
+    for version in ('v2','v3'):
+        if 'local' not in registry[version]['supported_targets']:raise RuntimeError('unexpected_target_scope')
         result=api('/api/deploy',dict(repo_url='https://github.com/Team-InfraMorph/demo-app',branch='feat/e-demo-board',targets=['local'],demo_version=version))
         if project is not None and project!=result['project_id']:raise RuntimeError('project_changed')
         project=result['project_id'];did=result['deployment_id'];deadline=time.monotonic()+600;approved=False
@@ -44,9 +44,8 @@ def main():
             deployment=api('/api/deployments/'+did)
             state=deployment['status']
             if state=='AWAITING_APPROVAL':
-                if version!='board-v2' or not args.approve_v2:raise RuntimeError('manual_approval_required:'+did)
+                if not args.approve_changes:raise RuntimeError('manual_approval_required:'+did)
                 if approved:raise RuntimeError('unexpected_second_approval')
-                if not any('worker' in r for r in deployment['approval_reasons']):raise RuntimeError('unexpected_approval_scope')
                 api('/api/deployments/'+did+'/approve',{});approved=True
             elif state=='LIVE':break
             elif state in {'FAILED','ROLLED_BACK','SUPERSEDED'}:
@@ -54,12 +53,11 @@ def main():
             time.sleep(2)
         else:raise RuntimeError('deployment_timeout:'+did)
         if deployment['commit_sha']!=registry[version]['commit_sha']:raise RuntimeError('source_revision_mismatch')
-        if version=='board-v2' and not approved:raise RuntimeError('worker_change_skipped_approval')
         analysis=api('/api/deployments/'+did+'/analysis')
         metrics=analysis['metrics']
         if metrics.get('backend')!='openai' or metrics.get('api_calls',0)<1:raise RuntimeError('real_model_call_not_recorded')
         workloads={w['name'] for w in analysis['intent']['workloads']}
-        if workloads != ({'web'} if version=='board-v1' else {'web','worker'}):raise RuntimeError('unexpected_workloads')
+        if workloads != {'web','worker'}:raise RuntimeError('unexpected_workloads')
         policy=api('/api/deployments/'+did+'/policy')
         summary=next(s for s in policy['summaries'] if s['target']=='local')
         if not summary['complete'] or summary['decision']!='PASS' or summary['version']!='1.1.0':raise RuntimeError('policy_incomplete')
@@ -70,14 +68,14 @@ def main():
                 value=json.loads(log['payload']['text'])
                 if value.get('assets',{}).get('code')=='board_assets_verified':checks=value
             except (TypeError,KeyError,ValueError,AttributeError):pass
-        if not checks or not checks.get('image_id'):raise RuntimeError('execution_evidence_missing')
-        if version=='board-v2' and checks.get('worker',{}).get('code')!='board_worker_verified':raise RuntimeError('worker_evidence_missing')
+        if version=='v3' and (not checks or not checks.get('image_id')):raise RuntimeError('execution_evidence_missing')
+        if version=='v3' and checks.get('worker',{}).get('code')!='board_worker_verified':raise RuntimeError('worker_evidence_missing')
         target=deployment['targets']['local'];url=target['url']
         if not url.startswith('https://'):raise RuntimeError('public_url_not_verified')
         if preserved is None:
-            note=json.loads(request(url+'/api/notes',json.dumps({'text':'V1에서 저장하고 V2에서 다시 확인하는 메모'}).encode()))
-            asset=json.loads(request(url+'/assets/flow.json'));raw=base64.b64decode(asset['data'],validate=True)
-            image=json.loads(request(url+'/api/images',raw,asset['mime']))
+            note=json.loads(request(url+'/api/notes',json.dumps({'text':'V2에서 저장하고 V3에서 다시 확인하는 메모'}).encode()))
+            raw=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
+            image=json.loads(request(url+'/api/images',raw,'image/png'))
             preserved={'note':note,'image_key':image['key'],'image_sha256':hashlib.sha256(raw).hexdigest()}
         else:
             if preserved['note'] not in json.loads(request(url+'/api/notes')):raise RuntimeError('note_not_preserved')

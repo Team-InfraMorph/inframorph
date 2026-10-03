@@ -21,10 +21,13 @@ ROOT=Path(__file__).resolve().parents[1];run=args.output.resolve()
 if run.exists():parser.error('choose a new output directory; evidence is not overwritten')
 run.mkdir(parents=True,mode=0o700)
 records=[];preserved=None
-for profile in board_profiles():
+from control_plane.b_bridge import reviewed_versions
+profiles=[next(p for p in reviewed_versions() if p['id']=='v2'), *board_profiles()]
+for profile in profiles:
  folder=run/profile['id'];folder.mkdir(exist_ok=True)
  mapped=map_repository(dict(repo_url='https://github.com/Team-InfraMorph/demo-app',branch='feat/e-demo-board',source_revision=profile['commit_sha'],output_dir=str(folder)))
- intent=Intent.model_validate_json((ROOT/'tests/fixtures/board'/profile['id']/'intent.json').read_text())
+ intent_path = ROOT/'schemas/fixtures/v2/intent.json' if profile['id']=='v2' else ROOT/'tests/fixtures/board/v3/intent.json'
+ intent=Intent.model_validate_json(intent_path.read_text())
  validate_demo_intent(intent,mapped.snapshot,mapped.repo_map);validate_intent(intent,mapped.snapshot,mapped.repo_map.commit)
  plan=make_plan(intent.model_dump(mode='json'),'local');validate_demo_plan(plan,mapped.repo_map);validate_plan(intent,plan)
  bundle=folder/'bundle';patch_snapshot(mapped.snapshot,mapped.repo_map,plan,bundle);validate_patch(mapped.snapshot,bundle,plan)
@@ -34,8 +37,8 @@ for profile in board_profiles():
  result=deploy(runtime_plan,artifact,run/runtime_plan.app,publish=args.publish,deployment_id=profile['id'])
  url=result['public_url'] or result['url']
  if preserved is None:
-  note=json.loads(request(url+'/api/notes',data=json.dumps({'text':'V1 → V2에서 다시 만나는 체험 기록'}).encode(),content_type='application/json',expected=201))
-  data=__import__('base64').b64decode(json.loads((mapped.snapshot/'src/web/assets/flow.json').read_text())['data'])
+  note=json.loads(request(url+'/api/notes',data=json.dumps({'text':'V2 → V3에서 다시 만나는 체험 기록'}).encode(),content_type='application/json',expected=201))
+  data=__import__('base64').b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
   saved=json.loads(request(url+'/api/images',data=data,content_type='image/png',expected=201))
   preserved=dict(note=note,key=saved['key'],image_sha256=hashlib.sha256(data).hexdigest())
  else:

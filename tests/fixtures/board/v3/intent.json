@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "source_revision": "f7b3983d1955391b5752ad051718d9b6cde2ebdc",
+  "source_revision": "0d5d90b4310e6e510ce3c564f032c52beb973558",
   "app": "demo-app",
   "runtime": "node22",
   "workloads": [
@@ -14,6 +14,18 @@
       "evidence": [
         "src/server.js:20",
         "src/server.js:85"
+      ]
+    },
+    {
+      "name": "worker",
+      "kind": "worker",
+      "port": null,
+      "public": false,
+      "health": null,
+      "command": "node src/worker.js",
+      "evidence": [
+        "src/worker.js:21",
+        "package.json:12"
       ]
     }
   ],

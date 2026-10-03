@@ -23,7 +23,7 @@ class BoardTests(unittest.TestCase):
     def test_versions_keep_fixture_mode_separate(self):
         self.assertEqual([p['id'] for p in DemoModules().versions()], ['v1','v2'])
         versions=GitHubModules().versions()
-        self.assertEqual([p['id'] for p in versions], ['v1','v2','board-v1','board-v2'])
+        self.assertEqual([p['id'] for p in versions], ['v1','v2','v3'])
         for p in versions[2:]:
             self.assertEqual(p['supported_targets'], ['local'])
             self.assertRegex(p['commit_sha'], r'^[0-9a-f]{40}$')
@@ -37,6 +37,16 @@ class BoardTests(unittest.TestCase):
         self.assertFalse(board_change['recheck'] or board_change['redeploy'])
         self.assertTrue(next(c for c in delta['changes'] if c['id']=='bounded-policy-repair')['recheck'])
         self.assertEqual(len(release('1.0.0')['rules']),18)
+
+    def test_v2_to_v3_preserves_infrastructure_structure(self):
+        from planner.engine import make_plan
+        from control_plane.change_detector import plan_diff
+        old=json.loads((ROOT/'schemas/fixtures/v2/intent.json').read_text())
+        new=json.loads((ROOT/'tests/fixtures/board/v3/intent.json').read_text())
+        old_plan=make_plan(old,'local').model_dump(mode='json')
+        new_plan=make_plan(new,'local').model_dump(mode='json')
+        self.assertEqual(plan_diff({'local':old_plan},{'local':new_plan}),[])
+        self.assertEqual({w['name'] for w in new['workloads']},{'web','worker'})
 
     def test_aws_and_unregistered_board_plan_rejected(self):
         for p in board_profiles():
@@ -82,14 +92,15 @@ class BoardTests(unittest.TestCase):
         self.assertEqual(result['minimum_count'],2)
 
     def test_source_bundle_rejects_ui_mutation_missing_mixed_and_caption_evidence(self):
-        # Checked-in UTF-8 snapshots are generated from the two exact published commits.
+        # Sources are materialized from the pinned demo-app commit, never copied into Git.
         from code_patch.runner import patch_snapshot
         from policy_gate.gate import validate_intent, validate_patch
         from planner.engine import make_plan
         for profile in board_profiles():
-            case=profile['id'];source=ROOT/'tests/fixtures/board'/case/'snapshot'
-            mapping=RepoMap.model_validate_json((source.parent/'repo_map.json').read_text())
-            intent=Intent.model_validate_json((source.parent/'intent.json').read_text())
+            case=profile['id'];source=ROOT/'.local/demo-board-sources'/case/'snapshot'
+            metadata=ROOT/'tests/fixtures/board'/case
+            mapping=RepoMap.model_validate_json((metadata/'repo_map.json').read_text())
+            intent=Intent.model_validate_json((metadata/'intent.json').read_text())
             validate_demo_intent(intent,source,mapping)
             validate_intent(intent,source,mapping.commit)
             files={n:(source/n).read_bytes() for n in mapping.tree}
@@ -126,8 +137,8 @@ class BoardRequestTests(unittest.TestCase):
         self.client=TestClient(self.app);self.addCleanup(self.client.close)
 
     def test_invalid_version_target_repo_and_arbitrary_commit_create_no_jobs(self):
-        body={'repo_url':'https://github.com/Team-InfraMorph/demo-app','branch':'feat/e-demo-board','demo_version':'board-v1','targets':['local']}
-        for changed,expected in [({'targets':['local','aws']},409),({'targets':['local','onprem']},409),({'demo_version':'unregistered'},422),({'commit_sha':'a'*40},422),({'repo_url':'https://github.com/Team-InfraMorph/redteam-repo'},409)]:
+        body={'repo_url':'https://github.com/Team-InfraMorph/demo-app','branch':'feat/e-demo-board','demo_version':'v3','targets':['local']}
+        for changed,expected in [({'targets':['local','aws']},409),({'targets':['local','onprem']},409),({'demo_version':'unregistered'},422),({'demo_version':'board-v1'},422),({'demo_version':'board-v2'},422),({'commit_sha':'a'*40},422),({'repo_url':'https://github.com/Team-InfraMorph/redteam-repo'},409)]:
             self.assertEqual(self.client.post('/api/deploy',json=body|changed).status_code,expected)
         self.assertEqual(self.app.state.store._all('SELECT * FROM deployments',()),[])
 
@@ -135,7 +146,7 @@ class BoardRequestTests(unittest.TestCase):
         store=self.app.state.store
         project=store.create_project('https://github.com/Team-InfraMorph/demo-app','main',['local','aws'])
         before=store.list_deployments(project['project_id'])
-        result=self.client.post(f"/api/projects/{project['project_id']}/deploy",json={'demo_version':'board-v2'})
+        result=self.client.post(f"/api/projects/{project['project_id']}/deploy",json={'demo_version':'v3'})
         self.assertEqual(result.status_code,409)
         self.assertEqual(before,store.list_deployments(project['project_id']))
 
@@ -148,15 +159,17 @@ class BoardRequestTests(unittest.TestCase):
             from control_plane.analysis import AnalysisFailed
             raise AnalysisFailed('test_stop_before_model')
         with patch.object(self.runtime,'analyze',side_effect=record):
-            response=self.client.post(f"/api/projects/{project['project_id']}/deploy",json={'demo_version':'board-v1','targets':['local']})
+            response=self.client.post(f"/api/projects/{project['project_id']}/deploy",json={'demo_version':'v3','targets':['local']})
         self.assertEqual(response.status_code,202)
         self.assertEqual(observed,[board_profiles()[0]['commit_sha']])
 
-    def test_v2_keeps_same_project_and_waits_for_worker_approval(self):
+    def test_v1_to_v3_keeps_same_project_and_waits_for_worker_approval(self):
         from planner.engine import make_plan
         store=self.app.state.store
         project=store.create_project('https://github.com/Team-InfraMorph/demo-app','feat/e-demo-board',['local'])
         values=[]
+        baseline=json.loads((ROOT/'schemas/fixtures/v1/intent.json').read_text())
+        values.append(dict(commit_sha=baseline['source_revision'],plans={'local':make_plan(baseline,'local').model_dump(mode='json')}))
         for p in board_profiles():
             folder=ROOT/'tests/fixtures/board'/p['id']
             intent=json.loads((folder/'intent.json').read_text());mapping=json.loads((folder/'repo_map.json').read_text())
@@ -164,7 +177,7 @@ class BoardRequestTests(unittest.TestCase):
         first=store.begin_deploy(project['project_id'],revision=values[0]['commit_sha'])
         store.save_plans(first,values[0]['plans']);store.set_status(first,'LIVE')
         with patch.object(self.runtime,'analyze',return_value=values[1]),patch.object(self.runtime,'command',side_effect=AssertionError('approval required')) as command:
-            response=self.client.post(f"/api/projects/{project['project_id']}/deploy",json={'demo_version':'board-v2','targets':['local']})
+            response=self.client.post(f"/api/projects/{project['project_id']}/deploy",json={'demo_version':'v3','targets':['local']})
         self.assertEqual(response.status_code,202)
         deployment=store.get_deployment(response.json()['deployment_id'])
         self.assertEqual(deployment['project_id'],project['project_id'])
@@ -177,8 +190,8 @@ class BoardRequestTests(unittest.TestCase):
         from control_plane.b_bridge import MappedSource
         from control_plane.runtime import LocalRuntime
         store=self.app.state.store
-        folder=ROOT/'tests/fixtures/board/board-v2'
-        mapped=MappedSource(folder/'snapshot',RepoMap.model_validate_json((folder/'repo_map.json').read_text()))
+        folder=ROOT/'tests/fixtures/board/v3'
+        mapped=MappedSource(ROOT/'.local/demo-board-sources/v3/snapshot',RepoMap.model_validate_json((folder/'repo_map.json').read_text()))
         for targets,repo in [(['local','onprem'],'demo-app'),(['local','aws'],'demo-app'),(['local'],'other')]:
             project=store.create_project('https://github.com/Team-InfraMorph/'+repo,'main',targets)
             did=store.begin_deploy(project['project_id'],targets=targets)
