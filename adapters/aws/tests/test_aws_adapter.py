@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import tempfile
@@ -11,7 +12,7 @@ from adapters.aws.errors import AdapterError
 from adapters.aws.contracts import BuildArtifact, FoundationOutputs, Plan, validate_contracts
 from adapters.aws.errors import CommandError, ContractError, DeploymentError
 from adapters.aws.events import EventEmitter
-from adapters.aws.image import ImagePublisher
+from adapters.aws.image import ImagePublisher, LocalImage
 from adapters.aws.locking import AppLock
 from adapters.aws.mode import FIRST, REDEPLOY, RESUME, detect_mode
 from adapters.aws.naming import AppIdentity
@@ -321,6 +322,28 @@ class ImagePublisherTests(unittest.TestCase):
         self.assertEqual(tag_call[2], "sha256:" + "b" * 64)
         self.assertIn("@sha256:", published.uri)
         self.assertNotIn(artifact.image + "@", published.uri)
+
+    def test_file_digest_reads_a_created_container_and_always_removes_it(self):
+        class CopyRunner(FakeRunner):
+            def __init__(self, content):
+                super().__init__()
+                self.content = content
+
+            def run(self, args, **kwargs):
+                if args[:2] == ["docker", "create"]:
+                    self.calls.append(list(args))
+                    return CommandResult("container-1\n", "", 0)
+                if args[:2] == ["docker", "cp"] and self.content is not None:
+                    Path(args[3]).write_bytes(self.content)
+                return super().run(args, **kwargs)
+
+        image = LocalImage("app:sha", "sha256:" + "b" * 64, "linux/amd64")
+        runner = CopyRunner(b"model Note {}")
+        digest = ImagePublisher(runner).file_digest(image, "/app/prisma/schema.prisma")
+        self.assertEqual(digest, hashlib.sha256(b"model Note {}").hexdigest())
+        self.assertIn(["docker", "cp", "container-1:/app/prisma/schema.prisma"], [call[:3] for call in runner.calls])
+        self.assertEqual(runner.calls[-1], ["docker", "rm", "container-1"])
+        self.assertIsNone(ImagePublisher(CopyRunner(None)).file_digest(image, "/app/prisma/schema.prisma"))
 
 
 def load_foundation():

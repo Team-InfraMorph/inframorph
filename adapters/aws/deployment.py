@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from .aws_api import AwsApi
 from .contracts import BuildArtifact, FoundationOutputs, Plan
-from .errors import AdapterError, ContractError, DeploymentError
+from .errors import AdapterError, CommandError, ContractError, DeploymentError
 from .events import EventEmitter
 from .image import ImagePublisher
 from .mode import DeployMode, detect_mode
@@ -17,6 +17,10 @@ from .records import DeploymentRecord
 from .database import DatabaseReceipt, fingerprint
 from .smoke import external_https_smoke
 from .terraform import TerraformManager, TerraformPlan, terraform_values
+
+
+# Builder images copy prisma/ into WORKDIR /app.
+PRISMA_SCHEMA_PATH = "/app/prisma/schema.prisma"
 
 
 @dataclass(frozen=True)
@@ -133,7 +137,8 @@ class DeploymentOrchestrator:
             database = None
             if self.plan.db is not None:
                 database = self._prepare_database(stage_outputs, request, initialize_secret=(
-                    previous is None or not previous.terraform_values.get("service_db_enabled")))
+                    previous is None or not previous.terraform_values.get("service_db_enabled")),
+                    schema_digest=self._schema_digest(local_image))
 
             current_step = "start"
             self._emit("start", "started", detail=json.dumps({
@@ -214,11 +219,20 @@ class DeploymentOrchestrator:
             self.identity.state_key,
         )
 
+    def _schema_digest(self, image: Any) -> Optional[str]:
+        # Unknown schema means the migration always runs.
+        try:
+            digest = self.publisher.file_digest(image, PRISMA_SCHEMA_PATH)
+        except (CommandError, OSError):
+            return None
+        return digest if isinstance(digest, str) and len(digest) == 64 else None
+
     def _prepare_database(
         self,
         outputs: Dict[str, Any],
         request: DeploymentRequest,
         initialize_secret: bool,
+        schema_digest: Optional[str] = None,
     ) -> Dict[str, Any]:
         started = time.monotonic()
         secret_arn = outputs.get("app_secret_arn")
@@ -269,8 +283,7 @@ class DeploymentOrchestrator:
             log_group=log_group,
             log_prefix="bootstrap",
         ))
-        # Even the same image must verify the live DB schema on every deployment.
-        self.aws.run_task(
+        run_migration = lambda: self.aws.run_task(
             migration_task,
             data_sg,
             self.foundation.private_subnet_ids,
@@ -279,7 +292,21 @@ class DeploymentOrchestrator:
             log_group=log_group,
             log_prefix="migration",
         )
-        return {"bootstrap": bootstrap, "migration": "executed",
+        if schema_digest is None:
+            # Without the schema we cannot tell it is unchanged: always migrate.
+            receipt.completed.pop("migration", None)
+            receipt.save()
+            run_migration()
+            migration = "executed"
+        else:
+            # The same schema, command and database as the last successful
+            # migration leaves nothing to apply. A failed or interrupted run
+            # drops the receipt first, so its retry always migrates again.
+            migration = receipt.run("migration", fingerprint({
+                "bootstrap": bootstrap_key, "schema": schema_digest,
+                "command": request.migration_command,
+            }), run_migration)
+        return {"bootstrap": bootstrap, "migration": migration,
                 "duration_ms": int((time.monotonic() - started) * 1000)}
 
     def _recover(
