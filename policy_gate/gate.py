@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from schemas import Intent, Plan
 from schemas.common import check_revision, parse_evidence
-from .reporting import checked, bind
+from .reporting import checked, bind, rule
 
 EXCLUDED_DIRS = {
     ".git",
@@ -151,29 +151,33 @@ def read_tree(root, *, filter_source=False):
 
 def model(cls, value):
     try:
-        return cls.model_validate(value)
+        return cls.model_validate(value.model_dump(mode="json") if isinstance(value, cls) else value)
     except (ValidationError, ValueError, TypeError):
         raise PolicyError("schema_invalid") from None
 
 
 @checked("intent")
 def validate_intent(value, snapshot, source_revision):
-    try:
-        check_revision(source_revision)
-    except ValueError:
-        raise PolicyError("revision_invalid") from None
-    intent = model(Intent, value)
-    require(intent.source_revision == source_revision, "revision_mismatch")
-    require(not intent.unknowns, "unresolved_intent")
-    files, _ = read_tree(snapshot, filter_source=True)
-    bind(snapshot_digest=digest(files), source_revision=source_revision)
-    for entity in [*intent.workloads, *intent.state]:
-        for evidence in entity.evidence:
-            name, line = parse_evidence(evidence)
-            require(name in files, "evidence_file_missing")
-            require(
-                line <= len(files[name].decode().splitlines()), "evidence_line_missing"
-            )
+    with rule('I-000') as evidence:
+        try:
+            check_revision(source_revision)
+        except ValueError:
+            raise PolicyError("revision_invalid") from None
+        intent = model(Intent, value)
+        require(intent.source_revision == source_revision, "revision_mismatch")
+        require(not intent.unknowns, "unresolved_intent")
+        files, _ = read_tree(snapshot, filter_source=True)
+        bind(snapshot_digest=digest(files), source_revision=source_revision)
+        evidence.update(source_revision=source_revision,file_count=len(files),input_digest=digest(files))
+    with rule('I-001') as evidence:
+        evidence["references"] = [e for x in [*intent.workloads,*intent.state] for e in x.evidence]
+        for entity in [*intent.workloads, *intent.state]:
+            for evidence in entity.evidence:
+                name, line = parse_evidence(evidence)
+                require(name in files, "evidence_file_missing")
+                require(
+                    line <= len(files[name].decode().splitlines()), "evidence_line_missing"
+                )
     from .rules import intent_rules
     intent_rules(intent, files)
     return intent
@@ -235,112 +239,120 @@ class VerifiedArtifact:
 
 @checked("patch")
 def validate_patch(snapshot, bundle, plan, *, allowed_paths=DEFAULT_PATHS, profile="reviewed"):
-    plan = model(Plan, plan)
-    original, _ = read_tree(snapshot, filter_source=True)
-    all_bundle, _ = read_tree(bundle)
-    require(
-        "manifest.json" in all_bundle and "patch.diff" in all_bundle,
-        "bundle_incomplete",
-    )
-    require(
-        all(
-            name in ("manifest.json", "patch.diff") or name.startswith("source/")
-            for name in all_bundle
-        ),
-        "bundle_extra_file",
-    )
-    try:
-        report = json.loads(all_bundle["manifest.json"])
-    except (ValueError, UnicodeError):
-        raise PolicyError("manifest_invalid") from None
-    require(isinstance(report, dict), "manifest_invalid")
-    require(report.get("schema_version") == "1.0.0", "manifest_version_unsupported")
-    patched = {
-        name[7:]: data
-        for name, data in all_bundle.items()
-        if name.startswith("source/")
-    }
-    require(
-        patched and all(eligible(name) for name in patched), "sensitive_source_path"
-    )
-    require(
-        report.get("source_revision") == plan.source_revision
-        and report.get("target") == plan.target.value,
-        "revision_or_target_mismatch",
-    )
-    require(report.get("requires_policy_gate") is True, "manifest_gate_flag_missing")
-    patch = all_bundle["patch.diff"]
-    require(
-        report.get("original_digest") == digest(original)
-        and report.get("patched_digest") == digest(patched)
-        and report.get("diff_sha256") == sha(patch),
-        "artifact_digest_mismatch",
-    )
-    changed = sorted(
-        name
-        for name in original.keys() | patched.keys()
-        if original.get(name) != patched.get(name)
-    )
-    require(set(changed) <= set(allowed_paths), "patch_allowlist_violation")
-    require(all(name in patched for name in changed), "deletion_forbidden")
-    expected = [
-        {
-            "path": name,
-            "action": "modify" if name in original else "add",
-            "before_sha256": sha(original[name]) if name in original else None,
-            "after_sha256": sha(patched[name]),
-        }
-        for name in changed
-    ]
-    require(report.get("changes") == expected, "change_manifest_mismatch")
-    require(
-        report.get("status") == ("patched" if changed else "unchanged"),
-        "patch_status_mismatch",
-    )
-    from .structure import inspect_js
-    js = inspect_js(patched)
-    for name, parsed in js.items():
-        if parsed.get("error"):
-            error = PolicyError(parsed["error"]); error.path = name; raise error
-        if parsed["forbidden"]:
-            error = PolicyError("forbidden_code_pattern"); error.path = name; raise error
-    for name, data in patched.items():
+    with rule('P-001') as evidence:
+        plan = model(Plan, plan)
+        original, _ = read_tree(snapshot, filter_source=True)
+        all_bundle, _ = read_tree(bundle)
         require(
-            not re.search(
-                rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}",
-                data,
-            ),
-            "secret_in_source",
+            "manifest.json" in all_bundle and "patch.diff" in all_bundle,
+            "bundle_incomplete",
         )
-    # Compare the actual effect of diff with the supplied source tree; not just two claimed hashes.
-    with tempfile.TemporaryDirectory(prefix="gate-apply-") as directory:
-        root = Path(directory)
-        source = root / "source"
-        source.mkdir()
-        write_files(source, original)
-        patch_file = root / "patch.diff"
-        patch_file.write_bytes(patch)
+        require(
+            all(
+                name in ("manifest.json", "patch.diff") or name.startswith("source/")
+                for name in all_bundle
+            ),
+            "bundle_extra_file",
+        )
         try:
-            subprocess.run(
-                ["git", "init", "--quiet", str(source)],
-                check=True,
-                capture_output=True,
-                timeout=15,
-                env=clean_env(),
+            report = json.loads(all_bundle["manifest.json"])
+        except (ValueError, UnicodeError):
+            raise PolicyError("manifest_invalid") from None
+        require(isinstance(report, dict), "manifest_invalid")
+        require(report.get("schema_version") == "1.0.0", "manifest_version_unsupported")
+        patched = {
+            name[7:]: data
+            for name, data in all_bundle.items()
+            if name.startswith("source/")
+        }
+        require(
+            patched and all(eligible(name) for name in patched), "sensitive_source_path"
+        )
+        require(
+            report.get("source_revision") == plan.source_revision
+            and report.get("target") == plan.target.value,
+            "revision_or_target_mismatch",
+        )
+        require(report.get("requires_policy_gate") is True, "manifest_gate_flag_missing")
+        patch = all_bundle["patch.diff"]
+        require(
+            report.get("original_digest") == digest(original)
+            and report.get("patched_digest") == digest(patched)
+            and report.get("diff_sha256") == sha(patch),
+            "artifact_digest_mismatch",
+        )
+        changed = sorted(
+            name
+            for name in original.keys() | patched.keys()
+            if original.get(name) != patched.get(name)
+        )
+        evidence.update(changed_paths=changed,source_revision=plan.source_revision,target=plan.target.value,input_digest=digest(original))
+        require(set(changed) <= set(allowed_paths), "patch_allowlist_violation")
+        require(all(name in patched for name in changed), "deletion_forbidden")
+        expected = [
+            {
+                "path": name,
+                "action": "modify" if name in original else "add",
+                "before_sha256": sha(original[name]) if name in original else None,
+                "after_sha256": sha(patched[name]),
+            }
+            for name in changed
+        ]
+        require(report.get("changes") == expected, "change_manifest_mismatch")
+        require(
+            report.get("status") == ("patched" if changed else "unchanged"),
+            "patch_status_mismatch",
+        )
+    with rule('P-006') as evidence:
+        from .structure import inspect_js
+        js = inspect_js(patched)
+        evidence.update(file_count=len(js))
+        for name, parsed in js.items():
+            if parsed.get("error"):
+                error = PolicyError(parsed["error"]); error.path = name; raise error
+            if parsed["forbidden"]:
+                error = PolicyError("forbidden_code_pattern"); error.path = name; raise error
+    with rule('P-007') as evidence:
+        evidence.update(file_count=len(patched))
+        for name, data in patched.items():
+            require(
+                not re.search(
+                    rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}",
+                    data,
+                ),
+                "secret_in_source",
             )
-            if patch:
-                result = subprocess.run(
-                    ["git", "apply", "--whitespace=nowarn", str(patch_file)],
-                    cwd=source,
+    with rule('P-002') as evidence:
+        evidence.update(input_digest=sha(patch))
+        # Compare the actual effect of diff with the supplied source tree; not just two claimed hashes.
+        with tempfile.TemporaryDirectory(prefix="gate-apply-") as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            write_files(source, original)
+            patch_file = root / "patch.diff"
+            patch_file.write_bytes(patch)
+            try:
+                subprocess.run(
+                    ["git", "init", "--quiet", str(source)],
+                    check=True,
                     capture_output=True,
                     timeout=15,
                     env=clean_env(),
                 )
-                require(result.returncode == 0, "diff_apply_failed")
-            applied, _ = read_tree(source, filter_source=True)
-            require(applied == patched, "diff_source_mismatch")
-        except (OSError, subprocess.SubprocessError):
-            raise PolicyError("diff_checker_unavailable") from None
+                if patch:
+                    result = subprocess.run(
+                        ["git", "apply", "--whitespace=nowarn", str(patch_file)],
+                        cwd=source,
+                        capture_output=True,
+                        timeout=15,
+                        env=clean_env(),
+                    )
+                    require(result.returncode == 0, "diff_apply_failed")
+                applied, _ = read_tree(source, filter_source=True)
+                require(applied == patched, "diff_source_mismatch")
+            except (OSError, subprocess.SubprocessError):
+                raise PolicyError("diff_checker_unavailable") from None
     from .rules import patch_rules
     patch_rules(original, patched, plan, changed, js, profile=profile)
     return VerifiedArtifact(
@@ -356,7 +368,11 @@ def validate_patch(snapshot, bundle, plan, *, allowed_paths=DEFAULT_PATHS, profi
 @checked("plan")
 def validate_plan(intent, value):
     from .rules import plan_rules
-    intent, plan = model(Intent, intent), model(Plan, value)
-    bind(intent_digest=sha(intent.model_dump_json().encode()), plan_digest=sha(plan.model_dump_json().encode()), source_revision=plan.source_revision)
-    plan_rules(intent, plan)
+    with rule('L-001') as evidence:
+        intent, plan = model(Intent, intent), model(Plan, value)
+        evidence.update(source_revision=plan.source_revision,target=plan.target.value)
+        bind(intent_digest=sha(intent.model_dump_json().encode()), plan_digest=sha(plan.model_dump_json().encode()), source_revision=plan.source_revision)
+    with rule('L-002') as evidence:
+        evidence.update(services=[s.name for s in plan.services],public_services=[s.name for s in plan.services if s.public])
+        plan_rules(intent, plan)
     return plan

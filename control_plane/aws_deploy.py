@@ -269,6 +269,8 @@ def deploy(context, store, config):
             events.emit("plan", "ok", json.dumps({"app": cloud_plan.app, "changes": preview.summary,
                                                    "foundation_changes": 0}))
             stage = "infra"
+            from .policy_lifecycle import guard
+            guard(store,context.deployment_id)
             record = orchestrator.deploy(request)
             # Preserve successful inputs and a deployment-specific record for review.
             for filename, value in (("plan.aws.json", actual_plan), ("build.aws.json", artifact.model_dump(mode="json"))):
@@ -278,6 +280,12 @@ def deploy(context, store, config):
                 private_json(temp, value)
                 temp.replace(state / filename)
             record.save(folder / "aws-deployment.json")
+        from .policy_lifecycle import receipt
+        receipt(store,context.deployment_id,'aws',dict(snapshot=context.snapshot,bundle=str(bundle),
+            repo_map=context.repo_map.model_dump(mode='json'),intent=context.intent.model_dump(mode='json'),
+            plan=plan.model_dump(mode='json'),artifact=artifact.model_dump(mode='json'),image_id=record.local_image_id,
+            published_digest=record.image_digest_uri,
+            **{k:manifest[k] for k in ('original_digest','patched_digest','diff_sha256')}))
         store.mark_patch_applied(context.deployment_id, "initial", "aws")
         with store._lock, store._conn:
             store._conn.execute("UPDATE aws_runtime_runs SET status='succeeded' WHERE deployment_id=?", (context.deployment_id,))

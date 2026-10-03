@@ -22,6 +22,8 @@ from policy_gate.gate import (
 )
 from schemas import BuildArtifact, DeployEvent, Plan
 
+from policy_gate.reporting import checked, rule
+
 ROOT = Path(__file__).parent
 
 
@@ -68,51 +70,54 @@ def emit(sink, deployment_id, target, step, status, **kwargs):
         )
 
 
+@checked('build_profile')
 def check_build_profile(files):
-    require(
-        all(
-            name in files
-            for name in (
-                "package.json",
-                "package-lock.json",
-                "prisma/schema.prisma",
-                "src/server.js",
-            )
-        ),
-        "build_profile_incomplete",
-    )
-    try:
-        package = json.loads(files["package.json"])
-    except ValueError:
-        raise PolicyError("package_invalid") from None
-    profile = json.loads((ROOT / "trusted-profile.json").read_text())
-    require(
-        sha(files["package-lock.json"]) == profile["lock_sha256"],
-        "unreviewed_dependency_lock",
-    )
-    require(
-        package.get("dependencies") == profile["dependencies"]
-        and package.get("devDependencies") == profile["devDependencies"],
-        "unreviewed_dependencies",
-    )
-    schema = files["prisma/schema.prisma"].decode()
-    generators = re.findall(r"\bgenerator\s+\w+\s*\{([^}]*)\}", schema, re.S)
-    require(
-        len(generators) == 1
-        and re.fullmatch(r'\s*provider\s*=\s*"prisma-client-js"\s*', generators[0])
-        is not None,
-        "unsupported_prisma_generators",
-    )
+    with rule('X-001') as evidence:
+        evidence.update(file_count=len(files),input_digest=sha(files.get('package-lock.json',b'')))
+        require(
+            all(
+                name in files
+                for name in (
+                    "package.json",
+                    "package-lock.json",
+                    "prisma/schema.prisma",
+                    "src/server.js",
+                )
+            ),
+            "build_profile_incomplete",
+        )
+        try:
+            package = json.loads(files["package.json"])
+        except ValueError:
+            raise PolicyError("package_invalid") from None
+        profile = json.loads((ROOT / "trusted-profile.json").read_text())
+        require(
+            sha(files["package-lock.json"]) == profile["lock_sha256"],
+            "unreviewed_dependency_lock",
+        )
+        require(
+            package.get("dependencies") == profile["dependencies"]
+            and package.get("devDependencies") == profile["devDependencies"],
+            "unreviewed_dependencies",
+        )
+        schema = files["prisma/schema.prisma"].decode()
+        generators = re.findall(r"\bgenerator\s+\w+\s*\{([^}]*)\}", schema, re.S)
+        require(
+            len(generators) == 1
+            and re.fullmatch(r'\s*provider\s*=\s*"prisma-client-js"\s*', generators[0])
+            is not None,
+            "unsupported_prisma_generators",
+        )
 
-    require(
-        re.findall(r'provider\s*=\s*"([^"]+)"', schema)
-        == ["prisma-client-js", "postgresql"],
-        "unsupported_prisma_generators",
-    )
-    require(
-        not re.search(r"\b(output|engineType|binaryTargets)\s*=", schema),
-        "unsupported_prisma_output",
-    )
+        require(
+            re.findall(r'provider\s*=\s*"([^"]+)"', schema)
+            == ["prisma-client-js", "postgresql"],
+            "unsupported_prisma_generators",
+        )
+        require(
+            not re.search(r"\b(output|engineType|binaryTargets)\s*=", schema),
+            "unsupported_prisma_output",
+        )
 
 
 @contextlib.contextmanager

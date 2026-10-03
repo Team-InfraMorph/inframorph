@@ -69,11 +69,19 @@ function FileCard({ f }) {
   );
 }
 
-export function PatchCard({ patch }) {
+export function PatchCard({ patch = {}, loading = false, error = false }) {
   const entries = Object.entries(patch);
-  if (!entries.length) return null;
+  if (loading || error || !entries.length) return (
+    <div className="card patch2" aria-busy={loading}>
+      <strong>코드 변경</strong>
+      <p role={error ? "alert" : "status"} className="dim">{loading
+        ? "코드 변경 내역을 불러오는 중입니다."
+        : error ? "코드 변경 내역을 불러오지 못했습니다. 배포 기록을 다시 선택해 주세요."
+        : "이 배포에는 아직 저장된 코드 변경 내역이 없습니다. 코드 변경이 없다는 판정과는 다릅니다."}</p>
+    </div>
+  );
   const key = (p) => JSON.stringify(p.files.map((f) => [f.path, f.action, f.diff]));
-  const same = entries.every(([, p]) => key(p) === key(entries[0][1]));
+  const same = entries.length > 1 && entries.every(([, p]) => key(p) === key(entries[0][1]));
   const groups = same ? [[entries.map(([t]) => TARGET[t] ?? t).join("·") + " 공통", entries[0][1]]] : entries.map(([t, p]) => [TARGET[t] ?? t, p]);
   return groups.map(([label, value]) => {
     // 소스 코드 먼저, 잠금 파일은 맨 뒤
@@ -83,9 +91,9 @@ export function PatchCard({ patch }) {
     return (
       <div key={label} className="card patch2">
         <div className="patch-head">
-          <strong>{label}</strong>
+          <strong>코드 변경 · {label}</strong>
           <span className="dim">파일 {files.length}개 · <b className="s-add">+{add}</b> <b className="s-del">−{all.length - add}</b></span>
-          {value.verified && <span className="ok-chip">정책 검사 통과</span>}
+          {value.verified && <a className="ok-chip" href="#policy-inspections" onClick={e=>{e.preventDefault();document.getElementById("policy-inspections")?.scrollIntoView();}}>패치 검사 통과 · 상세</a>}
           {value.applied && <span className="ok-chip">실행 검증 완료</span>}
           {value.phase === "recovery" && <span className="dim">자동 복구 후 패치</span>}
           <span className="dim patch-note">원본 레포는 그대로, 배포용 복사본만 수정</span>

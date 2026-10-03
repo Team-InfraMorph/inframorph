@@ -124,6 +124,8 @@ class Store:
             self._conn.executescript(SCHEMA)
             from .policy_results import DDL as POLICY_DDL
             self._conn.executescript(POLICY_DDL)
+            from .policy_lifecycle import DDL as LIFECYCLE_DDL
+            self._conn.executescript(LIFECYCLE_DDL)
             from .results import DDL
             self._conn.executescript(DDL)
             from .patch_reviews import DDL as PATCH_DDL

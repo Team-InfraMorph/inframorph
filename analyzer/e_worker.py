@@ -15,6 +15,9 @@ def _perform(data):
     mapping = RepoMap.model_validate(data["repo_map"])
     snapshot = Path(data["snapshot"])
     action = data["action"]
+    if action != "cleanup" and data.get("expected_policy"):
+        from policy_gate.catalog import identity
+        if data["expected_policy"] != identity()["policy_digest"]: raise ValueError("policy_runtime_changed")
     if action == "intent":
         intent = validate_demo_intent(Intent.model_validate(data["intent"]), snapshot, mapping)
         validate_intent(intent, snapshot, mapping.commit)
@@ -55,17 +58,28 @@ def _perform(data):
 
 
 def perform(data):
-    from policy_gate.reporting import observe, result
+    from policy_gate.reporting import observe, result, checkpoint
     reports = []
+    store = None
+    if data.get('policy_database'):
+        from control_plane.db import Store
+        store = Store(data['policy_database'])
+    def sink(report):
+        if store:
+            from control_plane.policy_results import save
+            save(store,data['deployment_id'],'local',data.get('policy_attempt',0),report)
+        reports.append(report)
+    def started(report):
+        if store:
+            from control_plane.policy_results import start
+            start(store,data['deployment_id'],'local',report)
     try:
-        with observe(reports.append): reply = _perform(data)
+        with observe(sink,started), checkpoint(data.get('action')): reply = _perform(data)
     except Exception as error:
         if not reports or reports[-1]['decision'] == 'PASS':
             reports.append(result('source', error))
         error.policy_results = reports
         raise
-    if data.get('action') == 'build':
-        for report in reports: report['stage'] = 'build'
     return reply | {'policy_results': reports}
 
 
