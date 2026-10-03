@@ -533,8 +533,10 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .policy-not_run,.policy-not_applicable { color:var(--dim);background:var(--muted-bg); }
 .policy-error { color:var(--warn);background:var(--warn-bg); }
 .policy-empty { padding:12px 0;color:var(--dim); }
-.policy-workspace { padding-top:12px; }
-.policy-version-bar { background:var(--card);border:1px solid var(--line);padding:14px;border-radius:10px;margin-bottom:20px;font-size:13px; }
+.policy-workspace { width:100%;max-width:1440px;margin-inline:auto;padding-top:12px; }
+.policy-version-bar { justify-content:flex-start;gap:12px 24px;background:var(--card);border:1px solid var(--line);padding:14px 18px;border-radius:10px;margin-bottom:20px;font-size:13px; }
+.policy-version-bar label { display:flex;align-items:center;gap:8px;min-width:0; }
+.policy-version-bar small { margin-left:auto;color:var(--dim); }
 .policy-doc-layout { display:grid;grid-template-columns:230px minmax(0,1fr) 160px;gap:20px;align-items:start; }
 .policy-sidebar,.policy-toc { position:sticky;top:16px;max-height:calc(100vh - 40px);overflow:auto; }
 .policy-sidebar label { display:grid;gap:6px;font-size:13px;margin-bottom:12px; }
@@ -588,11 +590,12 @@ dialog.policy-modal>.card {width:auto;margin:0;}
 .history-heading h3 { color:var(--text);font-size:16px;font-weight:650; }
 
 /* Policy reference pages: readable prose, contained tables, explicit hierarchy. */
-.policy-doc-layout { grid-template-columns:200px minmax(0, 820px) 150px;gap:22px; }
-.policy-document { padding:30px clamp(20px,3vw,40px); }
+.policy-doc-layout { grid-template-columns:220px minmax(0,1fr) 180px;gap:24px; }
+.policy-sidebar,.policy-toc { min-width:0; }
+.policy-document { padding:28px clamp(20px,2.5vw,32px); }
 .policy-prose { white-space:normal;font-size:15px;line-height:1.85;overflow-wrap:break-word; }
-.policy-prose>h2 { font-size:clamp(22px,2vw,28px);line-height:1.4;margin:18px 0 22px;letter-spacing:-.025em; }
-.policy-prose h3 { font-size:19px;line-height:1.5;color:var(--text);margin:36px 0 14px;padding-top:18px;border-top:1px solid var(--line); }
+.policy-prose>h2 { font-size:clamp(22px,2vw,26px);line-height:1.4;margin:18px 0 16px;letter-spacing:-.025em; }
+.policy-prose h3 { font-size:19px;line-height:1.5;color:var(--text);margin:28px 0 14px;padding-top:18px;border-top:1px solid var(--line); }
 .policy-prose h4 { font-size:16px;color:var(--text);margin:24px 0 10px; }
 .policy-prose p { margin:12px 0; }.policy-prose li { margin:10px 0;padding-left:4px; }.policy-prose ul,.policy-prose ol { padding-left:24px;margin:16px 0; }
 .policy-prose code { font-size:.87em;overflow-wrap:anywhere; }.policy-prose a { text-underline-offset:3px; }
@@ -607,7 +610,7 @@ dialog.policy-modal>.card {width:auto;margin:0;}
 .policy-sidebar h3 { margin:18px 10px 5px;font-size:12px;color:var(--dim);font-weight:600; }.policy-sidebar a{font-size:13px}.policy-anchor{scroll-margin-top:24px}.policy-document [id]{scroll-margin-top:24px}.policy-document :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @media(max-width:1200px){.policy-doc-layout{grid-template-columns:190px minmax(0,1fr)}.policy-toc{display:none}}
 @media(max-width:1000px){.policy-doc-layout{display:block}.policy-sidebar{position:static;max-height:none;margin-bottom:18px}.policy-sidebar input{width:100%}.policy-mobile-nav{display:block;margin-top:10px}.policy-sidebar nav:not(.is-expanded){display:none}.policy-sidebar nav.is-expanded{max-height:300px;overflow:auto}.policy-document{padding:24px}.policy-sidebar label{max-width:480px}}
-@media(max-width:600px){.policy-document{padding:18px 16px}.policy-prose{font-size:14px;line-height:1.8}.policy-prose h3{font-size:18px}.policy-doc-table th,.policy-doc-table td{padding:10px}.policy-prose>h2{font-size:22px}}
+@media(max-width:600px){.policy-document{padding:18px 16px}.policy-prose{font-size:14px;line-height:1.8}.policy-prose h3{font-size:18px}.policy-doc-table th,.policy-doc-table td{padding:10px}.policy-prose>h2{font-size:22px}.policy-version-bar{padding:12px;gap:12px}.policy-version-bar label{flex:1 1 100%;justify-content:space-between}.policy-version-bar small{flex-basis:100%;margin-left:0}}
 .policy-mobile-toc { display:none; }
 @media(max-width:1200px){.policy-mobile-toc{display:block;margin:16px 0;font-size:13px;color:var(--dim)}.policy-mobile-toc summary{cursor:pointer}.policy-mobile-toc nav{display:flex;flex-wrap:wrap;gap:10px 16px;padding:14px 0}.policy-mobile-toc a{padding:3px 0}}
 .policy-prose[data-rule=true] .policy-doc-table table:has(th:nth-child(4)) td:first-child { min-width:140px; }
