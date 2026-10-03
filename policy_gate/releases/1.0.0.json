@@ -38,7 +38,7 @@
       "stage": "profile",
       "title": "지원 배포 프로필",
       "expected": "대상 환경에 맞는 검토된 배포 설계여야 합니다.",
-      "remedy": "지원하는 Local/AWS 프로필을 확인하세요.",
+      "remedy": "지원하는 Local/AWS/GCP 프로필을 확인하세요.",
       "document": "rules/G-003",
       "introduced": "1.0.0",
       "tests": [
@@ -425,7 +425,8 @@
       ],
       "targets": [
         "local",
-        "aws"
+        "aws",
+        "gcp"
       ],
       "profiles": [
         "reviewed-node22"
