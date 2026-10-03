@@ -67,6 +67,8 @@ input, select {
   border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
 }
 select { max-width: 60%; }
+.version-picker { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+.version-picker select { max-width: none; }
 
 .form { display: grid; gap: 12px; max-width: 560px; }
 .form label { display: grid; gap: 4px; }

@@ -321,7 +321,7 @@ function TargetColumn({ target, state, events, onRecheck }) {
   );
 }
 
-function History({ deployments, selectedId, onSelect, onRollback }) {
+function History({ deployments, selectedId, onSelect, onRollback, versions }) {
   return (
     <div className="card">
       <h2>배포 이력</h2>
@@ -332,7 +332,7 @@ function History({ deployments, selectedId, onSelect, onRollback }) {
             <tr key={d.id} className={d.id === selectedId ? "selected" : ""} onClick={() => onSelect(d.id)}>
               <td>{new Date(d.created_at).toLocaleTimeString()}</td>
               <td>{TRIGGER[d.triggered_by] ?? d.triggered_by}</td>
-              <td className="mono">{d.commit_sha ? d.commit_sha.slice(0, 7) : "—"}</td>
+              <td className="mono">{versions.find((v) => v.commit_sha === d.commit_sha)?.id.toUpperCase()} {d.commit_sha ? d.commit_sha.slice(0, 7) : "—"}</td>
               <td title={d.change_reasons.join("\n")}>{MODE[d.analysis_mode] ?? "—"}</td>
               <td><Badge status={d.status} /></td>
               <td>
@@ -352,6 +352,7 @@ function History({ deployments, selectedId, onSelect, onRollback }) {
 
 export default function App() {
   const [runtime, setRuntime] = useState(null);
+  const [requestedVersion, setRequestedVersion] = useState("");
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(load("projectId"));
   const [deployments, setDeployments] = useState([]);
@@ -417,6 +418,7 @@ export default function App() {
 
   const choose = (id) => {
     setProjectId(id);
+    setRequestedVersion("");
     setSelectedId(null);
     setDeployments([]);
     setPlans({});
@@ -436,7 +438,10 @@ export default function App() {
   };
 
   const targets = project?.targets ?? [];
-  const running = selected && !TERMINAL.includes(selected.status) && selected.status !== "CREATED";
+  const versions = runtime?.demo_versions ?? [];
+  const canSelectVersion = versions.length > 0 && project?.repo_url.replace(/\/$/, "").replace(/\.git$/, "") === "https://github.com/Team-InfraMorph/demo-app";
+  const deployVersion = requestedVersion || versions.find((v) => v.commit_sha === deployments[0]?.commit_sha)?.id || versions[0]?.id;
+  const running = deployments.find((d) => !TERMINAL.includes(d.status) && d.status !== "CREATED");
 
   return (
     <div className="app">
@@ -464,10 +469,18 @@ export default function App() {
               <strong>{project.repo_url.replace("https://github.com/", "")}</strong>
               <span className="dim"> · {project.branch}</span>
             </div>
-            <button disabled={running} onClick={() => act(api.deploy, project.project_id)}>
-              {!running ? "배포" : selected.status === "AWAITING_APPROVAL" ? "승인 대기 중" : "배포 중…"}
-            </button>
+            <div className="row">
+              {canSelectVersion && <label className="version-picker">테스트 버전 <select aria-label="테스트 버전" value={deployVersion}
+                disabled={running} onChange={(e) => setRequestedVersion(e.target.value)}>
+                {versions.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+              </select></label>}
+              <button disabled={running} onClick={() => act((id) => api.deploy(id, canSelectVersion ? deployVersion : undefined), project.project_id)}>
+                {!running ? "배포" : running.status === "AWAITING_APPROVAL" ? "승인 대기 중" : "배포 중…"}
+              </button>
+            </div>
           </div>
+          {canSelectVersion && <p className="dim">선택한 버전의 고정된 데모 소스로 배포합니다.
+            {deployVersion === "v2" && " V2는 기존 웹 앱에 노트 수를 집계하는 worker가 추가됩니다."}</p>}
 
           {selected?.status === "AWAITING_APPROVAL" && <ApprovalBanner deployment={selected} onAct={act} />}
           {selected?.status === "FAILED" && intent && <p>
@@ -478,7 +491,7 @@ export default function App() {
           {selected && (
             <div className="row between summary">
               <span>
-                {TRIGGER[selected.triggered_by]} · {selected.commit_sha?.slice(0, 7) ?? "커밋 미정"}
+                {TRIGGER[selected.triggered_by]} · {versions.find((v) => v.commit_sha === selected.commit_sha)?.id.toUpperCase()} {selected.commit_sha?.slice(0, 7) ?? "커밋 미정"}
                 {selected.analysis_mode && ` · ${MODE[selected.analysis_mode]}`}
               </span>
               <Badge status={selected.status} />
@@ -501,7 +514,7 @@ export default function App() {
             ))}
           </div>
 
-          <History deployments={deployments} selectedId={selected?.id}
+          <History deployments={deployments} selectedId={selected?.id} versions={versions}
                    onSelect={(id) => setSelectedId(id === deployments[0]?.id ? null : id)}
                    onRollback={(id) => act(api.rollback, id)} />
         </>
