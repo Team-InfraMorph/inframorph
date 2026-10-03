@@ -35,11 +35,13 @@ resource "aws_ecs_task_definition" "service" {
         name      = each.key
         image     = var.service_image_uri
         essential = true
-        environment = concat(
-          local.service_config_environment,
-          local.service_storage_environment,
-          [{ name = "PORT", value = each.value.port == null ? "" : tostring(each.value.port) }],
-        )
+        # ECS collapses duplicate names. Build one map so refreshing state does
+        # not schedule another task replacement; PORT belongs to HTTP services.
+        environment = [for name, value in merge(
+          { for item in local.service_config_environment : item.name => item.value if item.name != "PORT" },
+          { for item in local.service_storage_environment : item.name => item.value },
+          each.value.port == null ? {} : { PORT = tostring(each.value.port) },
+        ) : { name = name, value = value }]
         secrets = var.service_db_enabled ? [{
           name      = "DATABASE_URL"
           valueFrom = "${aws_secretsmanager_secret.database[0].arn}:url::"

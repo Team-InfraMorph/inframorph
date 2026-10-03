@@ -88,6 +88,16 @@ class AwsApi:
             sensitive=True,
         )
 
+    def current_secret_version(self, secret_arn: str) -> str:
+        # Metadata only; the host never retrieves the database password.
+        value = self.runner.json(self._base("secretsmanager", "describe-secret")
+                                 + ["--secret-id", secret_arn, "--output", "json"])
+        current = [version for version, stages in value.get("VersionIdsToStages", {}).items()
+                   if "AWSCURRENT" in stages]
+        if len(current) != 1:
+            raise DeploymentError("database secret has no unique current version")
+        return current[0]
+
     def run_task(
         self,
         task_definition: str,

@@ -107,7 +107,7 @@ async def analyze_source(kind, model, replay, mapped):
     # Each request owns its client in the same event loop, including failures.
     async with analysis_session(kind, model, replay) as backend:
         return await analyze(mapped.repo_map, mapped.snapshot, backend, analysis_limits(kind),
-                             clarify_requirements=requirements_clarifier(mapped.snapshot, mapped.repo_map))
+                             clarify_requirements=requirements_clarifier)
 
 
 def private_json(path, data):
@@ -136,16 +136,15 @@ def record_analysis_diagnostics(path, stats, attempts, *, status, stage, fields=
         return False
 
 
-def requirements_clarifier(source, mapping):
-    def clarify(candidate):
-        try:
-            validate_demo_intent(candidate, source, mapping)
-        except SourcePolicyError as error:
-            return error.code == "intent_source_mismatch" and error.fields == ("unknowns",)
-        except Exception:
-            return False  # The final policy reports the failure.
-        return False
-    return clarify
+def requirements_clarifier(candidate):
+    """Request bounded read-only clarification, never authorize a deployment.
+
+    The runner has already checked the schema, revision, observed evidence and
+    secret handling. It owns the single shared correction slot and all budgets.
+    Unknowns must be revisitable even for sources awaiting review. Source/Intent
+    gates still evaluate the final answer before planning, caching or execution.
+    """
+    return bool(candidate.unknowns)
 
 
 class LocalRuntime:

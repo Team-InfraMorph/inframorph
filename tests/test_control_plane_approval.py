@@ -5,7 +5,9 @@ import os
 import tempfile
 import unittest
 import warnings
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -14,6 +16,13 @@ from fastapi.testclient import TestClient  # noqa: E402
 from tests.cp_isolation import NO_MODULES  # noqa: E402,F401
 from control_plane.app import create_app  # noqa: E402
 from control_plane.change_detector import plan_diff  # noqa: E402
+from control_plane.db import Status  # noqa: E402
+from control_plane.aws_config import app_name  # noqa: E402
+from control_plane.aws_deploy import approved_worker_removals, check_changes  # noqa: E402
+from adapters.aws.errors import ContractError  # noqa: E402
+from adapters.aws.naming import AppIdentity  # noqa: E402
+from adapters.aws.tests.test_aws_adapter import sample_record  # noqa: E402
+from schemas import Plan  # noqa: E402
 
 SECRET = "test-secret"
 REPO = "https://github.com/Team-InfraMorph/demo-app"
@@ -128,6 +137,125 @@ class ApprovalAndRollbackTest(unittest.TestCase):
 
     def test_rollback_without_earlier_live_is_conflict(self):
         self.assertEqual(self.client.post(f"/api/deployments/{self.first}/rollback").status_code, 409)
+
+    def record_success(self, version, targets):
+        store = self.client.app.state.store
+        did = store.begin_deploy(self.project, revision=version["local"]["source_revision"], targets=targets)
+        store.save_plans(did, {target: version[target] for target in targets})
+        for target in targets:
+            store.set_target_status(did, target, Status.LIVE)
+        store.set_status(did, Status.LIVE)
+        return did
+
+    def test_rollback_skips_intervening_local_only_history(self):
+        self.record_success(V2, ["local"])
+        source = self.record_success(V2, ["local", "aws"])
+        response = self.client.post(f"/api/deployments/{source}/rollback")
+        self.assertEqual(response.status_code, 202)
+        did = response.json()["deployment_id"]
+        self.assertEqual(self.get(did)["commit_sha"], V1_SHA)
+        self.assertEqual(set(self.get(did)["targets"]), {"local", "aws"})
+        context = SimpleNamespace(project_id=self.project, deployment_id=did,
+                                  aws_plan=Plan.model_validate(V1["aws"]))
+        self.assertEqual(len(approved_worker_removals(
+            context, self.client.app.state.store, self.worker_record(source))), 9)
+
+    def test_local_only_rollback_never_adds_aws_from_an_older_deployment(self):
+        source = self.record_success(V2, ["local"])
+        response = self.client.post(f"/api/deployments/{source}/rollback")
+        self.assertEqual(response.status_code, 202)
+        did = response.json()["deployment_id"]
+        self.assertEqual(set(self.get(did)["targets"]), {"local"})
+        self.assertEqual(set(self.client.app.state.store.get_plans(did)), {"local"})
+
+    def test_rollback_requires_prior_success_for_every_selected_target(self):
+        store = self.client.app.state.store
+        with store._lock, store._conn:
+            store._conn.execute("DELETE FROM plans WHERE deployment_id=? AND target='aws'", (self.first,))
+        source = self.record_success(V2, ["local", "aws"])
+        response = self.client.post(f"/api/deployments/{source}/rollback")
+        self.assertEqual(response.status_code, 409)
+
+    def test_queued_local_rollback_keeps_its_targets_when_project_defaults_change(self):
+        source = self.record_success(V2, ["local"])
+        store = self.client.app.state.store
+        active = store.begin_deploy(self.project, revision=V2_SHA, targets=["local", "aws"])
+        response = self.client.post(f"/api/deployments/{source}/rollback")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["state"], "queued")
+        did = response.json()["deployment_id"]
+        store.fail(active)
+        self.assertEqual(store.begin_deploy(self.project), did)
+        self.assertEqual(set(store.get_deployment(did)["targets"]), {"local"})
+
+    def test_approved_worker_removal_uses_last_successful_aws_target(self):
+        store = self.client.app.state.store
+        source = self.record_success(V2, ["local", "aws"])
+        # A different target's failure does not undo the successful AWS rollout.
+        store.set_target_status(source, "local", Status.FAILED)
+        store.set_status(source, Status.FAILED)
+        self.record_success(V1, ["local"])
+        did = store.begin_deploy(self.project, revision=V1_SHA, targets=["local", "aws"])
+        store.save_plans(did, V1)
+        store.await_approval(did, ["aws: 서비스 worker 제거"])
+        store.resolve_approval(did, True)
+        context = SimpleNamespace(project_id=self.project, deployment_id=did,
+                                  aws_plan=Plan.model_validate(V1["aws"]))
+        self.assertEqual(len(approved_worker_removals(context, store, self.worker_record(source))), 9)
+
+    def worker_record(self, did):
+        identity = AppIdentity.from_app(app_name(self.project))
+        return sample_record(deployment_id=did, app_id=identity.app_id,
+            source_revision=V2_SHA, state_key=identity.state_key,
+            service_names={s["name"]: identity.resource_prefix + "-" + s["name"] for s in V2["aws"]["services"]},
+            terraform_values={"services": V2["aws"]["services"]})
+
+    def rollback_worker_context(self):
+        pending = self.push_v2()
+        self.client.post(f"/api/deployments/{pending}/approve")
+        did = self.client.post(f"/api/deployments/{pending}/rollback").json()["deployment_id"]
+        store = self.client.app.state.store
+        context = SimpleNamespace(project_id=self.project, deployment_id=did,
+                                  aws_plan=Plan.model_validate(store.get_plans(did)["aws"]))
+        record = self.worker_record(pending)
+        return context, store, record
+
+    def test_rollback_button_authorizes_only_the_exact_previous_worker_removal(self):
+        context, store, record = self.rollback_worker_context()
+        self.assertIsNone(store.get_deployment(context.deployment_id)["approved_at"])
+        allowed = approved_worker_removals(context, store, record)
+        self.assertEqual(len(allowed), 9)
+        for address in allowed:
+            check_changes({"resource_changes": [{"type": address.split(".")[0], "address": address,
+                                                  "change": {"actions": ["delete"]}}]}, allowed)
+        for address in ('aws_s3_bucket.uploads[0]', 'aws_secretsmanager_secret.database[0]',
+                        'aws_ecs_service.service["web"]'):
+            with self.subTest(address=address), self.assertRaises(ContractError):
+                check_changes({"resource_changes": [{"type": address.split(".")[0], "address": address,
+                                                      "change": {"actions": ["delete"]}}]}, allowed)
+
+    def test_rollback_flag_cannot_authorize_a_different_live_record(self):
+        context, store, record = self.rollback_worker_context()
+        with self.assertRaisesRegex(ContractError, "base_mismatch"):
+            approved_worker_removals(context, store, replace(record, deployment_id="different-live"))
+        with store._lock, store._conn:
+            store._conn.execute("UPDATE deployments SET rollback_of=NULL WHERE id=?", (context.deployment_id,))
+        with self.assertRaisesRegex(ContractError, "base_mismatch"):
+            approved_worker_removals(context, store, record)
+
+    def test_rollback_must_restore_the_persisted_commit_and_exact_aws_plan(self):
+        context, store, record = self.rollback_worker_context()
+        modified = context.aws_plan.model_copy(update={"config": {"STORAGE_DRIVER": "s3", "PORT": "4000"}})
+        with self.assertRaisesRegex(ContractError, "base_mismatch"):
+            approved_worker_removals(SimpleNamespace(**(vars(context) | {"aws_plan": modified})), store, record)
+        # Even changing both the context and the new DB plan cannot change the historical target.
+        store.save_plans(context.deployment_id, store.get_plans(context.deployment_id) | {"aws": modified.model_dump(mode="json")})
+        with self.assertRaisesRegex(ContractError, "base_mismatch"):
+            approved_worker_removals(SimpleNamespace(**(vars(context) | {"aws_plan": modified})), store, record)
+        with store._lock, store._conn:
+            store._conn.execute("UPDATE deployments SET commit_sha=? WHERE id=?", ("a" * 40, context.deployment_id))
+        with self.assertRaisesRegex(ContractError, "base_mismatch"):
+            approved_worker_removals(context, store, record)
 
 
 if __name__ == "__main__":

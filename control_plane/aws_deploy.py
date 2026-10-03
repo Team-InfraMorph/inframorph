@@ -23,6 +23,7 @@ from adapters.aws.deployment import DeploymentOrchestrator, DeploymentRequest
 from adapters.aws.errors import ContractError
 from adapters.aws.locking import AppLock
 from adapters.aws.naming import AppIdentity
+from adapters.aws.records import DeploymentRecord
 from adapters.aws.terraform import TerraformManager, terraform_values
 from .aws_config import app_name, environment, load_config
 from .db import Store
@@ -40,9 +41,78 @@ RESOURCE_TYPES = frozenset({
     "aws_s3_bucket_server_side_encryption_configuration", "aws_s3_bucket_versioning",
     "aws_security_group", "aws_vpc_security_group_ingress_rule", "aws_vpc_security_group_egress_rule",
 })
+PUBLIC_FAILURE_CODES = frozenset({
+    "aws_plan_destructive_change", "aws_plan_outside_app_module", "aws_plan_unknown_action",
+    "aws_worker_removal_requires_approval", "aws_worker_removal_base_mismatch",
+})
+WORKER_RESOURCE_ADDRESSES = (
+    "aws_ecs_service.service", "aws_ecs_task_definition.service",
+    "aws_cloudwatch_log_group.service", "aws_security_group.service",
+    "aws_vpc_security_group_egress_rule.service_https",
+    "aws_vpc_security_group_egress_rule.service_dns_udp",
+    "aws_vpc_security_group_egress_rule.service_dns_tcp",
+    "aws_vpc_security_group_egress_rule.service_to_rds",
+    "aws_vpc_security_group_ingress_rule.rds_from_service",
+)
 
 
-def check_changes(shown):
+def rollback_removal_approved(context, store, previous, deployment):
+    """The rollback POST authorizes only the exact previous successful plan.
+
+    A trigger flag alone is not approval: bind both ends of the rollback to
+    persisted history and the AWS record currently protected by the app lock.
+    """
+    if deployment.get("rollback_of") != previous.deployment_id:
+        return False
+    source = store.get_deployment(previous.deployment_id)
+    if source is None or source["project_id"] != context.project_id:
+        return False
+    target = store.last_live_for_targets(context.project_id, previous.deployment_id, source["targets"])
+    if (target is None
+            or source["commit_sha"] != previous.source_revision
+            or deployment["commit_sha"] != target["commit_sha"]):
+        return False
+    restored_plan = store.get_plans(target["id"]).get("aws")
+    return (restored_plan is not None
+            and restored_plan == store.get_plans(context.deployment_id).get("aws")
+            and restored_plan == context.aws_plan.model_dump(mode="json"))
+
+
+def approved_worker_removals(context, store, previous):
+    """Only the named private workers in the approved, current app transition."""
+    if previous is None:
+        return frozenset()
+    current_names = {service.name for service in context.aws_plan.services}
+    removed = {s["name"] for s in previous.terraform_values.get("services", [])
+               if s.get("kind") == "worker" and s.get("public") is False
+               and s.get("port") is None and s["name"] not in current_names}
+    if not removed:
+        return frozenset()
+    deployment = store.get_deployment(context.deployment_id)
+    approved = (deployment["approved_at"] and all(
+        f"aws: 서비스 {name} 제거" in deployment["approval_reasons"] for name in removed))
+    if deployment.get("triggered_by") == "rollback":
+        if not rollback_removal_approved(context, store, previous, deployment):
+            raise ContractError("aws_worker_removal_base_mismatch")
+        approved = True
+    if not approved:
+        raise ContractError("aws_worker_removal_requires_approval")
+    base = store.last_live_for_targets(context.project_id, context.deployment_id, ["aws"])
+    identity = AppIdentity.from_app(app_name(context.project_id))
+    if (base is None or base["id"] != previous.deployment_id or base["commit_sha"] != previous.source_revision
+            or previous.app_id != identity.app_id
+            or previous.state_key != identity.state_key):
+        raise ContractError("aws_worker_removal_base_mismatch")
+    old = store.get_plans(base["id"]).get("aws", {})
+    reviewed = {s["name"] for s in old.get("services", [])
+                if s.get("kind") == "worker" and s.get("public") is False and s.get("port") is None}
+    if not removed <= reviewed or any(previous.service_names.get(name) !=
+                                      f"{identity.resource_prefix}-{name}" for name in removed):
+        raise ContractError("aws_worker_removal_base_mismatch")
+    return frozenset(f"{address}[{json.dumps(name)}]" for name in removed for address in WORKER_RESOURCE_ADDRESSES)
+
+
+def check_changes(shown, approved_worker_addresses=frozenset()):
     for resource in shown.get("resource_changes", []):
         if resource.get("mode") == "data":
             continue
@@ -51,17 +121,22 @@ def check_changes(shown):
         actions = resource.get("change", {}).get("actions", [])
         if kind not in RESOURCE_TYPES or not address.startswith(kind + "."):
             raise ContractError("aws_plan_outside_app_module")
-        if "delete" in actions and not ("create" in actions and kind == "aws_ecs_task_definition"):
+        worker_removal = actions == ["delete"] and address in approved_worker_addresses
+        if "delete" in actions and not worker_removal and not ("create" in actions and kind == "aws_ecs_task_definition"):
             raise ContractError("aws_plan_destructive_change")
         if not actions or any(a not in {"create", "update", "delete", "no-op", "read"} for a in actions):
             raise ContractError("aws_plan_unknown_action")
 
 
 class GuardedTerraform(TerraformManager):
+    approved_worker_addresses = frozenset()
+
     def plan(self, work_dir, values):
+        # A rejected new plan must not leave a successful old preview on disk.
+        (work_dir / "reviewed-summary.json").unlink(missing_ok=True)
         planned = super().plan(work_dir, values)
         shown = self.runner.json(["terraform", "show", "-json", str(planned.plan_file)], cwd=work_dir)
-        check_changes(shown)
+        check_changes(shown, self.approved_worker_addresses)
         # Store only change counts, never the Terraform state/provider secret data.
         path = work_dir / "reviewed-summary.json"
         path.write_text(json.dumps(planned.summary))
@@ -78,7 +153,11 @@ class SafeEvents:
             raise ValueError("aws_event_url_mismatch")
         # Vendor failures may include credentials or arbitrary logs. Public failure
         # diagnostics are fixed codes; the private report is redacted separately.
-        public_detail = "aws_adapter_failed" if status == "fail" else Redactor().clean(detail or "")
+        if status == "fail":
+            code = (detail or "").removeprefix("ContractError: ")
+            public_detail = code if code in PUBLIC_FAILURE_CODES else "aws_adapter_failed"
+        else:
+            public_detail = Redactor().clean(detail or "")
         event = DeployEvent(deployment_id=self.context.deployment_id, ts=datetime.now(timezone.utc),
                             target="aws", step=step, status=status, detail=public_detail,
                             duration_ms=duration_ms, url=self.expected_url if url else None)
@@ -174,7 +253,10 @@ def deploy(context, store, config):
         request = DeploymentRequest(context.deployment_id, config.state_bucket, config.migration_command,
                                     config.timeout_seconds, False, state / "aws-work", state / "aws-deployment.json")
         stage = "plan"
+        events.emit(stage, "started", "aws_plan_review_started")
         with AppLock(state / "aws-deployment.lock"):
+            manager.approved_worker_addresses = approved_worker_removals(
+                context, store, DeploymentRecord.load(request.record_path))
             orchestrator.aws.verify_caller()
             orchestrator.aws.ensure_listener_priority(identity.listener_priority, identity.hostname(foundation.apps_domain))
             manager.prepare(request.work_dir)
@@ -214,7 +296,7 @@ def deploy(context, store, config):
         private_json(folder / "failure.json", {"stage": stage, "type": type(error).__name__, "detail": detail})
         with store._lock, store._conn:
             store._conn.execute("UPDATE aws_runtime_runs SET status='failed' WHERE deployment_id=?", (context.deployment_id,))
-        events.emit(stage, "fail", "aws_pipeline_failed")
+        events.emit(stage, "fail", str(error))
         return 1
     finally:
         # ECR login tokens are temporary; retain Terraform/record data, remove only

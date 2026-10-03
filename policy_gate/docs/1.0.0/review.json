@@ -150,16 +150,17 @@
   "verified_on": "2026-10-03",
   "verification": {
     "status": "passed",
-    "python_tests": 452,
+    "python_tests": 467,
     "focused_tests_included": 69,
-    "aws_mock_tests": 34,
-    "ui_tests": 32,
+    "aws_mock_tests": 43,
+    "ui_tests": 34,
     "redteam_cases_included": 39,
     "redteam_commit": "488833528c3c9a389d0af05606c9bb1cdeaa1c99",
     "ui_build": "passed",
     "catalog_rules": 18,
     "browser": "version_selection_and_legacy_links_checked",
-    "remote_deployment": "not_run"
+    "remote_deployment": "not_run",
+    "integrated_main": "d49ebee289e51fbb652bc7a64ff47a2f6da37a8c"
   },
   "walkthrough_tests": [
     "tests.test_policy_documentation_baseline.WalkthroughTests.test_missing_evidence_then_repair",

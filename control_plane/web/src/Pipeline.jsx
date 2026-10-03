@@ -164,8 +164,8 @@ function stageNote(key, st, ctx) {
 const GAP_MS = 15000;
 
 /** 대상 하나의 배포 단계들(실제 일어난 순서). 실패 뒤 단계는 'notrun'.
- * AWS Adapter는 Plan에 DB가 있을 때만, 인프라 적용 직후 DB 준비(bootstrap·migration)를 기록 없이 실행한다
- * (adapters/aws/deployment.py `if self.plan.db is not None: self._prepare_database`). 그 경우에만 'DB 준비' 칸을 넣고,
+ * AWS Adapter는 인프라 적용 뒤 DB 준비를 확인하고 실행 시작 이벤트에 실행·재사용 결과를 보낸다.
+ * 이전 배포 기록은 인프라 완료와 실행 시작 사이의 시간으로 표시한다.
  * 그 밖의 기록 없는 15초 이상 구간은 칸을 만들지 않고 앞 칸의 선 위에 시간만 적는다. */
 function lane(target, events, running, now, hasDb) {
   const seen = {};
@@ -204,7 +204,9 @@ function lane(target, events, running, now, hasDb) {
     const prior = nodes.at(-1);
     const dbSlot = hasDb && target === "aws" && i > 0 && order[i - 1].step === "infra" && cur.step === "start";
     const gap = prior && cur.started ? Date.parse(cur.first) - Date.parse(order[i - 1].last) : 0;
-    if (dbSlot && gap > 0) nodes.push({ step: "db", label: "DB 준비", status: "ok", ms: gap, gap: "db" });
+    const database = cur.events.map((e) => json(e.detail)?.database).find(Boolean);
+    if (dbSlot && gap > 0) nodes.push({ step: "db", label: "DB 준비", status: "ok",
+      ms: database?.duration_ms ?? gap, gap: "db", database });
     else if (gap > GAP_MS) prior.pause = gap;
     nodes.push({ step: cur.step, label: DEPLOY_STEPS[cur.step] ?? cur.step, status, ms, events: cur.events });
   });
@@ -360,7 +362,7 @@ function Flow({ deployment, targets, stages, perTarget, ctx, now }) {
                 <Node key={n.step} index={i + 1} label={n.label} status={n.status} flowing={n.flowing} pause={n.pause} time={nodeTime(n.status, n.ms)}
                       flag={n.status === "fail" ? "여기서 멈춤" : null} selected={open?.id === `${t}:${n.step}`}
                       onClick={n.events || n.gap ? () => setOpen(open?.id === `${t}:${n.step}` ? null
-                        : { id: `${t}:${n.step}`, title: `${SHORT[t]} › ${n.label}`, events: n.events ?? [], gap: n.gap, ms: n.ms }) : null} />
+                        : { id: `${t}:${n.step}`, title: `${SHORT[t]} › ${n.label}`, events: n.events ?? [], gap: n.gap, ms: n.ms, database: n.database }) : null} />
               ))}
             </ol>
           </div>
@@ -394,8 +396,13 @@ function StepDetail({ item, onClose }) {
       </div>
       {item.gap === "db" && (
         <p className="detail-note">
-          AWS Adapter는 앱에 DB가 있으면 인프라 적용 직후 DB 준비(앱 전용 DB·계정 생성 → 테이블 생성, 일회성 ECS 작업 2개)를 실행합니다.
-          이 단계는 시작·완료 기록을 따로 보내지 않아, 시간은 '인프라 완료 ~ 실행 시작' 사이로 잽니다 (adapters/aws/deployment.py).
+          {item.database ? <>
+            DB·계정 준비: {item.database.bootstrap === "reused" ? "이전 성공 결과 재사용" : "실행 완료"}.
+            스키마 확인·적용: 실행 완료 (매 배포마다 실행).
+          </> : <>
+            DB·계정 준비는 성공 기록과 현재 설정이 일치하면 재사용하고, 스키마 확인·적용은 매번 실행합니다.
+            세부 결과가 없는 기록은 인프라 완료부터 실행 시작까지의 시간으로 표시합니다.
+          </>}
         </p>
       )}
       <ol>

@@ -2,15 +2,20 @@ import copy
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from analyzer.local_verify import child_environment
 from analyzer.source_policy import SourcePolicyError, validate_demo_plan
 from adapters.aws.errors import ContractError
 from control_plane.aws_config import AwsConfig, app_name, environment, owned_file
-from control_plane.aws_deploy import SafeEvents, bind, check_changes, claim
+from control_plane.aws_deploy import (SafeEvents, GuardedTerraform, approved_worker_removals,
+                                     bind, check_changes, claim, WORKER_RESOURCE_ADDRESSES)
+from adapters.aws.naming import AppIdentity
+from adapters.aws.terraform import TerraformPlan
+from adapters.aws.tests.test_aws_adapter import sample_record
 from control_plane.b_bridge import DemoModules
 from control_plane.db import Store
 from control_plane.local_deploy import load_context
@@ -75,6 +80,14 @@ class AwsBoundaries(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as output:
             events.emit("infra", "fail", "password=private-canary")
         self.assertNotIn("private-canary", output.getvalue())
+        self.assertEqual(json.loads(output.getvalue())["detail"], "aws_adapter_failed")
+        for detail in ("aws_plan_destructive_change", "ContractError: aws_plan_destructive_change"):
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                events.emit("plan", "fail", detail)
+            self.assertEqual(json.loads(output.getvalue())["detail"], "aws_plan_destructive_change")
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            events.emit("plan", "fail", "aws_plan_destructive_change password=private-canary")
+        self.assertEqual(json.loads(output.getvalue())["detail"], "aws_adapter_failed")
         with patch("sys.stdout", new_callable=io.StringIO) as output:
             events.emit("smoke", "ok", url="https://cp-test.apps.example.com/health")
         self.assertEqual(json.loads(output.getvalue())["url"], "https://cp-test.apps.example.com")
@@ -87,6 +100,79 @@ class AwsBoundaries(unittest.TestCase):
         for key in ("S3_BUCKET", "AWS_REGION"):
             self.assertIn("env." + key, template)
             self.assertIn('name  = "' + key + '"' if key == "S3_BUCKET" else 'name = "' + key + '"', terraform)
+
+
+class WorkerRemovalTests(unittest.TestCase):
+    def setUp(self):
+        identity = AppIdentity.from_app(app_name("p-0123456789ab"))
+        self.context = SimpleNamespace(project_id="p-0123456789ab", deployment_id="new",
+                                       aws_plan=SimpleNamespace(services=[SimpleNamespace(name="web")]))
+        self.previous = sample_record(app_id=identity.app_id, state_key=identity.state_key,
+            service_names={"worker": identity.resource_prefix + "-worker"},
+            terraform_values={"services": [{"name": "worker", "kind": "worker", "public": False, "port": None}]})
+        self.store = Mock()
+        self.store.get_deployment.return_value = {"approved_at": "now", "approval_reasons": ["aws: 서비스 worker 제거"]}
+        self.store.last_live_for_targets.return_value = {"id": self.previous.deployment_id, "commit_sha": self.previous.source_revision}
+        self.store.get_plans.return_value = {"aws": {"services": self.previous.terraform_values["services"]}}
+
+    @staticmethod
+    def resource(address, actions):
+        return {"type": address.split(".")[0], "address": address, "change": {"actions": actions}}
+
+    def test_approved_transition_allows_only_removed_private_worker_resources(self):
+        allowed = approved_worker_removals(self.context, self.store, self.previous)
+        resources = [self.resource(f'{address}["worker"]', ["delete"]) for address in WORKER_RESOURCE_ADDRESSES]
+        check_changes({"resource_changes": resources}, allowed)
+        for resource in resources:
+            with self.subTest(address=resource["address"]), self.assertRaises(ContractError):
+                check_changes({"resource_changes": [resource]})
+        forbidden = [
+            self.resource('aws_ecs_service.service["web"]', ["delete"]),
+            self.resource('aws_ecs_service.service["other-worker"]', ["delete"]),
+            self.resource('aws_s3_bucket.storage[0]', ["delete"]),
+            self.resource('aws_secretsmanager_secret.database[0]', ["delete"]),
+            self.resource('aws_security_group.data_task[0]', ["delete"]),
+            self.resource('aws_security_group.service["worker"]', ["delete", "create"]),
+            self.resource('module.foundation.aws_ecs_service.service["worker"]', ["delete"]),
+        ]
+        for resource in forbidden:
+            with self.subTest(address=resource["address"]), self.assertRaises(ContractError):
+                check_changes({"resource_changes": [resource]}, allowed)
+
+    def test_approval_must_name_the_removal_and_match_the_live_record(self):
+        for value in ({"approved_at": None, "approval_reasons": ["aws: 서비스 worker 제거"]},
+                      {"approved_at": "now", "approval_reasons": ["aws: 서비스 worker 추가 (worker)"]}):
+            self.store.get_deployment.return_value = value
+            with self.assertRaisesRegex(ContractError, "requires_approval"):
+                approved_worker_removals(self.context, self.store, self.previous)
+        self.store.get_deployment.return_value = {"approved_at": "now", "approval_reasons": ["aws: 서비스 worker 제거"]}
+        self.store.last_live_for_targets.return_value = {"id": "different", "commit_sha": self.previous.source_revision}
+        with self.assertRaisesRegex(ContractError, "base_mismatch"):
+            approved_worker_removals(self.context, self.store, self.previous)
+
+    def test_existing_or_unreviewed_worker_cannot_be_authorized_for_deletion(self):
+        self.context.aws_plan.services.append(SimpleNamespace(name="worker"))
+        self.assertEqual(approved_worker_removals(self.context, self.store, self.previous), frozenset())
+        self.context.aws_plan.services.pop()
+        self.store.get_plans.return_value = {"aws": {"services": []}}
+        with self.assertRaisesRegex(ContractError, "base_mismatch"):
+            approved_worker_removals(self.context, self.store, self.previous)
+
+    def test_failed_preview_clears_old_summary_and_uses_deletion_guard(self):
+        with tempfile.TemporaryDirectory() as name:
+            folder = Path(name)
+            summary = folder / "reviewed-summary.json"
+            summary.write_text('{"delete": 0}')
+            manager = GuardedTerraform(ROOT / "terraform/app", runner=Mock())
+            manager.runner.json.return_value = {"resource_changes": [self.resource('aws_ecs_service.service["worker"]', ["delete"])]}
+            planned = TerraformPlan(folder, folder / "app.tfplan", {}, {"delete": 1})
+            with patch("adapters.aws.terraform.TerraformManager.plan", return_value=planned):
+                with self.assertRaisesRegex(ContractError, "destructive_change"):
+                    manager.plan(folder, {})
+                self.assertFalse(summary.exists())
+                manager.approved_worker_addresses = approved_worker_removals(self.context, self.store, self.previous)
+                self.assertEqual(manager.plan(folder, {}).summary, {"delete": 1})
+                self.assertEqual(json.loads(summary.read_text()), {"delete": 1})
 
 
 class AwsRuntimeTests(unittest.TestCase):

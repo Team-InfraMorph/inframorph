@@ -101,7 +101,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         answer["unknowns"] = ["private-recovery-requirement-canary"]
         rows = self.transcript[:-1] + [{"text": json.dumps(answer)}, self.transcript[-1]]
         result = await self.run_recovery(backend=ReplayBackend([Reply(**row) for row in rows]),
-            clarify_requirements=requirements_clarifier(self.source, self.mapping))
+            clarify_requirements=requirements_clarifier)
         self.assertEqual(result.status, "recovered")
         self.assertEqual(result.analysis.intent.app, self.intent.app)
         self.assertEqual(result.reanalysis_metrics.app_name_corrections, 1)

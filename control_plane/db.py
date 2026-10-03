@@ -335,6 +335,12 @@ class Store:
                 "UPDATE deployments SET status=?, updated_at=? WHERE id=?",
                 (Status.DEPLOYING.value, now, deployment_id),
             )
+            if self._one("SELECT triggered_by FROM deployments WHERE id=?", (deployment_id,))["triggered_by"] == "rollback":
+                # Queued rollbacks retain their reviewed scope even if the
+                # project's default destinations changed while they waited.
+                targets = list(self.get_plans(deployment_id))
+                if not targets:
+                    raise ValueError("rollback_target_mismatch")
             if targets is None:
                 targets = json.loads(self._one(
                     "SELECT targets FROM projects WHERE id=?", (project_id,))["targets"])
@@ -478,6 +484,28 @@ class Store:
                 found[row["target"]] = json.loads(row["plan"])
         return found
 
+    def last_live_for_targets(self, project_id, before_deployment_id, targets):
+        """Newest earlier deployment with successful, stored plans for every requested target.
+
+        Local-only runs must not become an AWS baseline. A successful target
+        remains eligible even when a different target made the overall run fail.
+        Rollback uses one common revision, so all selected targets must match.
+        """
+        targets = sorted(set(targets))
+        if not targets:
+            return None
+        placeholders = ",".join("?" for _ in targets)
+        row = self._one(
+            "SELECT d.* FROM deployments d, deployments ref WHERE ref.id=? AND d.project_id=? "
+            "AND ref.project_id=d.project_id AND d.rowid < ref.rowid "
+            "AND (SELECT COUNT(*) FROM deployment_targets t JOIN plans p "
+            "ON p.deployment_id=t.deployment_id AND p.target=t.target "
+            f"WHERE t.deployment_id=d.id AND t.target IN ({placeholders}) "
+            "AND (t.status=? OR d.status=?))=? ORDER BY d.rowid DESC LIMIT 1",
+            (before_deployment_id, project_id, *targets, Status.LIVE.value, Status.LIVE.value, len(targets)),
+        )
+        return self._deployment(row) if row else None
+
     def await_approval(self, deployment_id, reasons):
         with self._lock, self._conn:
             self._conn.execute(
@@ -505,6 +533,12 @@ class Store:
 
     def create_rollback(self, deployment_id, base):
         """base(직전 LIVE)의 커밋과 plan으로 새 배포 작업을 만든다. 실행은 begin_deploy가 맡는다."""
+        source = self.get_deployment(deployment_id)
+        targets = sorted(source["targets"]) if source else []
+        if (not targets or source["project_id"] != base["project_id"]
+                or not set(targets) <= self.get_plans(base["id"]).keys()):
+            raise ValueError("rollback_target_mismatch")
+        placeholders = ",".join("?" for _ in targets)
         new_id, now = _new_id("d"), _now()
         with self._lock, self._conn:
             self._conn.execute(
@@ -513,7 +547,8 @@ class Store:
             )
             self._conn.execute("UPDATE deployments SET rollback_of=? WHERE id=?", (deployment_id, new_id))
             self._conn.execute(
-                "INSERT INTO plans SELECT ?, target, plan FROM plans WHERE deployment_id=?", (new_id, base["id"])
+                "INSERT INTO plans SELECT ?, target, plan FROM plans WHERE deployment_id=? "
+                f"AND target IN ({placeholders})", (new_id, base["id"], *targets)
             )
         return new_id
 
