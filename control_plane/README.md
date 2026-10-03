@@ -171,6 +171,21 @@ cloudflared tunnel --url http://localhost:8000 --protocol http2   # 대회장 �
 
 ## 테스트
 
+Policy 자동 수정은 Intent·Plan·배포용 코드 패치 전체에 걸쳐 배포당 최대 3회를 사용한다.
+원본 저장소와 검사 규칙은 유지하며, 모든 수정 후보를 기존 Policy로 재검사한다.
+재검사 통과 후에도 빌드와 Local 테스트가 필요하다. 원래 차단과 회차별 diff·결과·사용량은
+화면의 **정책 검사 → AI 자동 수정 이력**에서 확인한다.
+미지원 소스·변조·금지 코드·시크릿은 자동 승인하지 않고, 롤백·분석 재사용 요청에서는
+새 모델 수정을 수행하지 않는다. [범위와 제한](../policy_gate/docs/1.1.0/auto-repair.md).
+
+격리된 상태에서 실제 검사기를 재현하는 명령(기본은 응답 재생, Docker/AWS 실행 없음):
+
+```sh
+python scripts/verify_policy_auto_repair.py --output-dir .local/policy-repair-check
+# 새 디렉터리에서 팀 API를 명시적으로 사용한다.
+python scripts/verify_policy_auto_repair.py --openai --env-file .env --output-dir .local/policy-repair-api-check
+```
+
 ```sh
 python -m unittest discover -s tests -p 'test_control_plane_*.py' -v
 ```

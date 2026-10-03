@@ -19,7 +19,7 @@ def start(store,deployment_id,target,value):
 
 def save(store, deployment_id, target, attempt, value, *, enforce_binding=True):
     from .policy_lifecycle import guard,audit,diagnostic
-    if target not in {'local','aws','onprem'} or type(attempt) is not int or not 0 <= attempt <= 1:
+    if target not in {'local','aws','onprem'} or type(attempt) is not int or not 0 <= attempt <= 3:
         raise ValueError('invalid_policy_scope')
     if value.get('decision') not in {'PASS','BLOCK','UNSUPPORTED','ERROR'}:
         raise ValueError('invalid_policy_result')
@@ -60,6 +60,11 @@ def read(store, deployment_id):
     rows=store._all('SELECT * FROM policy_results WHERE deployment_id=? ORDER BY seq',(deployment_id,))
     results=[json.loads(r['payload'])|{'seq':r['seq'],'target':r['target'],'attempt':r['attempt']} for r in rows]
     payload={'results':results}
+    from .auto_repair import history, MAX_ATTEMPTS
+    repairs = history(store, deployment_id)
+    if repairs:
+        payload['repairs'] = repairs
+        payload['max_repair_attempts'] = MAX_ATTEMPTS
     if any(r.get('family')=='inframorph-policy' for r in results):payload['summaries']=summaries(results)
     return payload
 

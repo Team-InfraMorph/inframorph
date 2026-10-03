@@ -1,5 +1,6 @@
 """Actual C/E gate boundaries; Docker is forbidden in these regression tests."""
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 from pathlib import Path
@@ -97,6 +98,42 @@ class GateWiringTests(unittest.TestCase):
         builder.assert_not_awaited()
         adapter.assert_not_awaited()
         self.assertEqual(self.store.get_runtime_patches(self.did), {})
+
+    def test_third_policy_repair_reaches_builder_and_local_test_only_after_real_gate(self):
+        from analyzer.backend import ReplayBackend, Reply
+        from analyzer.recovery import BuiltPatch, LocalCheck
+        from code_patch.runner import read_snapshot, transform, ALLOWED_PATHS
+        from control_plane.auto_repair import history
+        from schemas import BuildArtifact
+        original,_ = read_snapshot(Path(self.context.snapshot),self.context.repo_map)
+        approved = transform(original,self.context.plan)
+        def broken(snapshot, mapping, plan, output):
+            replacements = {n:approved[n] for n in ALLOWED_PATHS if n in approved}
+            replacements['src/images.js'] = b'function broken( {\n'
+            return patch_snapshot(snapshot,mapping,plan,output,replacements=replacements)
+        proposal = lambda content: Reply(text=json.dumps({'files':[{'path':'src/images.js','content':content}]}))
+        backend = ReplayBackend([proposal('function broken( {'),proposal('function broken( {'),
+                                 proposal(approved['src/images.js'].decode())])
+        @asynccontextmanager
+        async def session(*args):
+            yield backend
+        async def build(candidate, signature):
+            from policy_gate.gate import validate_patch
+            validate_patch(self.context.snapshot,candidate.directory,candidate.plan)
+            self.assertEqual([r['status'] for r in history(self.store,self.did)],['failed','failed','passed'])
+            return BuiltPatch(artifact=BuildArtifact(source_revision=self.context.repo_map.commit,target='local',
+                image=self.context.plan.image_tag,platform='linux/amd64'),fingerprint=signature)
+        with patch('control_plane.local_deploy.patch_snapshot',side_effect=broken), \
+                patch('control_plane.local_deploy.analysis_session',side_effect=session), \
+                patch.object(EConnector,'build',side_effect=build) as builder, \
+                patch.object(EConnector,'check_local',return_value=LocalCheck(ok=True,url='http://127.0.0.1:3000')) as adapter:
+            result = asyncio.run(deploy(self.context,self.store))
+        self.assertEqual(result,0)
+        builder.assert_awaited_once()
+        adapter.assert_awaited_once()
+        self.assertTrue(self.store.get_runtime_patches(self.did)['local']['applied'])
+        from control_plane.policy_results import read
+        self.assertEqual({r['attempt'] for r in read(self.store,self.did)['results']},{0,1,2,3})
 
     def test_changed_snapshot_stops_before_any_worker(self):
         path = Path(self.context.snapshot) / "src/server.js"
