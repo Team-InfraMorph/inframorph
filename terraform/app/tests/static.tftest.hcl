@@ -3,6 +3,14 @@ mock_provider "aws" {}
 run "first_deployment_plan" {
   command = plan
 
+  override_resource {
+    target          = aws_secretsmanager_secret.database[0]
+    override_during = plan
+    values = {
+      arn = "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:app-database-AbCd"
+    }
+  }
+
   override_data {
     target = data.aws_iam_policy_document.ecs_tasks_assume
     values = {
@@ -48,7 +56,7 @@ run "first_deployment_plan" {
     deployment_image_uri    = "111122223333.dkr.ecr.ap-northeast-2.amazonaws.com/inframorph/apps@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     service_image_uri       = "111122223333.dkr.ecr.ap-northeast-2.amazonaws.com/inframorph/apps@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     app_config              = { STORAGE_DRIVER = "s3" }
-    service_config          = { STORAGE_DRIVER = "s3" }
+    service_config          = { STORAGE_DRIVER = "s3", PORT = "9000", AWS_REGION = "wrong-region" }
     db_enabled              = true
     service_db_enabled      = true
     rds_address             = "db.example.ap-northeast-2.rds.amazonaws.com"
@@ -106,5 +114,31 @@ run "first_deployment_plan" {
   assert {
     condition     = strcontains(var.service_image_uri, "@sha256:") && !strcontains(var.service_image_uri, ":latest")
     error_message = "ECS task definitions must use digest-pinned images."
+  }
+
+  assert {
+    condition = alltrue([for task in aws_ecs_task_definition.service :
+      length(jsondecode(task.container_definitions)[0].environment) ==
+      length(distinct([for item in jsondecode(task.container_definitions)[0].environment : item.name]))
+    ])
+    error_message = "ECS environment names must be unique even when config repeats adapter-owned names."
+  }
+
+  assert {
+    condition = [for item in jsondecode(aws_ecs_task_definition.service["web"].container_definitions)[0].environment :
+    item.value if item.name == "PORT"] == ["3000"]
+    error_message = "The web service must receive its declared port exactly once."
+  }
+
+  assert {
+    condition = length([for item in jsondecode(aws_ecs_task_definition.service["worker"].container_definitions)[0].environment :
+    item if item.name == "PORT"]) == 0
+    error_message = "A worker must not inherit the web service port."
+  }
+
+  assert {
+    condition = [for item in jsondecode(aws_ecs_task_definition.service["web"].container_definitions)[0].environment :
+    item.value if item.name == "AWS_REGION"] == ["ap-northeast-2"]
+    error_message = "Storage settings must use the operator's region without duplicate names."
   }
 }

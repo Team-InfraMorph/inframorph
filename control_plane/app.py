@@ -418,8 +418,9 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         deployment = deployment_or_404(deployment_id)
         if Status(deployment["status"]) not in TERMINAL:
             raise HTTPException(409, "deployment is still in progress")
-        # 실제로 배포된(설계도가 있는) 직전 LIVE로 돌아간다. 설계도 없이 건너뛴 배포는 기준점이 아니다.
-        base = store.last_live(deployment["project_id"], deployment_id, with_plans=True)
+        # 같은 대상들을 정상 배포했던 공통 커밋으로 돌아간다. Local-only 기록이
+        # AWS 복귀 기준을 바꾸거나, Local 롤백에 AWS가 추가되어서는 안 된다.
+        base = store.last_live_for_targets(deployment["project_id"], deployment_id, deployment["targets"])
         if base is None:
             raise HTTPException(409, "no earlier LIVE deployment to roll back to")
         new_id = store.create_rollback(deployment_id, base)
