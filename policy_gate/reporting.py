@@ -20,6 +20,7 @@ RULES = {
     'source': ('G-002', '지원 소스 확인', '검토된 소스 프로필을 사용하세요.'),
 }
 CODES = {
+    'plan_config_mismatch': ('L-001','분석 결과의 환경설정이 배포 설계에 반영되지 않았습니다.'),
     'storage_evidence_unrelated': ('I-004','저장 근거가 파일 읽기·쓰기와 연결되지 않습니다.'),
     'storage_evidence_unsupported': ('I-004','아직 지원하지 않는 저장 코드 형태입니다.'),
     'worker_entry_missing': ('I-002','worker 진입 파일이 없습니다.'),

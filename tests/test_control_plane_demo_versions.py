@@ -10,6 +10,10 @@ from control_plane.app import create_app
 from control_plane.b_bridge import DemoModules
 from control_plane.db import ConflictError, Store
 from control_plane.runtime import LocalRuntime
+from analyzer.backend import ReplayBackend, Reply
+from analyzer.source_policy import validate_demo_plan
+from policy_gate.gate import PolicyError, validate_plan
+from schemas import Intent, RepoMap
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "https://github.com/Team-InfraMorph/demo-app"
@@ -89,6 +93,79 @@ class DemoVersionTests(unittest.TestCase):
         self.store = Store(self.root / "cp.db")
         self.addCleanup(self.store.close)
         self.assertEqual(self.store.get_deployment(did)["commit_sha"], self.versions["v2"])
+
+    def test_reviewed_port_survives_demo_planning_for_both_versions_and_targets(self):
+        for version in ("v1", "v2"):
+            intent = Intent.model_validate_json((ROOT / f"schemas/fixtures/{version}/intent.json").read_text())
+            mapping = RepoMap.model_validate_json((ROOT / f"tests/fixtures/analyzer/{version}/repo_map.json").read_text())
+            for config in ({}, {"PORT": "3000"}):
+                intent.config = config
+                for target in ("local", "aws"):
+                    with self.subTest(version=version, config=config, target=target):
+                        plan = DemoModules().plan(intent, target)
+                        validate_demo_plan(plan, mapping, target=target)
+                        validate_plan(intent, plan)
+                        self.assertEqual(plan.config.get("PORT"), config.get("PORT"))
+                        self.assertEqual(plan.config["STORAGE_DRIVER"], "fs" if target == "local" else "s3")
+            for config in ({"PORT": "3001"}, {"STORAGE_DRIVER": "injected"}, {"NODE_OPTIONS": "injected"}):
+                intent.config = config
+                with self.assertRaisesRegex(ValueError, "unsupported_demo_config"):
+                    DemoModules().plan(intent)
+
+    def port_backend(self, version):
+        replies = json.loads((ROOT / f"tests/fixtures/analyzer/{version}/replay.json").read_text())
+        intent = json.loads((ROOT / f"schemas/fixtures/{version}/intent.json").read_text())
+        intent["config"] = {"PORT": "3000"}
+        return ReplayBackend([Reply(**item) for item in replies[:-1] + [{"text": json.dumps(intent)}]])
+
+    def test_runtime_accepts_reviewed_port_for_simultaneous_local_and_aws_plans(self):
+        project = self.store.create_project(REPO, "main", ["local", "aws"])
+        # Analysis only: no adapter command or AWS configuration is read.
+        self.runtime.aws_config = self.root / "unused-aws.json"
+        for version in ("v1", "v2"):
+            with self.subTest(version=version):
+                did = self.store.begin_deploy(project["project_id"], revision=self.versions[version])
+                with patch("control_plane.runtime.analysis_backend", return_value=self.port_backend(version)):
+                    result = self.runtime.analyze(self.store, self.store.get_deployment(did))
+                self.assertEqual(set(result["plans"]), {"local", "aws"})
+                for plan in result["plans"].values():
+                    self.assertEqual(plan["config"]["PORT"], "3000")
+                self.assertGreater(result["metrics"]["model_calls"], 0)
+                self.assertEqual(result["metrics"]["api_calls"], 0)
+                self.store.set_status(did, "LIVE")
+
+    def test_api_reports_plan_failure_without_deploying_or_leaking_exception_text(self):
+        original_plan = self.runtime.b.plan
+
+        def drop_port(intent, target="local"):
+            plan = original_plan(intent, target)
+            plan.config.pop("PORT", None)
+            return plan
+
+        for cause in ("missing_port", "private-error-canary"):
+            with self.subTest(cause=cause):
+                expected = "plan_config_mismatch" if cause == "missing_port" else "policy_gate_failed"
+                with patch("control_plane.runtime.analysis_backend", return_value=self.port_backend("v2")), \
+                     patch.object(self.runtime.b, "plan", side_effect=drop_port), \
+                     patch.object(self.runtime, "command", side_effect=AssertionError("must not deploy")) as command:
+                    if cause == "missing_port":
+                        response = self.client.post(f"/api/projects/{self.project['project_id']}/deploy", json={"demo_version": "v2"})
+                    else:
+                        with patch("control_plane.runtime.validate_plan", side_effect=PolicyError(cause)):
+                            response = self.client.post(f"/api/projects/{self.project['project_id']}/deploy", json={"demo_version": "v2"})
+                self.assertEqual(response.status_code, 202, response.text)
+                did = response.json()["deployment_id"]
+                deployment = self.store.get_deployment(did)
+                self.assertEqual(deployment["status"], "FAILED")
+                self.assertEqual(deployment["analysis_metrics"]["error"], expected)
+                self.assertEqual(deployment["analysis_metrics"]["blocked_stage"], "plan_policy")
+                events = [item["event"] for item in self.store.list_events(did)]
+                self.assertTrue(any(e["step"] == "plan" and e["status"] == "fail" and
+                                    e["detail"] == f"배포 설계 검사 실패: {expected}" for e in events))
+                self.assertNotIn("private-error-canary", json.dumps(deployment) + json.dumps(events))
+                self.assertFalse(self.runtime.context_file(did).exists())
+                self.assertEqual(self.store.get_plans(did), {})
+                command.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ const SHORT = { local: "Local 테스트", onprem: "온프레미스", aws: "AWS" 
 // 배포 한 번 = 공통 단계(대상마다 같은 일) → 대상별 배포 레인 → 조종실 직접 확인.
 // 이벤트의 step 이름만으로는 '근거 검사'와 '패치 검사'가 둘 다 policy라서, 코드 수정 전후로 나눈다.
 const SHARED = [
-  ["analyze", "AI 분석"], ["evidence", "근거 검사"], ["approval", "사람 승인"],
+  ["analyze", "AI 분석"], ["evidence", "근거 검사"], ["design", "배포 설계 검사"], ["approval", "사람 승인"],
   ["patch", "코드 수정"], ["patchcheck", "패치 검사"], ["build", "빌드"],
 ];
 const STAGE_LABEL = { ...Object.fromEntries(SHARED), deploy: "배포", verify: "직접 확인" };
@@ -32,6 +32,7 @@ const HEADLINE = {
 };
 
 function stageOf(e, patched, planned) {
+  if (e.step === "plan" && e.detail?.startsWith("배포 설계 검사 실패:")) return "design";
   if (e.step === "build" && planned) return "deploy"; // AWS Adapter가 변경 미리보기 뒤에 하는 이미지 확인
   if (e.step === "analyze" || e.step === "patch" || e.step === "build") return e.step;
   if (e.step === "policy") return patched ? "patchcheck" : "evidence";
@@ -51,13 +52,16 @@ function busy(events) {
   return total;
 }
 
-function byStage(events) {
+function byStage(events, blockedStage) {
   const stages = {};
   let patched = false, planned = false;
   for (const e of events) {
     if (e.step === "patch") patched = true;
     if (e.step === "plan") planned = true;
-    const st = (stages[stageOf(e, patched, planned)] ??= { events: [], status: "started" });
+    // Older records used analyze for a failure after the model had completed.
+    const stage = e.step === "analyze" && e.status === "fail" && ["planner", "plan_policy"].includes(blockedStage)
+      ? "design" : stageOf(e, patched, planned);
+    const st = (stages[stage] ??= { events: [], status: "started" });
     st.events.push(e);
     st.first ??= e.ts;
     st.last = e.ts;
@@ -94,6 +98,7 @@ function useNow(active) {
 }
 
 function sharedStage(key, deployment, perTarget, now) {
+  if (key === "design" && !perTarget.some((s) => s.design)) return null;
   if (key === "approval") {
     if (!deployment.approval_reasons?.length) return null; // 구조 변경이 없으면 승인 단계 자체가 없다
     // 승인 대기 시간 = 승인 직전 마지막 기록(분석·근거 검사 끝)부터 승인(또는 지금)까지
@@ -108,13 +113,14 @@ function sharedStage(key, deployment, perTarget, now) {
   const found = perTarget.map((s) => s[key]).filter(Boolean);
   if (!found.length) {
     if (key === "analyze" && deployment.analysis_mode === "rebuild_only") return { status: "skip", note: "이전 분석 재사용" };
-    if (key === "analyze" && perTarget.some((s) => s.evidence)) return { status: "ok" }; // 근거 검사까지 갔으면 분석은 끝났다
+    if (key === "analyze" && perTarget.some((s) => s.evidence || s.design)) return { status: "ok" }; // 설계 검사까지 갔으면 분석은 끝났다
     // Local 배포기는 패치 검사를 따로 남기지 않고 'E가 패치를 승인함'(initial_patch_approved)으로만 남긴다.
     if (key === "patchcheck" && perTarget.some((s) => s.patch?.events.some((e) => /patch_approved/.test(e.detail ?? ""))))
       return { status: "ok", note: "E Policy Gate가 패치 승인" };
     return { status: TERMINAL.includes(deployment.status) ? "skip" : "pending" };
   }
-  const status = found.some((s) => s.status === "fail") ? "fail" : found.every((s) => s.status === "ok") ? "ok" : "started";
+  const status = found.some((s) => s.status === "fail") ? "fail"
+    : (key === "analyze" && perTarget.some((s) => s.design)) || found.every((s) => s.status === "ok") ? "ok" : "started";
   const first = Math.min(...found.map((s) => Date.parse(s.first)));
   const ms = status === "started" ? now - first : Math.max(...found.map((s) => s.ms));
   const failed = found.find((s) => s.status === "fail");
@@ -513,7 +519,7 @@ function TargetResult({ target, deployment, stage, onRecheck }) {
 
 export function Pipeline({ deployment, events, targets, ctx }) {
   const now = useNow(!TERMINAL.includes(deployment.status));
-  const stages = Object.fromEntries(targets.map((t) => [t, byStage(events.filter((e) => e.target === t))]));
+  const stages = Object.fromEntries(targets.map((t) => [t, byStage(events.filter((e) => e.target === t), deployment.analysis_metrics?.blocked_stage)]));
   const perTarget = Object.fromEntries(targets.map((t) => [t, events.filter((e) => e.target === t)]));
   return <Flow deployment={deployment} targets={targets} stages={stages} perTarget={perTarget} ctx={ctx} now={now} />;
 }
@@ -522,7 +528,7 @@ export function Results({ deployment, events, targets, onRecheck }) {
   return (
     <div className="targets">
       {targets.map((t) => (
-        <TargetResult key={t} target={t} deployment={deployment} stage={byStage(events.filter((e) => e.target === t))}
+        <TargetResult key={t} target={t} deployment={deployment} stage={byStage(events.filter((e) => e.target === t), deployment.analysis_metrics?.blocked_stage)}
                       onRecheck={onRecheck} />
       ))}
     </div>
