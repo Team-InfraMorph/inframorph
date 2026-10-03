@@ -1,0 +1,23 @@
+{
+  "mode": "follow-up runtime check; no AI call",
+  "source_revision": "8ef6ccdcb619050591ee32061734a95c17d50b9a",
+  "policy": {
+    "family": "inframorph-policy",
+    "version": "1.1.0",
+    "status": "development",
+    "profile": "reviewed-node22",
+    "policy_digest": "97f3aa4b63a85102152dab375695bc9f04ddcd524785d5c7e3b6d2f60d6ff1ac",
+    "implementation_digest": "8ce034fa424e5a4002beedae946ef34b6a35a8c976032beb788620f6087c2c6d",
+    "rules_digest": "5efa98408806e55369fc69b121573e8d5cb0a9bc964eabdb853f31f5e7d9ec91",
+    "documents_digest": "2af07ef102430b93ecb4f5c69329b2140ed18e5c3876a99d01ff60617ae3002e"
+  },
+  "worker": {
+    "code": "board_worker_verified",
+    "container_id": "1704887923ea806b3e70c5af631d3b196eece6ae23ffc1949708afcf5bff2c97",
+    "image_id": "sha256:82d38e446418617b30bd0828d6fb752131724140ed06d873b77f8dc64a31f66b",
+    "probe_note_id": 6,
+    "minimum_count": 6,
+    "observed_count": 6,
+    "observed_at": "2026-10-03T14:38:29.071Z"
+  }
+}

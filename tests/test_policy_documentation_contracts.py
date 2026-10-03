@@ -15,10 +15,11 @@ from control_plane import policy_lifecycle as life
 from control_plane.policy_results import check, read
 from policy_gate.gate import PolicyError, validate_patch, validate_plan
 from policy_gate.reporting import observe
+from policy_gate.catalog import release
 from schemas import Plan, RepoMap
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = ROOT/'policy_gate/docs/1.0.0'
+DOCS = ROOT/'policy_gate/docs'/release()['version']
 SOURCE = ROOT/'tests/fixtures/analyzer/v1/snapshot'
 MAPPING = RepoMap.model_validate_json((ROOT/'tests/fixtures/analyzer/v1/repo_map.json').read_text())
 INTENT = json.loads((ROOT/'schemas/fixtures/v1/intent.json').read_text())

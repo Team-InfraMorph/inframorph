@@ -1,0 +1,57 @@
+[
+  {
+    "board": "board-v1",
+    "source_revision": "f7b3983d1955391b5752ad051718d9b6cde2ebdc",
+    "analysis": "deterministic contract input; no model called",
+    "policy": "1.1.0",
+    "image_id": "sha256:e5505e8e3807f91d8c63c9740741495b278c6101e1e35a1950bfd3fb24400c10",
+    "url": "https://franklin-acrobat-stylish-visible.trycloudflare.com",
+    "checks": {
+      "assets": {
+        "code": "board_assets_verified",
+        "file_count": 10
+      }
+    },
+    "preserved": {
+      "note": {
+        "id": 2,
+        "text": "V1 → V2에서 다시 만나는 체험 기록",
+        "createdAt": "2026-10-03T14:20:55.559Z"
+      },
+      "key": "77ae6fed-9217-43c9-8699-7b0ffc4e5bbb.png",
+      "image_sha256": "854ecef24d7e9980df96abe2cf501241366e001022393e48c4faab5750bfe076"
+    }
+  },
+  {
+    "board": "board-v2",
+    "source_revision": "8ef6ccdcb619050591ee32061734a95c17d50b9a",
+    "analysis": "deterministic contract input; no model called",
+    "policy": "1.1.0",
+    "image_id": "sha256:82d38e446418617b30bd0828d6fb752131724140ed06d873b77f8dc64a31f66b",
+    "url": "https://codes-allowance-sewing-hoped.trycloudflare.com",
+    "checks": {
+      "assets": {
+        "code": "board_assets_verified",
+        "file_count": 10
+      },
+      "worker": {
+        "code": "board_worker_verified",
+        "container_id": "1704887923ea806b3e70c5af631d3b196eece6ae23ffc1949708afcf5bff2c97",
+        "image_id": "sha256:82d38e446418617b30bd0828d6fb752131724140ed06d873b77f8dc64a31f66b",
+        "probe_note_id": 4,
+        "minimum_count": 4,
+        "observed_count": 4,
+        "observed_at": "2026-10-03T14:21:47.813Z"
+      }
+    },
+    "preserved": {
+      "note": {
+        "id": 2,
+        "text": "V1 → V2에서 다시 만나는 체험 기록",
+        "createdAt": "2026-10-03T14:20:55.559Z"
+      },
+      "key": "77ae6fed-9217-43c9-8699-7b0ffc4e5bbb.png",
+      "image_sha256": "854ecef24d7e9980df96abe2cf501241366e001022393e48c4faab5750bfe076"
+    }
+  }
+]

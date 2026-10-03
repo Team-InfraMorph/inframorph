@@ -379,9 +379,20 @@ const DETAIL_KEY = {
   changes: "자원 변경 예정", stage_plan: "자원 변경", app: "AWS 앱 이름", source_revision: "커밋", code: "단계 코드",
 };
 
-function detailRows(detail) {
+export function detailRows(detail) {
   const d = json(detail);
   if (!d || typeof d !== "object") return null;
+  if (d.assets?.code === "board_assets_verified") {
+    const rows = [["화면·기본 이미지", `검토한 ${d.assets.file_count}개 파일을 실행 서버에서 확인했습니다.`]];
+    if (d.worker?.code === "board_worker_verified") {
+      rows.push(["worker 실행", "현재 이미지의 컨테이너와 메모 집계 이벤트를 확인했습니다."],
+        ["검증 메모", `#${d.worker.probe_note_id} · 기대 ${d.worker.minimum_count}건 이상 / 관찰 ${d.worker.observed_count}건`],
+        ["확인 시각", new Date(d.worker.observed_at).toLocaleString()]);
+    }
+    return rows;
+  }
+  if (d.code?.startsWith("board_")) return [["실행 확인", explain(d.code)?.what || "체험 앱 실행 검증 실패"],
+    ["이전 서비스 복구", d.rollback_verified ? "복구 후 데이터 재조회 확인" : "복구 확인 기록 없음"]];
   return Object.entries(d).map(([k, v]) => [DETAIL_KEY[k] ?? k,
     v && typeof v === "object" ? Object.entries(v).map(([a, b]) => `${a} ${typeof b === "object" ? JSON.stringify(b) : b}`).join(" · ") : String(v)]);
 }

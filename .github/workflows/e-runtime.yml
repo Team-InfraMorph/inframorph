@@ -15,6 +15,7 @@ on:
       - 'tests/**'
       - 'requirements.txt'
       - 'scripts/verify_e_*.py'
+      - 'scripts/verify_demo_board*.py'
       - 'scripts/redteam_boundaries.py'
       - 'scripts/check_policy_catalog.py'
       - 'validation/redteam-source.json'

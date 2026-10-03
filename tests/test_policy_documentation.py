@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from fastapi.testclient import TestClient
-from policy_gate.catalog import identity, document, release
+from policy_gate.catalog import identity, document, release, fingerprint
 from policy_gate.gate import PolicyError, validate_intent, validate_patch, validate_plan
 from policy_gate.reporting import observe
 from analyzer.source_policy import validate_demo_intent, validate_demo_plan
@@ -24,12 +24,15 @@ DOCS=ROOT/'policy_gate/docs/1.0.0'
 class DocumentationContract(unittest.TestCase):
     def test_one_document_set_and_unchanged_rule_contract(self):
         baseline=json.loads((DOCS/'review.json').read_text())['baseline']
-        self.assertEqual(identity()['rules_digest'],baseline['rules_digest'])
+        self.assertEqual(fingerprint(release('1.0.0')['rules']),baseline['rules_digest'])
         self.assertFalse((DOCS/'revisions').exists())
         self.assertNotIn('document_revision',identity())
         self.assertNotIn('document_revisions',release())
+        changed_implementations={r['implementation'] for r in release()['rules'] if
+            r['revision'] != next(old['revision'] for old in release('1.0.0')['rules'] if old['id']==r['id'])}
         for name,digest in baseline['behavior_files'].items():
-            self.assertEqual(hashlib.sha256((ROOT/name).read_bytes()).hexdigest(),digest,name)
+            if name not in changed_implementations:
+                self.assertEqual(hashlib.sha256((ROOT/name).read_bytes()).hexdigest(),digest,name)
         for path in DOCS.rglob('*.md'):
             self.assertNotIn('문서 revision',path.read_text(),path)
 

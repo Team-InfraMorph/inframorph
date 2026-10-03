@@ -1,5 +1,5 @@
 {
-  "policy_version": "1.0.0",
+  "policy_version": "1.1.0",
   "rule_ids": [
     "I-001",
     "I-003",
@@ -168,5 +168,6 @@
     "tests.test_policy_documentation_baseline.WalkthroughTests.test_unrelated_patch_then_regenerate",
     "tests.test_policy_documentation_baseline.ExecutionFlowTests.test_local_failure_prevents_remote_commands",
     "tests.test_policy_documentation_contracts.VersionContractTests.test_record_walkthrough"
-  ]
+  ],
+  "inherited_explanation_baseline": "1.0.0"
 }
