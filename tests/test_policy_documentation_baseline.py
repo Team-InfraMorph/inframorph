@@ -146,7 +146,7 @@ class FrozenBaselineTests(unittest.TestCase):
     def test_repository_baseline(self):
         baseline = json.loads((ROOT/'policy_gate/baselines/1.0.0.json').read_text())
         self.assertEqual(baseline['document_revisions'], [1,2,3])
-        self.assertEqual(identity()['document_revision'], 3)
+        self.assertEqual(identity()['document_revision'], 4)
         validate_baselines()
 
     def test_baseline_detects_document_and_active_policy_changes(self):
