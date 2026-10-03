@@ -40,6 +40,17 @@ function stageOf(e, patched, planned) {
 }
 
 /** 한 대상의 이벤트(seq 순) → {stage: {status, first, last, ms, events}}. */
+/** 단계가 실제로 일한 시간 = '시작 → 끝' 구간의 합. 첫 기록~마지막 기록으로 재면 중간의 승인 대기까지 섞인다. */
+function busy(events) {
+  let total = 0, open = null;
+  for (const e of events) {
+    const t = Date.parse(e.ts);
+    if (e.status === "started") open ??= t;
+    else if (open != null) { total += t - open; open = null; }
+  }
+  return total;
+}
+
 function byStage(events) {
   const stages = {};
   let patched = false, planned = false;
@@ -55,7 +66,7 @@ function byStage(events) {
   }
   for (const st of Object.values(stages)) {
     if (st.status !== "fail") st.status = st.events.at(-1).status === "ok" ? "ok" : "started";
-    st.ms ??= Date.parse(st.last) - Date.parse(st.first);
+    st.ms ??= busy(st.events);
   }
   return stages;
 }
@@ -85,9 +96,14 @@ function useNow(active) {
 function sharedStage(key, deployment, perTarget, now) {
   if (key === "approval") {
     if (!deployment.approval_reasons?.length) return null; // 구조 변경이 없으면 승인 단계 자체가 없다
-    if (deployment.status === "AWAITING_APPROVAL") return { status: "wait" };
+    // 승인 대기 시간 = 승인 직전 마지막 기록(분석·근거 검사 끝)부터 승인(또는 지금)까지
+    const end = deployment.approved_at ? Date.parse(deployment.approved_at) : now;
+    const before = perTarget.flatMap((s) => Object.values(s).flatMap((x) => x.events))
+      .map((e) => Date.parse(e.ts)).filter((t) => t <= end);
+    const waited = before.length ? end - Math.max(...before) : null;
+    if (deployment.status === "AWAITING_APPROVAL") return { status: "wait", ms: waited };
     const patched = perTarget.some((s) => s.patch);
-    return { status: deployment.approved_at || patched ? "ok" : deployment.status === "FAILED" ? "fail" : "pending" };
+    return { status: deployment.approved_at || patched ? "ok" : deployment.status === "FAILED" ? "fail" : "pending", ms: waited };
   }
   const found = perTarget.map((s) => s[key]).filter(Boolean);
   if (!found.length) {
@@ -241,7 +257,7 @@ function Node({ status, label, time, note, flag, onClick, selected, index, flowi
   );
 }
 
-const nodeTime = (status, ms) => (status === "started" ? clock(ms) : ["ok", "fail"].includes(status) ? seconds(ms) : status === "wait" ? "대기 중" : "");
+const nodeTime = (status, ms) => (status === "started" ? clock(ms) : ["ok", "fail"].includes(status) ? seconds(ms) : status === "wait" ? (ms != null ? `대기 중 ${clock(ms)}` : "대기 중") : "");
 
 function nextUp(targets, lanes) {
   const next = targets.map((t) => [t, lanes[t].find((n) => n.status === "pending")]).filter(([, n]) => n);
@@ -286,11 +302,13 @@ function NowBar({ deployment, shared, lanes, targets, now, started }) {
     }
   }
   const total = started != null && !Number.isNaN(end) ? clock(end - started) : "";
+  const wait = shared.find(([key]) => key === "approval")?.[2]?.ms ?? 0;
   return (
     <div className={`nowbar t-${tone}`}>
       <span className="pulse" />
       <strong>{text}</strong>
-      {total && <span className="elapsed">{done ? "총 " : ""}{total}</span>}
+      {total && <span className="elapsed">{done ? "총 " : ""}{total}
+        {wait > 1000 && <span className="dim"> · 사람 승인 대기 {clock(wait)} 포함</span>}</span>}
     </div>
   );
 }
