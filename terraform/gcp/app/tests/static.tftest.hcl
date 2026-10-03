@@ -1,4 +1,5 @@
 mock_provider "google" {}
+# random is used for real: mocks cannot open ephemeral resources.
 
 variables {
   project_id                 = "example-project"
@@ -81,6 +82,12 @@ run "first_deployment_stage" {
     condition = alltrue([for job in [google_cloud_run_v2_job.bootstrap[0], google_cloud_run_v2_job.migration[0]] :
     job.template[0].template[0].max_retries == 0])
     error_message = "One-off DB jobs must not retry silently."
+  }
+
+  assert {
+    condition = (length(google_secret_manager_secret_version.database_password) == 1
+    && length(google_secret_manager_secret_version.database_url) == 1)
+    error_message = "Staging must create the secret versions the jobs reference; Cloud Run rejects jobs without them."
   }
 
   assert {

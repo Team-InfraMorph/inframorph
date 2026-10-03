@@ -188,6 +188,12 @@ variable "db_bootstrap_image" {
   }
 }
 
+variable "database_password_version" {
+  description = "Increase to rotate the app database password; the bootstrap job then applies it"
+  type        = number
+  default     = 1
+}
+
 variable "app_database_name" {
   type    = string
   default = null

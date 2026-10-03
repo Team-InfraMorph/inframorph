@@ -3,10 +3,18 @@ locals {
   project_type    = "resource.type == \"cloudresourcemanager.googleapis.com/Project\""
 
   # Deployer roles valid for the whole project. None of them can read the
-  # Cloud SQL master secret or act as another identity.
+  # Cloud SQL master secret.
+  #
+  # Service-account roles cannot be narrowed by name: IAM evaluates a service
+  # account by its numeric unique ID, so an "im-" email condition never matches
+  # (measured on the first real deploy). They are project-wide instead, and the
+  # only powerful identity they could reach, the default Compute Engine service
+  # account, loses roles/editor below.
   deployer_project_roles = toset([
     "roles/run.admin",
     "roles/iam.serviceAccountCreator",
+    "roles/iam.serviceAccountAdmin",
+    "roles/iam.serviceAccountUser",
     "roles/logging.viewer",
     "roles/serviceusage.serviceUsageConsumer",
   ])
@@ -15,14 +23,6 @@ locals {
   # Creation is checked on the project, everything else on the named resource,
   # so the condition fails closed for Foundation and other non-app resources.
   deployer_app_roles = {
-    service_account_admin = {
-      role       = "roles/iam.serviceAccountAdmin"
-      expression = "resource.name.extract(\"serviceAccounts/{sa}@\").startsWith(\"${var.app_resource_prefix}\")"
-    }
-    service_account_user = {
-      role       = "roles/iam.serviceAccountUser"
-      expression = "resource.name.extract(\"serviceAccounts/{sa}@\").startsWith(\"${var.app_resource_prefix}\")"
-    }
     secrets = {
       role       = "roles/secretmanager.admin"
       expression = "${local.project_type} || resource.name.startsWith(\"projects/${data.google_project.current.number}/secrets/${var.app_resource_prefix}\")"
@@ -40,6 +40,10 @@ resource "google_project_iam_member" "deployer" {
   project = var.project_id
   role    = each.value
   member  = local.deployer_member
+
+  # Never grant "act as any service account" while the default Compute
+  # identity still holds roles/editor.
+  depends_on = [google_project_iam_member_remove.default_compute_editor]
 }
 
 resource "google_project_iam_member" "deployer_app_scoped" {
@@ -67,6 +71,25 @@ resource "google_storage_bucket_iam_member" "deployer_app_state" {
     description = "Objects under apps/ and bucket-level listing for the GCS backend"
     expression  = "resource.type == \"storage.googleapis.com/Bucket\" || resource.name.startsWith(\"projects/_/buckets/${var.state_bucket}/objects/apps/\")"
   }
+}
+
+# Cloud Run checks that the caller can read a job's image when the job is
+# created, so the deployer needs read access to the Docker Hub proxy too.
+resource "google_artifact_registry_repository_iam_member" "deployer_proxy_read" {
+  location   = google_artifact_registry_repository.dockerhub.location
+  repository = google_artifact_registry_repository.dockerhub.name
+  role       = "roles/artifactregistry.reader"
+  member     = local.deployer_member
+}
+
+# Project-wide serviceAccountUser would otherwise let the deployer run code as
+# the default Compute Engine identity, which GCP grants roles/editor.
+resource "google_project_iam_member_remove" "default_compute_editor" {
+  count = var.remove_default_compute_editor ? 1 : 0
+
+  project = var.project_id
+  role    = "roles/editor"
+  member  = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
 resource "google_artifact_registry_repository_iam_member" "deployer_push" {

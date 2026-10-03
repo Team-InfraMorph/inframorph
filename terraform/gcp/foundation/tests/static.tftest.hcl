@@ -21,6 +21,10 @@ variables {
   expected_project_number        = "123456789012"
   deployer_service_account_email = "inframorph-deployer@example-project.iam.gserviceaccount.com"
   state_bucket                   = "example-tfstate-bucket"
+  # Explicit so an operator's local terraform.tfvars cannot change the cases.
+  enable_load_balancer          = false
+  apps_domain                   = null
+  remove_default_compute_editor = true
 }
 
 run "private_foundation_without_load_balancer" {
@@ -54,14 +58,28 @@ run "private_foundation_without_load_balancer" {
 
   assert {
     condition = alltrue([for binding in google_project_iam_member.deployer :
-    !contains(["roles/secretmanager.admin", "roles/storage.admin", "roles/iam.serviceAccountUser", "roles/iam.serviceAccountAdmin", "roles/editor", "roles/owner"], binding.role)])
-    error_message = "Project-wide deployer roles must not reach secrets, buckets or other identities."
+    !contains(["roles/secretmanager.admin", "roles/storage.admin", "roles/editor", "roles/owner"], binding.role)])
+    error_message = "Project-wide deployer roles must not reach secrets, buckets or broad project access."
   }
 
   assert {
     condition = alltrue([for binding in google_project_iam_member.deployer_app_scoped :
     strcontains(binding.condition[0].expression, var.app_resource_prefix)])
-    error_message = "Secret, bucket and service-account roles must be limited to app-owned names."
+    error_message = "Secret and bucket roles must be limited to app-owned names."
+  }
+
+  assert {
+    # Service-account roles are project-wide (IAM matches SAs by unique ID, not
+    # name), so the default Compute identity must lose roles/editor.
+    condition = (contains(keys(google_project_iam_member.deployer), "roles/iam.serviceAccountUser")
+      && google_project_iam_member_remove.default_compute_editor[0].role == "roles/editor"
+    && google_project_iam_member_remove.default_compute_editor[0].member == "serviceAccount:123456789012-compute@developer.gserviceaccount.com")
+    error_message = "Acting as any service account is only safe once the default Compute identity has no editor role."
+  }
+
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.deployer_proxy_read.role == "roles/artifactregistry.reader"
+    error_message = "Creating a DB bootstrap job needs read access to the Docker Hub proxy."
   }
 
   assert {
@@ -109,6 +127,7 @@ run "load_balancer_requires_domain" {
 
   variables {
     enable_load_balancer = true
+    apps_domain          = null
   }
 
   expect_failures = [var.enable_load_balancer]

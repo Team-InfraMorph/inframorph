@@ -131,6 +131,12 @@ variable "app_resource_prefix" {
   }
 }
 
+variable "remove_default_compute_editor" {
+  description = "Remove roles/editor from the default Compute Engine service account (the deployer may act as any service account)"
+  type        = bool
+  default     = true
+}
+
 variable "enable_load_balancer" {
   description = "Create the shared HTTPS load balancer for <app>.apps_domain hostnames"
   type        = bool

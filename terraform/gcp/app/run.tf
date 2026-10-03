@@ -90,6 +90,7 @@ resource "google_cloud_run_v2_service" "http" {
 
   depends_on = [
     google_secret_manager_secret_iam_member.runtime_database_url,
+    google_secret_manager_secret_version.database_url,
     google_storage_bucket_iam_member.runtime_uploads,
   ]
 }
@@ -159,6 +160,7 @@ resource "google_cloud_run_v2_worker_pool" "worker" {
 
   depends_on = [
     google_secret_manager_secret_iam_member.runtime_database_url,
+    google_secret_manager_secret_version.database_url,
     google_storage_bucket_iam_member.runtime_uploads,
   ]
 }

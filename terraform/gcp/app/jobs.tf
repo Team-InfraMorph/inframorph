@@ -86,7 +86,10 @@ resource "google_cloud_run_v2_job" "bootstrap" {
     }
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.bootstrap_database_password]
+  depends_on = [
+    google_secret_manager_secret_iam_member.bootstrap_database_password,
+    google_secret_manager_secret_version.database_password,
+  ]
 
   lifecycle {
     precondition {
@@ -154,5 +157,8 @@ resource "google_cloud_run_v2_job" "migration" {
     }
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.runtime_database_url]
+  depends_on = [
+    google_secret_manager_secret_iam_member.runtime_database_url,
+    google_secret_manager_secret_version.database_url,
+  ]
 }

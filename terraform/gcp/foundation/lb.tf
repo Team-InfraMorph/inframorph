@@ -34,6 +34,9 @@ resource "google_certificate_manager_certificate_map" "apps" {
   count = local.lb_count
 
   name = "${var.project}-apps"
+
+  # Nothing else orders the map after the API is enabled on a fresh project.
+  depends_on = [google_project_service.required]
 }
 
 resource "google_certificate_manager_certificate_map_entry" "apps" {
