@@ -12,6 +12,7 @@ class ContractModel(BaseModel):
 class Target(str, Enum):
     LOCAL = "local"
     AWS = "aws"
+    ONPREM = "onprem"  # Local 테스트를 통과한 같은 이미지를 사내 서버(원격 Docker)에 배포
 
 class WorkloadKind(str, Enum):
     HTTP = "http"

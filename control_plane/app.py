@@ -82,6 +82,12 @@ class ProjectIn(BaseModel):
 class DeployIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     demo_version: Literal["v1", "v2"] | None = None
+    targets: list[Target] | None = Field(default=None, min_length=1)  # 이번 배포의 대상. 없으면 프로젝트 기본값
+
+
+class RepoDeployIn(ProjectIn):
+    """한 화면에서 레포·브랜치·대상을 고르고 바로 배포. 같은 레포·브랜치면 같은 프로젝트(같은 앱)를 쓴다."""
+    demo_version: Literal["v1", "v2"] | None = None
 
 
 def _sse(event, data, seq=None):
@@ -170,11 +176,16 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         stage_event(deployment["id"], targets, "analyze", "ok", detail, int((time.monotonic() - started) * 1000))
         if result.get("intent_checked"):
             stage_event(deployment["id"], targets, "policy", "ok", "AI 판단 근거 확인 (E Policy Gate)")
-        # 직전 LIVE 대비 인프라 구조가 바뀌면 사람 승인을 받는다(기획서 시나리오 B-2)
-        base = store.last_live(deployment["project_id"], deployment["id"], with_plans=True)
-        changes = plan_diff(store.get_plans(base["id"]) if base else {}, result["plans"])
-        if runtime is not None and "aws" in result["plans"] and base is None:
-            changes = ["aws: 최초 실제 배포 · 프로젝트 전용 ECS·DB·S3 리소스 생성"]
+        # 대상마다 그 대상의 직전 정상 구조와 비교해 인프라가 바뀌면 사람 승인을 받는다(기획서 시나리오 B-2)
+        old = store.last_live_plans(deployment["project_id"], deployment["id"], result["plans"])
+        changes = plan_diff(old, result["plans"])
+        if runtime is not None:
+            # 처음 가는 실제 배포 환경은 무엇이 만들어지는지 사람이 확인한다.
+            first = {"aws": "aws: 최초 실제 배포 · 프로젝트 전용 ECS·DB·S3 리소스 생성",
+                     "onprem": "onprem: 사내 서버에 처음 배포 · 컨테이너·DB 볼륨 생성"}
+            for target, reason in first.items():
+                if target in result["plans"] and target not in old:
+                    changes = [c for c in changes if not c.startswith(target + ":")] + [reason]
         if changes:
             store.await_approval(deployment["id"], changes)
         return not changes
@@ -264,6 +275,7 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         backend = getattr(runtime, "analysis_backend", "module")
         return {"analysis_backend": backend,
                 "aws_enabled": getattr(runtime, "aws_config", None) is not None,
+                "onprem_enabled": getattr(runtime, "onprem_config", None) is not None,
                 "model": getattr(runtime, "analysis_model", None) if backend in {"codex-cli", "openai"} else None,
                 "reasoning_effort": REASONING_EFFORT if backend in {"codex-cli", "openai"} else None,
                 "mapper_mode": getattr(runtime, "mapper_mode", "module"),
@@ -290,17 +302,30 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         project = store.get_project(project_id)
         if project is None:
             raise HTTPException(404, "project not found")
+        return start_deploy(project, background, body.demo_version if body else None,
+                            [t.value for t in body.targets] if body and body.targets else None)
+
+    @app.post("/api/deploy", status_code=202)
+    def deploy_repo(body: RepoDeployIn, background: BackgroundTasks):
+        repo_key = webhook.normalize_repo_url(body.repo_url)
+        found = store.find_projects(repo_key, body.branch)
+        targets = [t.value for t in body.targets]
+        project_id = found[0] if found else store.create_project(body.repo_url, body.branch, targets, repo_key)["project_id"]
+        return start_deploy(store.get_project(project_id), background, body.demo_version, targets) | {"project_id": project_id}
+
+    def start_deploy(project, background, demo_version, targets):
+        project_id = project["project_id"]
         revision = None
-        if body is not None and body.demo_version is not None:
+        if demo_version is not None:
             resolve = getattr(runtime, "demo_revision", None)
             if resolve is None:
                 raise HTTPException(409, "demo version selection requires the explicit demo runtime")
             try:
-                revision = resolve(project, body.demo_version)
+                revision = resolve(project, demo_version)
             except ValueError:
                 raise HTTPException(409, "selected demo version is unavailable for this project") from None
         try:
-            deployment_id = store.begin_deploy(project_id, revision=revision)
+            deployment_id = store.begin_deploy(project_id, revision=revision, targets=targets)
         except ConflictError:
             raise HTTPException(409, "deployment already running for this project")
         background.add_task(execute, project_id, deployment_id)
@@ -399,7 +424,7 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
             raise HTTPException(409, "no earlier LIVE deployment to roll back to")
         new_id = store.create_rollback(deployment_id, base)
         try:
-            started = store.begin_deploy(deployment["project_id"])
+            started = store.begin_deploy(deployment["project_id"], targets=list(store.get_plans(new_id)))
         except ConflictError:
             return {"deployment_id": new_id, "state": "queued", "commit": base["commit_sha"]}
         background.add_task(execute, deployment["project_id"], started)
