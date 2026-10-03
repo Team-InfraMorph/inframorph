@@ -170,6 +170,26 @@ python -m adapters.aws rollback --state-dir <state> --execute --deployment-id <i
 - 새 IAM 역할이 ECS에 아직 보이지 않아 RunTask가 거부되면 10초 간격으로 최대 6회 다시 시도한다.
 - bootstrap/migration 태스크가 실패하면 종료 코드, 중지 사유, CloudWatch 로그 그룹과 스트림 이름을 실패 이벤트에 넣는다.
 
+## 재배포 시 DB 확인과 변경 승인
+
+- DB 스키마 확인·적용(migration)은 같은 이미지 재배포에서도 **매번 실행**한다.
+- DB·계정 bootstrap만 `database-bootstrap.json`의 성공 지문이 현재 설정과 일치하면 재사용한다.
+  지문에는 앱·DB 식별 정보, bootstrap 태스크 정의, Secret ARN과 `AWSCURRENT` 버전이 포함된다.
+  운영자 자격증명에 앱 Secret의 `secretsmanager:DescribeSecret` 권한이 필요하며 비밀값은 읽지 않는다.
+- 성공 기록이 없거나 깨졌을 때, Secret이 교체·회전되었을 때, bootstrap 정의가 바뀌었을 때는 다시 실행한다.
+  실행 전에 이전 지문을 무효화하므로 실패한 bootstrap을 성공으로 재사용하지 않는다.
+  기존 배포에는 지문이 없으므로 업데이트 후 첫 배포는 bootstrap도 실행한다.
+- `start started` 이벤트의 `database` 필드에 bootstrap 실행·재사용 여부, migration 실행, 소요 시간을 남긴다.
+- Control Plane의 worker 제거는 해당 배포에서 표시한 제거 항목을 사람이 승인하고, 승인 기준 배포와
+  현재 AWS 성공 기록이 일치할 때만 허용한다. 삭제 범위는 제거되는 private worker의 ECS·로그·보안 그룹과
+  연결 규칙으로 제한한다. DB·S3·Secret·web·공용 인프라 삭제는 계속 차단한다.
+- 사용자가 `되돌리기`를 요청한 경우 해당 요청 자체를 복원에 필요한 worker 제거 승인으로 인정한다.
+  단, `rollback_of`가 현재 AWS 성공 기록을 가리키고 복원할 커밋·AWS Plan이 그 배포 직전의 성공 기록과
+  정확히 일치해야 한다. `rollback` 표시만 있거나 대기 중 기준 배포가 바뀐 경우에는 허용하지 않는다.
+- Control Plane은 검증된 고정 오류 코드만 화면에 전달한다. `aws_plan_destructive_change` 등은
+  적용 전에 차단된 이유를 표시하고, 알 수 없는 공급자 오류는 비공개 `failure.json`에만 남긴다.
+- ECS 환경변수 이름은 중복 없이 생성한다. HTTP 서비스의 `PORT`는 Plan의 포트 하나만 사용하며 worker에는 주입하지 않는다.
+
 ## 커밋하지 않는 파일과 값
 
 - `.env`

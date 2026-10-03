@@ -155,7 +155,7 @@ class TerraformManager:
             if address.startswith("module.foundation") or ".foundation." in address:
                 forbidden.append(address)
         if forbidden:
-            raise ContractError("App plan attempts to own Foundation resources: {}".format(forbidden))
+            raise ContractError("aws_plan_outside_app_module")
         return TerraformPlan(work_dir, plan_file, values, summary)
 
     def apply(self, planned: TerraformPlan) -> Dict[str, Any]:

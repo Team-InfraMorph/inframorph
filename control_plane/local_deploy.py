@@ -162,7 +162,7 @@ async def deploy(context, store):
                 previous_patch=PatchReference.from_manifest(manifest), failure=checked.failure,
                 backend=backend, limits=analysis_limits(context.analysis_backend), hooks=connector.hooks(), store=retry_store,
                 output_dir=Path(context.output_dir) / "retry", previous_metrics=previous, emit=send,
-                clarify_requirements=requirements_clarifier(context.snapshot, context.repo_map))
+                clarify_requirements=requirements_clarifier)
         if result.reanalysis_metrics is not None:
             record_analysis_diagnostics(Path(context.output_dir) / "recovery-analysis-diagnostics.json",
                 asdict(result.reanalysis_metrics), result.reanalysis_diagnostics,

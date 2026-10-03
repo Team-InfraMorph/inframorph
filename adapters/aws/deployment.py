@@ -14,6 +14,7 @@ from .image import ImagePublisher
 from .mode import DeployMode, detect_mode
 from .naming import AppIdentity
 from .records import DeploymentRecord
+from .database import DatabaseReceipt, fingerprint
 from .smoke import external_https_smoke
 from .terraform import TerraformManager, TerraformPlan, terraform_values
 
@@ -129,11 +130,15 @@ class DeploymentOrchestrator:
             stage_outputs = self.terraform.apply(stage_plan)
             self._emit("infra", "ok", detail=json.dumps({"stage_plan": stage_plan.summary}))
 
+            database = None
             if self.plan.db is not None:
-                self._prepare_database(stage_outputs, request, initialize_secret=previous is None)
+                database = self._prepare_database(stage_outputs, request, initialize_secret=(
+                    previous is None or not previous.terraform_values.get("service_db_enabled")))
 
             current_step = "start"
-            self._emit("start", "started", detail="activating digest-pinned ECS services")
+            self._emit("start", "started", detail=json.dumps({
+                "code": "aws_services_activating", "database": database,
+            }))
             final_values = terraform_values(
                 self.plan,
                 self.foundation,
@@ -211,14 +216,17 @@ class DeploymentOrchestrator:
         outputs: Dict[str, Any],
         request: DeploymentRequest,
         initialize_secret: bool,
-    ) -> None:
+    ) -> Dict[str, Any]:
+        started = time.monotonic()
         secret_arn = outputs.get("app_secret_arn")
         data_sg = outputs.get("data_task_security_group_id")
         bootstrap_task = outputs.get("bootstrap_task_definition_arn")
         migration_task = outputs.get("migration_task_definition_arn")
         if not all(isinstance(item, str) and item for item in (secret_arn, data_sg, bootstrap_task, migration_task)):
             raise DeploymentError("database Terraform outputs are incomplete")
+        receipt = DatabaseReceipt(request.record_path.parent / "database-bootstrap.json")
         if initialize_secret:
+            receipt.clear()
             password = secrets.token_urlsafe(36)
             encoded_user = urllib.parse.quote(self.identity.database_role, safe="")
             encoded_password = urllib.parse.quote(password, safe="")
@@ -242,7 +250,14 @@ class DeploymentOrchestrator:
                 },
             )
         log_group = "/inframorph/apps/{}/data-tasks".format(self.plan.app)
-        self.aws.run_task(
+        bootstrap_key = fingerprint({
+            "app": self.plan.app, "secret": secret_arn,
+            "secret_version": self.aws.current_secret_version(secret_arn),
+            "task_definition": bootstrap_task,
+            "database": self.identity.database_name, "role": self.identity.database_role,
+            "host": self.foundation.rds_address, "port": self.foundation.rds_port,
+        })
+        bootstrap = receipt.run("bootstrap", bootstrap_key, lambda: self.aws.run_task(
             bootstrap_task,
             data_sg,
             self.foundation.private_subnet_ids,
@@ -250,7 +265,8 @@ class DeploymentOrchestrator:
             request.timeout_seconds,
             log_group=log_group,
             log_prefix="bootstrap",
-        )
+        ))
+        # Even the same image must verify the live DB schema on every deployment.
         self.aws.run_task(
             migration_task,
             data_sg,
@@ -260,6 +276,8 @@ class DeploymentOrchestrator:
             log_group=log_group,
             log_prefix="migration",
         )
+        return {"bootstrap": bootstrap, "migration": "executed",
+                "duration_ms": int((time.monotonic() - started) * 1000)}
 
     def _recover(
         self,
