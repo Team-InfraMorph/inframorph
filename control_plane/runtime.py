@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import StrictBool
 from schemas import Intent, Plan, RepoMap
-from schemas.common import ContractModel
+from schemas.common import ContractModel, Target
 from analyzer.backend import ReplayBackend
 from analyzer.codex_backend import CodexBackend, LOCAL_MODELS
 from analyzer.local_verify import LOCAL_MODEL
@@ -54,12 +54,14 @@ class LocalContext(ContractModel):
     planner_command: list[str] | None = None
     analysis_backend: Literal["replay", "codex-cli"] = "replay"
     analysis_model: Literal["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"] = LOCAL_MODEL
-    targets: list[Literal["local", "aws"]] = ["local"]
+    targets: list[Literal["local", "aws", "onprem"]] = ["local"]
     aws_plan: Plan | None = None
 
 
 def context_plans(context):
     plans = {"local": context.plan.model_dump(mode="json")}
+    # 사내 서버는 Local 테스트와 같은 Docker 구성·같은 이미지. 대상 이름만 onprem
+    plans["onprem"] = context.plan.model_copy(update={"target": Target.ONPREM}).model_dump(mode="json")
     if context.aws_plan is not None:
         plans["aws"] = context.aws_plan.model_dump(mode="json")
     return {target: plans[target] for target in context.targets}
@@ -119,7 +121,7 @@ def requirements_clarifier(source, mapping):
 
 class LocalRuntime:
     def __init__(self, *, root, b_modules, replay=None, fault="none", publish=False,
-                 codex=False, model=LOCAL_MODEL, aws_config=None):
+                 codex=False, model=LOCAL_MODEL, aws_config=None, onprem_config=None):
         self.root = Path(root).absolute()
         if any(p.is_symlink() for p in (self.root, *self.root.parents)):
             raise ValueError("runtime_state_symlink")
@@ -132,6 +134,10 @@ class LocalRuntime:
         if self.aws_config:
             from .aws_config import load_config
             load_config(self.aws_config)
+        self.onprem_config = Path(onprem_config).absolute() if onprem_config else None
+        if self.onprem_config:
+            from .onprem_config import load_config as load_onprem
+            load_onprem(self.onprem_config)
         self.replay = replay
         if codex and replay is not None:
             raise ValueError("conflicting_analysis_backends")
@@ -163,7 +169,8 @@ class LocalRuntime:
 
     def analyze(self, store, deployment):
         targets = set(deployment["targets"])
-        if not targets or not targets <= {"local", "aws"} or ("aws" in targets and self.aws_config is None):
+        if (not targets or not targets <= {"local", "aws", "onprem"} or ("aws" in targets and self.aws_config is None)
+                or ("onprem" in targets and (self.onprem_config is None or "local" not in targets))):
             raise AnalysisFailed("local_runtime_only")
         folder = self.context_file(deployment["id"]).parent
         project = store.get_project(deployment["project_id"])
@@ -248,7 +255,8 @@ class LocalRuntime:
                     status=report_status, stage=stage, fields=report_fields)
 
     def command(self, store, deployment_id, target):
-        if target not in {"local", "aws"} or (target == "aws" and self.aws_config is None):
+        if (target not in {"local", "aws", "onprem"} or (target == "aws" and self.aws_config is None)
+                or (target == "onprem" and self.onprem_config is None)):
             raise ValueError("local_runtime_only")
         path = self.context_file(deployment_id)
         if not path.exists():
@@ -262,6 +270,8 @@ class LocalRuntime:
                    "--database", str(store.path.absolute())]
         if target == "aws":
             command += ["--aws-config", str(self.aws_config)]
+        if target == "onprem":
+            command += ["--onprem-config", str(self.onprem_config)]
         return command
 
 
@@ -278,6 +288,7 @@ def main(argv=None):
     parser.add_argument("--publish", action="store_true", help="Publish only the Local app via cloudflared; never the control plane")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--aws-config", type=Path, help="Private operator-owned AWS configuration; never repository/model input")
+    parser.add_argument("--onprem-config", type=Path, help="Private operator-owned on-prem Docker host (SSH); never repository/model input")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("invalid port")
@@ -286,7 +297,8 @@ def main(argv=None):
     modules = DemoModules() if args.demo else BCommands(mapper_command=json.loads(args.mapper_command),
                                                        planner_command=json.loads(args.planner_command))
     runtime = LocalRuntime(root=args.root / "runtime", b_modules=modules, replay=args.replay, publish=args.publish,
-                           codex=args.codex, model=args.model, aws_config=args.aws_config)
+                           codex=args.codex, model=args.model, aws_config=args.aws_config,
+                           onprem_config=args.onprem_config)
     from .app import create_app
     import uvicorn
     app = create_app(db_path=args.root / "control-plane.db", runtime=runtime)

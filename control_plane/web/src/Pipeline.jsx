@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { describe, explain } from "./explain.js";
 
-export const TARGETS = { local: "Local (노트북 Docker)", aws: "AWS (서울)" };
+export const TARGETS = { local: "Local 테스트 (노트북)", onprem: "온프레미스 (사내 서버)", aws: "AWS (서울)" };
+// 화면 순서: Local 테스트 → (통과하면) 온프레미스 · AWS
+export const ORDER = ["local", "onprem", "aws"];
+export const ordered = (targets) => [...targets].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
 export const STATUS = {
   CREATED: "대기", DEPLOYING: "배포 중", AWAITING_APPROVAL: "승인 대기", LIVE: "정상",
   FAILED: "실패", ROLLED_BACK: "롤백됨", SUPERSEDED: "건너뜀",
 };
 export const TERMINAL = ["LIVE", "FAILED", "ROLLED_BACK", "SUPERSEDED"];
-const SHORT = { local: "Local", aws: "AWS" };
+const SHORT = { local: "Local 테스트", onprem: "온프레미스", aws: "AWS" };
 
 // 배포 한 번 = 공통 단계(대상마다 같은 일) → 대상별 배포 레인 → 조종실 직접 확인.
 // 이벤트의 step 이름만으로는 '근거 검사'와 '패치 검사'가 둘 다 policy라서, 코드 수정 전후로 나눈다.
@@ -90,6 +93,9 @@ function sharedStage(key, deployment, perTarget, now) {
   if (!found.length) {
     if (key === "analyze" && deployment.analysis_mode === "rebuild_only") return { status: "skip", note: "이전 분석 재사용" };
     if (key === "analyze" && perTarget.some((s) => s.evidence)) return { status: "ok" }; // 근거 검사까지 갔으면 분석은 끝났다
+    // Local 배포기는 패치 검사를 따로 남기지 않고 'E가 패치를 승인함'(initial_patch_approved)으로만 남긴다.
+    if (key === "patchcheck" && perTarget.some((s) => s.patch?.events.some((e) => /patch_approved/.test(e.detail ?? ""))))
+      return { status: "ok", note: "E Policy Gate가 패치 승인" };
     return { status: TERMINAL.includes(deployment.status) ? "skip" : "pending" };
   }
   const status = found.some((s) => s.status === "fail") ? "fail" : found.every((s) => s.status === "ok") ? "ok" : "started";
@@ -318,8 +324,10 @@ function Flow({ deployment, targets, stages, perTarget, ctx, now }) {
                          selected={open?.id === id} onClick={evs.length ? () => setOpen(open?.id === id ? null : { id, title: `공통 › ${label}`, events: evs }) : null} />;
           })}
         </ol>
-        {targets.map((t) => (
-          <div key={t} className="lane-row">
+        {targets.map((t, ti) => (
+          <div key={t} className={`lane-row lr-${t}`}>
+            {t !== "local" && targets[ti - 1] === "local" && <div className="lane-gate">
+              Local 테스트 통과 → {targets.filter((x) => x !== "local").map((x) => SHORT[x]).join(" · ")} {targets.length > 2 ? "동시 배포" : "배포"}</div>}
             <div className="lane-title">{SHORT[t]} <Badge status={deployment.targets[t]?.status ?? "CREATED"} /></div>
             <ol className="track small">
               {lanes[t].map((n, i) => (
@@ -431,7 +439,15 @@ export function Verification({ check, onRecheck }) {
   );
 }
 
-const reachable = (url) => !/^https?:\/\/(127\.|localhost|0\.0\.0\.0|\[::1\])/.test(url) && !/\.invalid(\/|:|$)/.test(url);
+// 접속 범위: 공개(누구나) / 사내망(Tailscale 100.64.0.0/10, 사설 IP) / 이 노트북만
+function reach(url) {
+  const host = url.replace(/^https?:\/\//, "").replace(/[:/].*$/, "");
+  if (/^(127\.|localhost$|0\.0\.0\.0$|\[::1\]$)/.test(host)) return "local";
+  const [a, b] = host.split(".").map(Number);
+  if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return "private";
+  return "public";
+}
+const REACH = { public: ["r-pub", "누구나 접속 가능"], private: ["r-priv", "사내망에서 접속"], local: ["r-local", "이 노트북에서만 열림"] };
 
 function TargetResult({ target, deployment, stage, onRecheck }) {
   const state = deployment.targets[target];
@@ -445,23 +461,24 @@ function TargetResult({ target, deployment, stage, onRecheck }) {
   const unverified = status === "LIVE" && check === "fail";
   const fake = check === "skipped";
   return (
-    <div className={`card result r-${blocked ? "BLOCKED" : unverified ? "UNVERIFIED" : status}`}>
+    <div className={`card result rt-${target} r-${blocked ? "BLOCKED" : unverified ? "UNVERIFIED" : status}`}>
       <div className="row between">
         <h2>{TARGETS[target]}</h2>
         <Badge status={status} />
       </div>
       <p className="headline">
-        {blocked ? "앞 단계에서 멈춰 배포하지 않음" : failure && status === "DEPLOYING" ? "배포 실패 · 정리 중"
-          : unverified ? "배포기는 완료라고 했지만 접속이 안 됩니다" : HEADLINE[status] ?? status}
+        {blocked ? "앞 단계에서 멈춰 배포하지 않음"
+          : failure?.detail?.startsWith("Local 테스트를 통과하지 못해") ? "Local 테스트를 통과하지 못해 배포하지 않음"
+          : failure && status === "DEPLOYING" ? "배포 실패 · 정리 중"
+          : unverified ? "배포기는 완료라고 했지만 접속이 안 됩니다"
+          : target === "local" && status === "LIVE" ? "테스트 통과" : HEADLINE[status] ?? status}
         {fake && <span className="fake">시험용 가짜 배포 · 실제 아님</span>}
       </p>
       {state?.url && (
         <div className="url-row">
           <a className="url" href={state.url} target="_blank" rel="noreferrer">{state.url}</a>
           {/* 심사 기준 '배포된 앱에 누구나 접근할 수 있는가' — 주소가 이 노트북 안인지 공개인지 바로 보이게 */}
-          {fake ? null : reachable(state.url)
-            ? <span className="reach r-pub">누구나 접속 가능</span>
-            : <span className="reach r-local">이 노트북에서만 열림</span>}
+          {fake ? null : <span className={`reach ${REACH[reach(state.url)][0]}`}>{REACH[reach(state.url)][1]}</span>}
           <button className="small secondary" onClick={() => navigator.clipboard?.writeText(state.url)}>주소 복사</button>
         </div>
       )}

@@ -22,6 +22,7 @@
   --muted-bg: #f0f3f7;
   --env-local: #4f7fd9;   /* Local 고유색: 파랑 */
   --env-aws: #c97d1e;     /* AWS 고유색: 주황(AWS 계열, 채도 낮춤) */
+  --env-onprem: #7a63c9;  /* 온프레미스 고유색: 보라(사내 서버) */
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -50,6 +51,7 @@
     --muted-bg: #191e25;
     --env-local: #7d9fe6;
     --env-aws: #d99a4a;
+    --env-onprem: #a493ec;
   }
 }
 
@@ -442,3 +444,19 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .policy-pass { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
 .policy-block, .policy-error { background: color-mix(in srgb, var(--fail) 16%, transparent); color: var(--fail); }
 .policy-unsupported { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+
+/* ── 온프레미스 · Local 테스트 게이트 ───────────── */
+.tab.on.tab-onprem { color: var(--env-onprem); border-color: var(--env-onprem); background: color-mix(in srgb, var(--env-onprem) 10%, transparent); }
+.ca-onprem { border-color: color-mix(in srgb, var(--env-onprem) 45%, var(--line)); }
+.r-priv { background: color-mix(in srgb, var(--env-onprem) 16%, transparent); color: var(--env-onprem); }
+.lane-gate { grid-column: 1 / -1; font-size: 12px; color: var(--dim); padding: 6px 0 2px; border-top: 1px dashed var(--line); margin-top: 4px; }
+.lr-local .lane-title { color: var(--env-local); }
+.lr-onprem .lane-title { color: var(--env-onprem); }
+.lr-aws .lane-title { color: var(--env-aws); }
+.carch-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.carch-pair .cbox { width: 180px; }
+@media (max-width: 1100px) { .carch-pair { grid-template-columns: minmax(0, 1fr); } }
+.ca-title { align-self: stretch; font-size: 12px; font-weight: 700; margin: -4px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.ct-onprem { color: var(--env-onprem); } .ct-aws { color: var(--env-aws); } .ct-local { color: var(--env-local); }
+.tab.on.tab-deploy { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.lr-onprem .lane-title, .lr-aws .lane-title { padding-left: 10px; border-left: 2px solid currentColor; }

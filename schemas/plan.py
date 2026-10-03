@@ -68,7 +68,7 @@ class Plan(ContractModel):
         if self.db is not None and "DATABASE_URL" not in self.secrets:
             raise ValueError("DB를 쓰는 Plan에는 DATABASE_URL 이름이 필요합니다")
 
-        if self.target == Target.LOCAL:
+        if self.target in (Target.LOCAL, Target.ONPREM):  # 사내 서버도 같은 Docker 구성
             if self.logs != "docker":
                 raise ValueError("Local 로그는 docker입니다")
             if self.db is not None and self.db.type != "postgres_container":

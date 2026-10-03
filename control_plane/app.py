@@ -264,6 +264,7 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         backend = getattr(runtime, "analysis_backend", "module")
         return {"analysis_backend": backend,
                 "aws_enabled": getattr(runtime, "aws_config", None) is not None,
+                "onprem_enabled": getattr(runtime, "onprem_config", None) is not None,
                 "model": getattr(runtime, "analysis_model", None) if backend == "codex-cli" else None,
                 "reasoning_effort": REASONING_EFFORT if backend == "codex-cli" else None,
                 "demo_versions": getattr(runtime, "demo_versions", lambda: [])()}

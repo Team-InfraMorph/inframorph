@@ -116,10 +116,24 @@ class ControlPlaneApiTest(unittest.TestCase):
 
     def test_health_failure_with_rollback_marks_rolled_back(self):
         os.environ["INFRAMORPH_FAKE_FIXTURE"] = str(FIXTURES / "rollback.jsonl")
-        project = self.create().json()
+        project = self.create(targets=["local"]).json()
         deployment_id = self.client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
         status = self.client.get(f"/api/deployments/{deployment_id}").json()["status"]
         self.assertEqual(status, "ROLLED_BACK")
+
+    def test_failed_local_test_blocks_other_targets(self):
+        # Local 테스트가 실패(롤백)하면 AWS는 실행하지 않고 '배포하지 않음'으로 남긴다.
+        os.environ["INFRAMORPH_FAKE_FIXTURE"] = str(FIXTURES / "rollback.jsonl")
+        project = self.create().json()
+        deployment_id = self.client.post(f"/api/projects/{project['project_id']}/deploy").json()["deployment_id"]
+        deployment = self.client.get(f"/api/deployments/{deployment_id}").json()
+        self.assertEqual(deployment["status"], "FAILED")
+        self.assertEqual(deployment["targets"]["local"]["status"], "ROLLED_BACK")
+        self.assertEqual(deployment["targets"]["aws"]["status"], "FAILED")
+        events = sqlite3.connect(self.db).execute("SELECT payload FROM events WHERE deployment_id=?", (deployment_id,))
+        aws = [e for (e,) in events if '"target":"aws"' in e.replace(" ", "")]
+        self.assertIn("Local 테스트를 통과하지 못해", aws[-1])
+        self.assertFalse(any('"step":"url"' in e.replace(" ", "") for e in aws))  # AWS 배포기는 실행되지 않음
 
     def test_aws_only_rollback_keeps_local_live(self):
         os.environ["INFRAMORPH_FAKE_FIXTURE_AWS"] = str(FIXTURES / "rollback.jsonl")

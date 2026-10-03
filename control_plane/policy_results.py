@@ -10,7 +10,7 @@ DDL = '''CREATE TABLE IF NOT EXISTS policy_results (
 
 
 def save(store, deployment_id, target, attempt, value):
-    if target not in {'local','aws'} or type(attempt) is not int or not 0 <= attempt <= 1:
+    if target not in {'local','aws','onprem'} or type(attempt) is not int or not 0 <= attempt <= 1:
         raise ValueError('invalid_policy_scope')
     if value.get('decision') not in {'PASS','BLOCK','UNSUPPORTED','ERROR'}:
         raise ValueError('invalid_policy_result')

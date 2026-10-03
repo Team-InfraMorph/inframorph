@@ -78,6 +78,9 @@ AWS_ADAPTER_ENV = frozenset({
 
 def module_environment(target, cmd):
     env = child_environment()
+    if target == "onprem" and "SSH_AUTH_SOCK" in os.environ:
+        # 사내 서버 Docker는 SSH로 조종한다. 키는 넘기지 않고 이 사용자의 ssh-agent 소켓만 쓴다.
+        env["SSH_AUTH_SOCK"] = os.environ["SSH_AUTH_SOCK"]
     if (target == "aws" and len(cmd) >= 4
             and list(cmd[1:3]) == ["-m", "adapters.aws"]
             and cmd[3] in {"deploy", "rollback"}):
@@ -193,26 +196,45 @@ def record_verification(store, deployment_id, target, check, event=False):
             status="ok" if ok else "fail", detail=detail, url=check["url"]).model_dump(mode="json", exclude_none=True))
 
 
-def run_deployment(store, deployment_id, cmds, timeout=DEFAULT_TIMEOUT_S, verify=None):
-    """대상별 배포기를 동시에 실행한다(기획서 시나리오 A: Local과 AWS 동시 진행).
+LOCAL_TEST_FAILED = "Local 테스트를 통과하지 못해 배포하지 않았습니다"
 
+
+def run_deployment(store, deployment_id, cmds, timeout=DEFAULT_TIMEOUT_S, verify=None):
+    """Local 테스트가 있으면 먼저 돌리고, 통과해야 나머지 대상(온프레미스·AWS)을 동시에 배포한다.
+
+    대상마다 끝나는 즉시 조종실이 직접 확인한다(다른 대상이 끝나길 기다리지 않는다).
     cmds = {target: cmd} 또는 {target: (작업 위치, cmd)}. 팀원 모듈은 자기 checkout에서 실행해야 한다.
     """
     results = {}
 
     def run(target, spec):
         cwd, cmd = spec if isinstance(spec, tuple) else (None, spec)
-        results[target] = run_target(store, deployment_id, target, cmd, timeout, cwd)
+        result = run_target(store, deployment_id, target, cmd, timeout, cwd)
+        if verify is not None and result.url and result.status in (Status.LIVE, Status.ROLLED_BACK):
+            record_verification(store, deployment_id, target, verify(target, result.url), event=True)
+        results[target] = result
 
-    threads = [threading.Thread(target=run, args=item) for item in cmds.items()]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    if verify is not None:
-        for target, result in results.items():
-            if result.url and result.status in (Status.LIVE, Status.ROLLED_BACK):
-                record_verification(store, deployment_id, target, verify(target, result.url), event=True)
+    def run_all(items):
+        threads = [threading.Thread(target=run, args=item) for item in items.items()]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    rest = {t: spec for t, spec in cmds.items() if t != "local"}
+    if "local" in cmds and rest:
+        run("local", cmds["local"])
+        if results["local"].status == Status.LIVE:
+            run_all(rest)
+        else:
+            for target in rest:
+                store.add_event(deployment_id, DeployEvent(
+                    deployment_id=deployment_id, ts=datetime.now(timezone.utc), target=target, step="start",
+                    status="fail", detail=LOCAL_TEST_FAILED).model_dump(mode="json", exclude_none=True))
+                store.set_target_status(deployment_id, target, Status.FAILED)
+                results[target] = RunResult(None, 0, 0, Status.FAILED)
+    else:
+        run_all(cmds)
     status = _overall_status({r.status for r in results.values()})
     store.set_status(deployment_id, status)
     return results

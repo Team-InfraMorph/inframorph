@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { explain } from "./explain.js";
 import PolicyCard from "./PolicyCard.jsx";
-import { Badge, Pipeline, Results, TARGETS, TERMINAL } from "./Pipeline.jsx";
+import { Badge, Pipeline, Results, TARGETS, TERMINAL, ordered } from "./Pipeline.jsx";
 import { AppCode } from "./CodeTree.jsx";
 import { PatchCard } from "./Patch.jsx";
 
@@ -31,13 +31,23 @@ function save(key, value) {
   try { localStorage.setItem(key, value); } catch { /* 저장 못 해도 화면은 동작 */ }
 }
 
-function NewProject({ onCreated, awsEnabled }) {
+function NewProject({ onCreated, awsEnabled, onpremEnabled }) {
   const [repo, setRepo] = useState("https://github.com/Team-InfraMorph/demo-app");
   const [branch, setBranch] = useState("main");
-  const [targets, setTargets] = useState(awsEnabled ? ["local", "aws"] : ["local"]);
+  const [targets, setTargets] = useState(["local"]);
+  const [touched, setTouched] = useState(false);
   const [error, setError] = useState("");
+  const enabled = { local: true, onprem: onpremEnabled, aws: awsEnabled };
 
-  const toggle = (t) => setTargets((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
+  // 서버 설정(어떤 대상이 연결됐는지)은 화면이 뜬 뒤에 도착한다. 사용자가 고르기 전이면 연결된 대상을 모두 켠다.
+  useEffect(() => {
+    if (!touched) setTargets(ordered(Object.keys(enabled).filter((t) => enabled[t])));
+  }, [awsEnabled, onpremEnabled, touched]);
+
+  const toggle = (t) => {
+    setTouched(true);
+    setTargets((cur) => ordered(cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
+  };
   const submit = async (e) => {
     e.preventDefault();
     setError("");
@@ -57,10 +67,12 @@ function NewProject({ onCreated, awsEnabled }) {
         <legend>배포 대상</legend>
         {Object.entries(TARGETS).map(([t, label]) => (
           <label key={t} className="check">
-            <input type="checkbox" disabled={t === "aws" && !awsEnabled} checked={targets.includes(t)} onChange={() => toggle(t)} /> {label}
+            <input type="checkbox" disabled={!enabled[t]} checked={targets.includes(t)} onChange={() => toggle(t)} /> {label}
           </label>
         ))}
       </fieldset>
+      {targets.some((t) => t !== "local") && !targets.includes("local") && <p className="dim">Local 테스트 없이 배포하면 테스트 통과를 기다리지 않습니다.</p>}
+      {(awsEnabled === false || onpremEnabled === false) && <p className="dim">회색 대상은 이 조종실에 연결 설정이 없습니다 (서버 실행 시 <code>--aws-config</code> · <code>--onprem-config</code>).</p>}
       {error && <p className="error">{error}</p>}
       <button type="submit" disabled={!targets.length}>만들기</button>
     </form>
@@ -317,7 +329,8 @@ export default function App() {
     }
   };
 
-  const targets = project?.targets ?? [];
+  // 지난 배포는 그때 실제로 있던 대상만 보여 준다(나중에 대상을 추가해도 옛 기록에 빈 칸이 생기지 않게).
+  const targets = ordered(Object.keys(selected?.targets ?? {}).length ? Object.keys(selected.targets) : project?.targets ?? []);
   const versions = runtime?.demo_versions ?? [];
   const canSelectVersion = versions.length > 0 && project?.repo_url.replace(/\/$/, "").replace(/\.git$/, "") === "https://github.com/Team-InfraMorph/demo-app";
   const deployVersion = requestedVersion || versions.find((v) => v.commit_sha === deployments[0]?.commit_sha)?.id || versions[0]?.id;
@@ -330,7 +343,7 @@ export default function App() {
         <select value={projectId ?? ""} onChange={(e) => choose(e.target.value)}>
           <option value="">+ 새 프로젝트</option>
           {projects.map((p) => (
-            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch} · {p.targets.map((t) => t === "aws" ? "AWS" : "Local").join(" / ")} · {p.project_id.slice(-6)}</option>
+            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch} · {ordered(p.targets).map((t) => ({ local: "Local 테스트", onprem: "온프레미스", aws: "AWS" })[t] ?? t).join(" · ")} · {p.project_id.slice(-6)}</option>
           ))}
         </select>
       </header>
@@ -340,7 +353,7 @@ export default function App() {
       {runtime?.aws_enabled && <p className="usage">AWS 실제 배포 연결됨 · 프로젝트별로 앱과 데이터를 분리해 배포합니다.</p>}
       {error && <p className="error banner">{error}</p>}
 
-      {!project && <NewProject awsEnabled={runtime?.aws_enabled} onCreated={(p) => { choose(p.project_id); refresh(); }} />}
+      {!project && <NewProject awsEnabled={runtime?.aws_enabled} onpremEnabled={runtime?.onprem_enabled} onCreated={(p) => { choose(p.project_id); refresh(); }} />}
 
       {project && (
         <>
