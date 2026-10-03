@@ -1,0 +1,3 @@
+/tests/fixtures/analyzer/**/snapshot/** text eol=lf
+/code_patch/templates/** text eol=lf
+/builder/templates/** text eol=lf

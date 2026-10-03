@@ -40,8 +40,18 @@ class CodePatchTests(unittest.TestCase):
         self.assertEqual(lock["packages"][""]["dependencies"], package["dependencies"])
         applied = self.work / "applied"
         shutil.copytree(self.source, applied)
-        subprocess.run(["git", "apply", str(self.work / "patched/patch.diff")], cwd=applied,
-                       capture_output=True, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "apply",
+                str(self.work / "patched/patch.diff"),
+            ],
+            cwd=applied,
+            capture_output=True,
+            check=True,
+        )
         self.assertEqual({p.relative_to(applied): p.read_bytes() for p in applied.rglob("*") if p.is_file()},
                          {p.relative_to(patched): p.read_bytes() for p in patched.rglob("*") if p.is_file()})
 
