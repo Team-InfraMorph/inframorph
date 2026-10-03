@@ -154,18 +154,21 @@ class DeploymentOrchestrator:
             service_names = final_outputs.get("service_names", {})
             if not isinstance(service_names, dict) or not service_names:
                 raise DeploymentError("Terraform outputs did not include ECS service names")
-            self.aws.wait_services(service_names.values(), request.timeout_seconds)
+            target_group = final_outputs.get("public_target_group_arn")
+            if not isinstance(target_group, str) or not target_group:
+                raise DeploymentError("Terraform outputs did not include the public target group")
+            public_service = next(item for item in self.plan.services if item.public)
+            if public_service.name not in service_names:
+                raise DeploymentError("Terraform outputs did not include the public ECS service")
+            self.aws.wait_services(service_names.values(), request.timeout_seconds,
+                                   serving=(service_names[public_service.name], target_group))
             self._emit("start", "ok", detail=json.dumps({"services": service_names}))
 
             current_step = "health"
             self._emit("health", "started", detail="waiting for ALB target health")
-            target_group = final_outputs.get("public_target_group_arn")
-            if not isinstance(target_group, str) or not target_group:
-                raise DeploymentError("Terraform outputs did not include the public target group")
             self.aws.wait_target_healthy(target_group, request.timeout_seconds)
             self._emit("health", "ok", detail="all registered public targets are healthy")
 
-            public_service = next(item for item in self.plan.services if item.public)
             hostname = self.identity.hostname(self.foundation.apps_domain)
             url = "https://{}".format(hostname)
             current_step = "url"

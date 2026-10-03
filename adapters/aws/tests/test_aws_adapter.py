@@ -443,6 +443,90 @@ class AwsApiStateTests(unittest.TestCase):
         api.run_task("td", "sg", ["subnet-1"], "database migration", 30)
         self.assertEqual(sum(1 for call in api.runner.calls if call[2] == "run-task"), 3)
 
+    def test_run_task_returns_once_containers_exit_zero_before_eni_cleanup(self):
+        deprovisioning = {"tasks": [{"lastStatus": "DEPROVISIONING",
+                                     "containers": [{"name": "migration", "lastStatus": "STOPPED", "exitCode": 0}]}]}
+        api = self.api({
+            "run-task": [{"tasks": [{"taskArn": "arn:aws:ecs:r:a:task/inframorph/abc123"}]}],
+            "describe-tasks": [deprovisioning],
+        })
+        api.run_task("td", "sg", ["subnet-1"], "database migration", 30)
+        self.assertEqual(sum(1 for call in api.runner.calls if call[2] == "describe-tasks"), 1)
+
+    def test_run_task_waits_for_stopped_reason_when_a_container_fails(self):
+        running = {"tasks": [{"lastStatus": "RUNNING",
+                              "containers": [{"name": "migration", "lastStatus": "RUNNING"}]}]}
+        failing = {"tasks": [{"lastStatus": "DEPROVISIONING",
+                              "containers": [{"name": "migration", "lastStatus": "STOPPED", "exitCode": 1}]}]}
+        stopped = {"tasks": [{"lastStatus": "STOPPED", "stoppedReason": "Essential container in task exited",
+                              "containers": [{"name": "migration", "lastStatus": "STOPPED", "exitCode": 1}]}]}
+        api = self.api({
+            "run-task": [{"tasks": [{"taskArn": "arn:aws:ecs:r:a:task/inframorph/abc123"}]}],
+            "describe-tasks": [running, failing, stopped],
+        })
+        with self.assertRaisesRegex(DeploymentError, "exit=1.*Essential container in task exited"):
+            api.run_task("td", "sg", ["subnet-1"], "database migration", 30)
+
+    @staticmethod
+    def rollout(web_deployments, worker_deployments=1):
+        def deployment(index, status):
+            return {"id": "ecs-svc/{}".format(index), "status": status, "desiredCount": 1,
+                    "runningCount": 1, "pendingCount": 0, "rolloutState": "IN_PROGRESS"}
+        return {"services": [
+            {"serviceName": "a-web", "desiredCount": 1, "runningCount": web_deployments, "pendingCount": 0,
+             "deployments": [deployment(2, "PRIMARY")] + [deployment(1, "ACTIVE")] * (web_deployments - 1)},
+            {"serviceName": "a-worker", "desiredCount": 1, "runningCount": worker_deployments, "pendingCount": 0,
+             "deployments": [deployment(4, "PRIMARY")] + [deployment(3, "ACTIVE")] * (worker_deployments - 1)},
+        ]}
+
+    @staticmethod
+    def web_tasks():
+        def task(deployment, address):
+            return {"startedBy": deployment, "lastStatus": "RUNNING", "attachments": [
+                {"details": [{"name": "privateIPv4Address", "value": address}]}]}
+        return {"tasks": [task("ecs-svc/2", "10.0.0.2"), task("ecs-svc/1", "10.0.0.1")]}
+
+    @staticmethod
+    def targets(**states):
+        return {"TargetHealthDescriptions": [
+            {"Target": {"Id": address.replace("_", ".")}, "TargetHealth": {"State": state}}
+            for address, state in states.items()]}
+
+    def test_public_service_is_live_once_the_old_target_drains(self):
+        listed = {"taskArns": ["new", "old"]}
+        api = self.api({
+            "describe-services": [self.rollout(2), self.rollout(2), self.rollout(2)],
+            "list-tasks": [listed, listed, listed],
+            "describe-tasks": [self.web_tasks()] * 3,
+            "describe-target-health": [
+                self.targets(**{"10_0_0_1": "healthy"}),  # new task not registered yet
+                self.targets(**{"10_0_0_1": "healthy", "10_0_0_2": "healthy"}),  # both serve
+                self.targets(**{"10_0_0_1": "draining", "10_0_0_2": "healthy"}),
+            ],
+        })
+        api.wait_services(["a-web", "a-worker"], 30, serving=("a-web", "tg"))
+        self.assertEqual(sum(1 for call in api.runner.calls if call[2] == "describe-services"), 3)
+
+    def test_private_service_still_waits_for_its_old_task(self):
+        listed = {"taskArns": ["new", "old"]}
+        drained = self.targets(**{"10_0_0_1": "draining", "10_0_0_2": "healthy"})
+        api = self.api({
+            "describe-services": [self.rollout(2, worker_deployments=2), self.rollout(2)],
+            "list-tasks": [listed, listed],
+            "describe-tasks": [self.web_tasks()] * 2,
+            "describe-target-health": [drained, drained],
+        })
+        api.wait_services(["a-web", "a-worker"], 30, serving=("a-web", "tg"))
+        self.assertEqual(sum(1 for call in api.runner.calls if call[2] == "describe-services"), 2)
+
+    def test_target_health_ignores_draining_targets(self):
+        api = self.api({"describe-target-health": [
+            self.targets(**{"10_0_0_1": "draining", "10_0_0_2": "initial"}),
+            self.targets(**{"10_0_0_1": "draining", "10_0_0_2": "healthy"}),
+        ]})
+        api.wait_target_healthy("tg", 30)
+        self.assertEqual(len(api.runner.calls), 2)
+
     def test_run_task_does_not_retry_other_errors(self):
         api = self.api({"run-task": [CommandError("AccessDenied")]})
         with self.assertRaisesRegex(CommandError, "AccessDenied"):

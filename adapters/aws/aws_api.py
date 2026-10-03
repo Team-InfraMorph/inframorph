@@ -1,6 +1,6 @@
 import json
 import time
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .contracts import FoundationOutputs
 from .errors import CommandError, ContractError, DeploymentError
@@ -11,6 +11,9 @@ from .process import Runner
 ROLE_NOT_READY_MARKERS = ("unable to assume the role",)
 ROLE_RETRY_ATTEMPTS = 6
 ROLE_RETRY_DELAY_SECONDS = 10
+# Every wait below is a describe-* poll; the interval is pure added latency
+# (on average half of it per wait), so keep it short.
+POLL_SECONDS = 3
 
 
 class AwsApi:
@@ -165,8 +168,8 @@ class AwsApi:
                 raise DeploymentError("{} task lookup failed: {}".format(label, failures))
             task = tasks[0]
             last_status = task.get("lastStatus", "UNKNOWN")
+            containers = task.get("containers", [])
             if last_status == "STOPPED":
-                containers = task.get("containers", [])
                 failed = [
                     item for item in containers
                     if item.get("exitCode") != 0 or item.get("reason")
@@ -176,10 +179,27 @@ class AwsApi:
                         _task_failure_message(label, task_arn, task, failed or containers, log_group, log_prefix)
                     )
                 return
-            time.sleep(5)
+            # Once every container has exited 0 the result is final. Fargate
+            # still spends 15-30s detaching the ENI before STOPPED; skip it.
+            if containers and all(item.get("lastStatus") == "STOPPED" and item.get("exitCode") == 0
+                                  and not item.get("reason") for item in containers):
+                return
+            self._sleep(POLL_SECONDS)
         raise DeploymentError("{} task timed out in status {}".format(label, last_status))
 
-    def wait_services(self, service_names: Iterable[str], timeout_seconds: int) -> None:
+    def wait_services(
+        self,
+        service_names: Iterable[str],
+        timeout_seconds: int,
+        serving: Optional[Tuple[str, str]] = None,
+    ) -> None:
+        """Wait until every service runs only its new revision.
+
+        ``serving`` is (public ECS service name, target group ARN). That service
+        is done once its new revision takes all traffic: ECS then still spends
+        about a minute retiring the already-draining old task, which no new
+        request can reach.
+        """
         names = list(service_names)
         if not names:
             return
@@ -202,7 +222,10 @@ class AwsApi:
                 running = service.get("runningCount", 0)
                 pending = service.get("pendingCount", 0)
                 details.append("{} desired={} running={} pending={}".format(service.get("serviceName"), desired, running, pending))
-                if len(deployments) != 1 or running != desired or pending != 0:
+                if serving is not None and service.get("serviceName") == serving[0]:
+                    if not self._new_revision_serving(service, serving[1]):
+                        stable = False
+                elif len(deployments) != 1 or running != desired or pending != 0:
                     stable = False
                 rollout = deployments[0].get("rolloutState") if deployments else None
                 if rollout == "FAILED":
@@ -211,8 +234,43 @@ class AwsApi:
             last_detail = "; ".join(details)
             if stable and len(services) == len(names):
                 return
-            time.sleep(10)
+            self._sleep(POLL_SECONDS)
         raise DeploymentError("ECS services did not stabilize: {}".format(last_detail))
+
+    def _new_revision_serving(self, service: Mapping[str, Any], target_group_arn: str) -> bool:
+        """Every PRIMARY task is a healthy target and every other target is draining."""
+        primary = next((item for item in service.get("deployments", []) if item.get("status") == "PRIMARY"), None)
+        if primary is None or primary.get("runningCount") != primary.get("desiredCount") or primary.get("pendingCount"):
+            return False
+        cluster = ["--cluster", self.foundation.ecs_cluster_arn]
+        arns = self.runner.json(
+            self._base("ecs", "list-tasks") + cluster
+            + ["--service-name", str(service.get("serviceName")), "--desired-status", "RUNNING", "--output", "json"]
+        ).get("taskArns", [])
+        if not arns:
+            return False
+        tasks = self.runner.json(
+            self._base("ecs", "describe-tasks") + cluster + ["--tasks", *arns, "--output", "json"]
+        ).get("tasks", [])
+        # Service tasks record the deployment that started them.
+        addresses = {
+            detail.get("value")
+            for task in tasks
+            if task.get("startedBy") == primary.get("id") and task.get("lastStatus") == "RUNNING"
+            for attachment in task.get("attachments", [])
+            for detail in attachment.get("details", [])
+            if detail.get("name") == "privateIPv4Address"
+        }
+        if len(addresses) != primary.get("desiredCount"):
+            return False
+        health = self.runner.json(
+            self._base("elbv2", "describe-target-health")
+            + ["--target-group-arn", target_group_arn, "--output", "json"]
+        )
+        states = {item.get("Target", {}).get("Id"): item.get("TargetHealth", {}).get("State")
+                  for item in health.get("TargetHealthDescriptions", [])}
+        return (all(states.get(address) == "healthy" for address in addresses)
+                and all(state == "draining" for target, state in states.items() if target not in addresses))
 
     def wait_target_healthy(self, target_group_arn: str, timeout_seconds: int) -> None:
         deadline = time.monotonic() + timeout_seconds
@@ -226,9 +284,11 @@ class AwsApi:
             states = [item.get("TargetHealth", {}).get("State") for item in descriptions]
             reasons = [item.get("TargetHealth", {}).get("Reason", "") for item in descriptions]
             last_detail = "states={} reasons={}".format(states, reasons)
-            if descriptions and all(state == "healthy" for state in states):
+            # A draining target is the replaced revision leaving; it gets no new requests.
+            active = [state for state in states if state != "draining"]
+            if active and all(state == "healthy" for state in active):
                 return
-            time.sleep(10)
+            self._sleep(POLL_SECONDS)
         raise DeploymentError("target group did not become healthy: {}".format(last_detail))
 
 

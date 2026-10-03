@@ -52,6 +52,10 @@ resource "aws_ecs_task_definition" "service" {
           protocol      = "tcp"
           name          = "${each.key}-http"
         }] : []
+        # Node as PID 1 ignores SIGTERM unless the app handles it, so every
+        # replaced task waited the full 30s stopTimeout. An init process
+        # forwards the signal and the default handler exits at once.
+        linuxParameters = { initProcessEnabled = true }
         logConfiguration = {
           logDriver = "awslogs"
           options = {
