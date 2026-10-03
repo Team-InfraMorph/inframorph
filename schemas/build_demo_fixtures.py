@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 
 from . import Intent, Plan, RepoMap
+from planner.pricing import estimate_aws_monthly_krw
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,7 +162,7 @@ def make(label: str, tag: str) -> None:
             "secrets": ["DATABASE_URL"],
             "config": {"STORAGE_DRIVER": "s3" if is_aws else "fs"},
             "logs": "cloudwatch" if is_aws else "docker",
-            "est_monthly_krw": None if is_aws else 0,
+            "est_monthly_krw": estimate_aws_monthly_krw(services) if is_aws else 0,
             "mermaid": diagram,
         }
 
