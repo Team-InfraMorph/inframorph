@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
@@ -26,8 +27,8 @@ class DatabasePreparationTests(unittest.TestCase):
                         "bootstrap_task_definition_arn": "bootstrap:1", "migration_task_definition_arn": "migration:1"}
         self.receipt = root / "database-bootstrap.json"
 
-    def prepare(self, initialize=False):
-        return self.orchestrator._prepare_database(self.outputs, self.request, initialize)
+    def prepare(self, initialize=False, schema=None):
+        return self.orchestrator._prepare_database(self.outputs, self.request, initialize, schema_digest=schema)
 
     def tasks(self):
         return [call.args[0] for call in self.aws.run_task.call_args_list]
@@ -96,9 +97,61 @@ class DatabasePreparationTests(unittest.TestCase):
         self.prepare(initialize=True)
         self.assertEqual(self.tasks(), ["bootstrap:1", "migration:1"])
 
-    def test_migration_cannot_be_cached(self):
-        with self.assertRaisesRegex(ValueError, "only_database_bootstrap"):
-            DatabaseReceipt(self.receipt).run("migration", "a" * 64, lambda: None)
+    def test_unknown_phase_cannot_be_cached(self):
+        with self.assertRaisesRegex(ValueError, "unknown_database_phase"):
+            DatabaseReceipt(self.receipt).run("seed", "a" * 64, lambda: None)
+
+    def test_same_schema_skips_migration_even_for_a_new_image(self):
+        self.prepare(initialize=True, schema="a" * 64)
+        self.aws.run_task.reset_mock()
+        self.outputs["migration_task_definition_arn"] = "migration:2"
+        result = self.prepare(schema="a" * 64)
+        self.assertEqual(self.tasks(), [])
+        self.assertEqual(result["migration"], "reused")
+
+    def test_changed_schema_command_or_database_runs_migration(self):
+        base = self.request
+        cases = (
+            ("schema", lambda: None, "b" * 64),
+            ("command", lambda: setattr(self, "request", replace(base, migration_command="prisma migrate deploy")), "a" * 64),
+            ("database", lambda: setattr(self.aws.current_secret_version, "return_value", "version-2"), "a" * 64),
+        )
+        for name, change, schema in cases:
+            with self.subTest(name):
+                self.request = base
+                self.aws.current_secret_version.return_value = "version-1"
+                self.receipt.unlink(missing_ok=True)
+                self.prepare(schema="a" * 64)
+                change()
+                self.aws.run_task.reset_mock()
+                result = self.prepare(schema=schema)
+                self.assertIn("migration:1", self.tasks())
+                self.assertEqual(result["migration"], "executed")
+
+    def test_failed_migration_is_never_skipped_on_retry(self):
+        self.prepare(schema="a" * 64)
+        self.aws.run_task.side_effect = DeploymentError("schema push failed")
+        with self.assertRaises(DeploymentError): self.prepare(schema="b" * 64)
+        self.aws.run_task.side_effect = None
+        self.aws.run_task.reset_mock()
+        # The DB may now be half way to "b": even the old schema must migrate.
+        self.prepare(schema="a" * 64)
+        self.assertEqual(self.tasks(), ["migration:1"])
+
+    def test_unknown_schema_always_migrates_and_forgets_the_receipt(self):
+        self.prepare(schema="a" * 64)
+        self.aws.run_task.reset_mock()
+        self.prepare()
+        self.assertEqual(self.tasks(), ["migration:1"])
+        self.aws.run_task.reset_mock()
+        self.prepare(schema="a" * 64)
+        self.assertEqual(self.tasks(), ["migration:1"])
+
+    def test_secret_initialization_runs_migration_again(self):
+        self.prepare(schema="a" * 64)
+        self.aws.run_task.reset_mock()
+        self.prepare(initialize=True, schema="a" * 64)
+        self.assertEqual(self.tasks(), ["bootstrap:1", "migration:1"])
 
     def test_secret_metadata_is_used_without_retrieving_passwords(self):
         runner = ScriptedRunner({"describe-secret": [

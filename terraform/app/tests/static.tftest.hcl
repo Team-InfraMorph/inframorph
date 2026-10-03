@@ -141,4 +141,17 @@ run "first_deployment_plan" {
     item.value if item.name == "AWS_REGION"] == ["ap-northeast-2"]
     error_message = "Storage settings must use the operator's region without duplicate names."
   }
+
+  assert {
+    condition = (aws_lb_target_group.public["web"].health_check[0].interval == 5
+      && aws_lb_target_group.public["web"].health_check[0].timeout < aws_lb_target_group.public["web"].health_check[0].interval
+    && aws_lb_target_group.public["web"].deregistration_delay == "5")
+    error_message = "Rollouts must not wait on 15s health checks or 30s target draining."
+  }
+
+  assert {
+    condition = alltrue([for task in aws_ecs_task_definition.service :
+    jsondecode(task.container_definitions)[0].linuxParameters.initProcessEnabled])
+    error_message = "Service containers need an init process so a replaced task stops on SIGTERM."
+  }
 }

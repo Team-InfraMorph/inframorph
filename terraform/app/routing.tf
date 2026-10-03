@@ -7,16 +7,20 @@ resource "aws_lb_target_group" "public" {
   vpc_id      = var.vpc_id
   target_type = "ip"
 
-  deregistration_delay = 30
+  # Demo apps serve short requests only; 30s of draining only kept the replaced
+  # task alive longer.
+  deregistration_delay = 5
 
+  # With 2 x 15s a new target needed at least 30s to turn healthy; at 5s it is
+  # healthy within seconds of registration. The timeout must stay below the interval.
   health_check {
     enabled             = true
     path                = each.value.health
     port                = "traffic-port"
     protocol            = "HTTP"
     matcher             = "200-299"
-    interval            = 15
-    timeout             = 5
+    interval            = 5
+    timeout             = 4
     healthy_threshold   = 2
     unhealthy_threshold = 3
   }

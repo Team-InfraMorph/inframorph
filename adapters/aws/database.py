@@ -1,9 +1,17 @@
-"""Private bootstrap receipts. Schema checks still run on every deployment."""
+"""Private receipts of database steps that already succeeded against the live DB.
+
+The migration receipt is keyed by the Prisma schema digest, the migration
+command and the bootstrap key, so a changed schema, command, database or secret
+always runs the migration again.
+"""
 import hashlib
 import json
 import os
 import tempfile
 from pathlib import Path
+
+
+PHASES = ("bootstrap", "migration")
 
 
 def fingerprint(value):
@@ -20,7 +28,7 @@ class DatabaseReceipt:
             try:
                 raw = json.loads(path.read_text())
                 if isinstance(raw, dict) and raw.get("version") == 1:
-                    self.completed = {key: raw[key] for key in ("bootstrap",)
+                    self.completed = {key: raw[key] for key in PHASES
                                       if isinstance(raw.get(key), str) and len(raw[key]) == 64}
             except (ValueError, OSError):
                 pass  # No verifiable receipt: run the tasks again.
@@ -44,11 +52,11 @@ class DatabaseReceipt:
         self.save()
 
     def run(self, phase, key, execute):
-        if phase != "bootstrap":
-            raise ValueError("only_database_bootstrap_may_be_reused")
+        if phase not in PHASES:
+            raise ValueError("unknown_database_phase")
         if self.completed.get(phase) == key:
             return "reused"
-        # A failed bootstrap must not retain an older successful receipt.
+        # A failed or interrupted step must not retain an older successful receipt.
         self.completed.pop(phase, None)
         self.save()
         execute()
