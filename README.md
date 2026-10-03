@@ -28,4 +28,6 @@
 
 Policy Gate, Builder, Local Adapter의 실행법·검증 근거·남은 통합 범위는 [E_VALIDATION.md](E_VALIDATION.md)를 확인하세요.
 
-최신 main 기준 C/E 연결, redteam 25개 호스트 경계 검사, 공개 URL 검증은 [E_INTEGRATION.md](E_INTEGRATION.md)를 확인하세요.
+최신 main 기준 C/E 연결, redteam 39개 호스트 경계 검사, 공개 URL 검증은 [E_INTEGRATION.md](E_INTEGRATION.md)를 확인하세요.
+
+정책 규칙·판정 계약·정책 결과 화면의 설계와 수용 기준별 달성 여부는 [POLICY_GATE_V2_PLAN.md](POLICY_GATE_V2_PLAN.md)를 확인하세요.

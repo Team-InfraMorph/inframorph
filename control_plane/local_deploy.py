@@ -113,10 +113,12 @@ async def deploy(context, store):
         return await run_worker(payload | {"fault": context.fault, "fault_dir": str(Path(context.output_dir) / "fault")},
                                 module="control_plane.runtime_fault_worker")
 
+    from .policy_results import save as save_policy
     connector = EConnector(snapshot=context.snapshot, repo_map=context.repo_map,
         state_root=context.state_root, runtime_name="cp-" + context.project_id,
         deployment_id=context.deployment_id, make_plan=make_plan,
-        worker=fault_worker if context.fault != "none" else None, publish=context.publish)
+        worker=fault_worker if context.fault != "none" else None, publish=context.publish,
+        policy_sink=lambda attempt, report: save_policy(store, context.deployment_id, "local", attempt, report))
     stage = "policy"
     try:
         snapshot = Snapshot(Path(context.snapshot), context.repo_map.tree, Limits(), Redactor())

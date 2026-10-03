@@ -1,0 +1,98 @@
+{
+  "implementation": {
+    "git_head": "9e3022322879c8dfb535402cd70756479de29c17",
+    "tracked_changes": false,
+    "python_source_sha256": "ebf3b4f49ba19c9c3cb97f15e0fe1c2c447ed887cfc4a3631ec384985f0e07ce",
+    "schema_version": "1.0.0"
+  },
+  "corpus": {
+    "repository": "Team-InfraMorph/redteam-repo",
+    "revision": "488833528c3c9a389d0af05606c9bb1cdeaa1c99"
+  },
+  "unit_tests_passed": 360,
+  "aws_unit_tests_passed": 34,
+  "policy_ui_tests_passed": 6,
+  "new_regression_tests": 13,
+  "redteam": {
+    "passed": 39,
+    "failed": 0,
+    "not_run": 0,
+    "profile": "corpus-only",
+    "live_model_behavior": "not_measured",
+    "production_allowlist_unchanged": true,
+    "preserved_earlier_cases": 25,
+    "added_cases": 14,
+    "reason_codes": {
+      "config_not_supported": 1,
+      "config_overrides_secret": 1,
+      "config_policy_violation": 1,
+      "db_evidence_unrelated": 1,
+      "db_provider_mismatch": 1,
+      "db_requirement_missing": 1,
+      "evidence_file_missing": 1,
+      "evidence_line_missing": 1,
+      "forbidden_code_pattern": 2,
+      "javascript_syntax_invalid": 1,
+      "patch_allowlist_violation": 3,
+      "patch_behavior_changed": 1,
+      "prisma_structure_changed": 2,
+      "schema_invalid": 4,
+      "symlink_forbidden": 1,
+      "worker_entry_missing": 1,
+      "worker_evidence_unrelated": 1
+    }
+  },
+  "public_runtime": {
+    "status": "passed",
+    "phone_verified": false,
+    "aws_called": false,
+    "b_modules": "fixtures",
+    "model": "replay",
+    "runtime": "actual D/C/E and public HTTPS",
+    "denied_paths": [
+      {
+        "path": "/.env",
+        "status": 404
+      },
+      {
+        "path": "/.git/config",
+        "status": 404
+      },
+      {
+        "path": "/package.json",
+        "status": 404
+      },
+      {
+        "path": "/prisma/schema.prisma",
+        "status": 404
+      }
+    ],
+    "bound_services": [
+      "db",
+      "tunnel",
+      "web"
+    ],
+    "public_adapter_rollback_verified": true,
+    "verified_patch_applied": true,
+    "public_redeploy_data_preserved": true,
+    "d_verified_public_https": true,
+    "owned_test_resources_cleaned": true
+  },
+  "policy_results_ui": {
+    "api": "GET /api/deployments/{id}/policy",
+    "records_initial_failure_without_patch": true,
+    "separates_target_and_attempt": true,
+    "missing_results_render_as_unknown": true,
+    "failed_refresh_hides_stale_success": true,
+    "refresh_mechanism": "periodic re-fetch of stored results, not SSE-driven"
+  },
+  "limitations": [
+    "required_rules/evaluated_rules recording and retired-policy PASS rejection are not implemented",
+    "External example apps outside the reviewed profile are unverified",
+    "False-positive and unsupported rates are not measured",
+    "Live model behaviour is not measured; prompt cases are adversarial replay",
+    "Actual B Mapper/Planner and live AWS deployment remain unverified",
+    "No physical phone verification of the public URL",
+    "String and syntax based checks do not guarantee detection of every attack"
+  ]
+}

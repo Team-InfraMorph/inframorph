@@ -1,3 +1,4 @@
+import PolicyCard from "./PolicyCard";
 import { useCallback, useEffect, useState } from "react";
 import { api, streamEvents } from "./api.js";
 import { Structure } from "./Structure.jsx";
@@ -361,6 +362,8 @@ export default function App() {
   const [plans, setPlans] = useState({});
   const [intent, setIntent] = useState(null);
   const [patch, setPatch] = useState({});
+  const [policy, setPolicy] = useState(null);
+  const [policyError, setPolicyError] = useState(false);
   const [error, setError] = useState("");
 
   const project = projects.find((p) => p.project_id === projectId);
@@ -415,6 +418,18 @@ export default function App() {
     api.patch(selectedKey).then((value) => alive && setPatch(value)).catch(() => alive && setPatch({}));
     return () => { alive = false; };
   }, [selectedKey, selectedStatus]);
+
+  useEffect(() => {
+    setPolicy(null); setPolicyError(false);
+    if (!selectedKey) return;
+    let alive = true;
+    const loadPolicy = () => api.policy(selectedKey).then(value => {
+      if (alive) { setPolicy(value); setPolicyError(false); }
+    }).catch(() => { if (alive) setPolicyError(true); });
+    loadPolicy();
+    const timer = setInterval(loadPolicy, 1500);
+    return () => { alive = false; clearInterval(timer); };
+  }, [selectedKey]);
 
   const choose = (id) => {
     setProjectId(id);
@@ -505,6 +520,7 @@ export default function App() {
 
           <PlanCompare plans={plans} targets={targets} />
 
+          <PolicyCard data={policy} error={policyError} />
           <PatchCard patch={patch} />
 
           <div className="targets">
