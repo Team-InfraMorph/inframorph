@@ -1,5 +1,6 @@
 """Bounded policy repair. Model proposals never authorize a build or deployment."""
 import asyncio
+import copy
 import difflib
 import inspect
 import json
@@ -10,6 +11,7 @@ import time
 from pydantic import Field, ValidationError
 from schemas import Intent, Plan
 from schemas.common import ContractModel
+from schemas.common import parse_evidence
 from analyzer.backend import BackendError
 from analyzer.config import estimated_cost
 from analyzer.e_runtime import EWorkerError
@@ -23,6 +25,8 @@ from code_patch.runner import ALLOWED_PATHS, patch_snapshot, read_snapshot, tran
 from policy_gate.gate import PolicyError
 
 MAX_ATTEMPTS = 3
+EVIDENCE_FAILURES = {'db_provider_evidence_missing', 'worker_command_evidence_missing',
+                     'worker_start_evidence_missing'}
 DDL = '''CREATE TABLE IF NOT EXISTS policy_repairs (
  deployment_id TEXT NOT NULL REFERENCES deployments(id), attempt INTEGER NOT NULL,
  source_revision TEXT NOT NULL, snapshot_digest TEXT NOT NULL,
@@ -40,6 +44,7 @@ REPAIRABLE = {
     "patch": {"javascript_syntax_invalid", "prisma_provider_invalid",
               "prisma_structure_changed", "patch_behavior_changed"},
 }
+REPAIRABLE['intent'].update(EVIDENCE_FAILURES)
 INSTRUCTIONS = """Repair only the requested InfraMorph candidate, using the supplied source and failure.
 Return exactly the requested JSON schema. No tools, commands, network requests or prose.
 Return a JSON instance, NOT a JSON Schema. Copy the previous object and change only the
@@ -55,6 +60,10 @@ For patch, return only replacement contents for allowed files. Preserve applicat
 database models and data. The approved reference transformation describes permitted behavior.
 Never add dependencies, remove security checks, copy secrets, or change infrastructure policy.
 Every proposal is independently validated; a JSON response is never an approval.
+When repair_mode is evidence_only, change ONLY the evidence arrays named in
+allowed_evidence_paths. Keep every other value unchanged, including reasons,
+commands, types, config, secrets and source_revision. Cite the supplied direct
+declaration/startup lines; a correct conclusion without those citations fails.
 """ + DATA_INSTRUCTIONS
 
 
@@ -92,7 +101,10 @@ def usage(store, did):
         item = row.get('metrics', {})
         for key in total.keys() - {'usage_complete'}:
             total[key] += item.get(key, 0)
-        total['usage_complete'] &= item.get('usage_complete', row['status'] not in {'running', 'interrupted'})
+        # An interrupted request may have reached the provider even when the last
+        # persisted payload predates that call. Never restore its retry budget.
+        total['usage_complete'] &= (row['status'] not in {'running', 'interrupted'} and
+                                    item.get('usage_complete', True))
     return total
 
 
@@ -152,6 +164,81 @@ def safe_diff(before, after, redactor, *, code=False):
     return dict(diff=raw[:24_000].decode(errors='ignore'), diff_truncated=len(raw)>24_000)
 
 
+def _inspection_rows(store, did, target):
+    return [(row['seq'], json.loads(row['payload'])) for row in store._all(
+        'SELECT seq,payload FROM policy_results WHERE deployment_id=? AND target=? ORDER BY seq',
+        (did, target))]
+
+
+def _evidence_scope(baseline, proposal, paths):
+    """Compare with the first evidence-repair input, never the last proposal."""
+    actual = copy.deepcopy(proposal)
+    for path in paths:
+        parts = path.split('/')
+        if (len(parts) != 4 or parts[0] or parts[1] not in {'state', 'workloads'} or
+                not parts[2].isdigit() or parts[3] != 'evidence'):
+            raise RepairStopped('evidence_repair_scope_violation')
+        group, index = parts[1], int(parts[2])
+        try:
+            actual[group][index]['evidence'] = baseline[group][index]['evidence']
+        except (IndexError, KeyError, TypeError):
+            raise RepairStopped('evidence_repair_scope_violation') from None
+    if actual != baseline:
+        raise RepairStopped('evidence_repair_scope_violation')
+
+
+def _evidence_sources(snapshot, baseline, diagnostics):
+    """Only host-selected declaration context and already cited source lines.
+
+    Observed lines are exactly the lines serialized into this request. There is
+    no truncation fallback; the existing request-byte budget rejects oversize.
+    """
+    selected = set()
+    for item in [*baseline['workloads'], *baseline['state']]:
+        for ref in item['evidence']:
+            selected.add(parse_evidence(ref))
+    for anchor in diagnostics.get('required_anchors', []):
+        path = anchor['path']
+        for number in anchor.get('lines', []):
+            selected.update((path, line) for line in range(max(1, number-2),
+                min(len(snapshot.files.get(path, [])), number+2)+1))
+    for path, number in selected:
+        # The reviewed profile's executable evidence surface is deliberately
+        # narrower than all files copied into an application build.
+        allowed = path == 'package.json' or (path.startswith(('src/', 'prisma/')) and
+            not path.startswith('src/web/') and Path(path).suffix in {'.js', '.prisma'})
+        if not allowed or path not in snapshot.files or not 1 <= number <= len(snapshot.files[path]):
+            raise RepairStopped('policy_repair_evidence_context_unavailable')
+    snapshot.observed = selected
+    return {path: '\n'.join(f'{n}: {snapshot.files[path][n-1]}'
+                           for p, n in sorted(selected) if p == path)
+            for path in sorted({p for p, _ in selected})}
+
+
+def _legacy_evidence_followup(code, error, diagnostics, baseline):
+    """Only the Gate's two evidence-specific legacy failures extend strict scope.
+
+    A broad requirement failure never authorizes unrelated edits. Legacy errors
+    do not start evidence-only mode; this handles a later rule revealed after
+    the first strict evidence fix.
+    """
+    expected = {'db_evidence_unrelated': ('I-003', 'state', 'relational_db'),
+                'worker_evidence_unrelated': ('I-002', 'workloads', 'worker')}.get(code)
+    if baseline is None or not isinstance(error, PolicyError) or expected is None:
+        return False
+    rule_id, group, kind = expected
+    paths = diagnostics.get('allowed_evidence_paths', [])
+    if diagnostics.get('rule_id') != rule_id or len(paths) != 1:
+        return False
+    parts = paths[0].split('/')
+    if len(parts) != 4 or parts[:2] != ['', group] or not parts[2].isdigit() or parts[3] != 'evidence':
+        return False
+    try:
+        return baseline[group][int(parts[2])]['kind'] == kind
+    except (IndexError, KeyError, TypeError):
+        return False
+
+
 async def repair(*, store, did, mapping, source, stage, target, initial, error,
                  validate, session, limits, initial_metrics, output_dir=None, notify=None, intent=None):
     """Only allowlisted policy failures enter. All retries share a deployment ledger.
@@ -175,6 +262,17 @@ async def repair(*, store, did, mapping, source, stage, target, initial, error,
                if name == 'package.json' or name.startswith(('src/', 'prisma/'))}
     snapshot.observed = {(name, i) for name in sources for i in range(1, len(snapshot.files[name])+1)}
     candidate = initial
+    from policy_gate.catalog import identity
+    from .policy_lifecycle import guard
+    policy_digest = identity()['policy_digest']
+    original_failure = dict(code=code, rule_id=getattr(error, 'diagnostics', {}).get('rule_id'),
+                            diagnostics=getattr(error, 'diagnostics', {}))
+    prior = _inspection_rows(store, did, target)
+    original_execution_id = next((r.get('execution_id') for _, r in reversed(prior)
+                                  if r.get('reason_code') == code), None)
+    evidence_baseline = None
+    evidence_paths = set()
+    evidence_anchors = []
     format_feedback = []
     last_response = None
     schema = {'intent': Intent, 'plan': Plan, 'patch': PatchProposal}[stage]
@@ -183,6 +281,17 @@ async def repair(*, store, did, mapping, source, stage, target, initial, error,
         if not initial_metrics.get('usage_complete', True) or not usage(store, did)['usage_complete']:
             raise RepairStopped('policy_repair_usage_unknown')
         current = candidate
+        diagnostics = getattr(error, 'diagnostics', {})
+        if code in EVIDENCE_FAILURES or _legacy_evidence_followup(code, error, diagnostics, evidence_baseline):
+            if evidence_baseline is None:
+                evidence_baseline = copy.deepcopy(current.model_dump(mode='json'))
+            evidence_paths.update(diagnostics.get('allowed_evidence_paths', []))
+            evidence_anchors.extend(diagnostics.get('required_anchors', []))
+            if not evidence_paths:
+                raise RepairStopped('policy_repair_evidence_context_unavailable')
+        if evidence_baseline is not None:
+            sources = _evidence_sources(snapshot, evidence_baseline,
+                                        {'required_anchors': evidence_anchors})
         if stage == 'patch':
             _assert_patch(current, mapping)
             original, _ = read_snapshot(Path(source), mapping)
@@ -197,13 +306,26 @@ async def repair(*, store, did, mapping, source, stage, target, initial, error,
                 raise RepairStopped('policy_repair_binding_mismatch')
             extra = {'approved_intent': intent.model_dump(mode='json')} if intent else {}
         payload = dict(stage=stage, target=target, source_revision=mapping.commit,
-                       failure={'code': code, 'fields': list(getattr(error, 'fields', ()))},
+                       failure={'code': code, 'fields': list(getattr(error, 'fields', ())),
+                                'diagnostics': diagnostics},
                        sources=sources, previous=before, validation_errors=format_feedback,
-                       previous_invalid_response=last_response, **extra)
+                       previous_invalid_response=last_response,
+                       repair_mode='evidence_only' if evidence_baseline is not None else 'candidate',
+                       allowed_evidence_paths=sorted(evidence_paths), **extra)
         attempt = reserve(store, did, mapping, digest, target, stage, code)
         stats = dict(model_calls=0, api_calls=0, input_tokens=0, output_tokens=0,
                      estimated_usd=0, usage_complete=True, duration_ms=0)
-        saved = {'metrics': stats}
+        saved = dict(metrics=stats, policy_digest=policy_digest,
+                     original_execution_id=original_execution_id, original_failure=original_failure,
+                     repair_mode=payload['repair_mode'], allowed_evidence_paths=sorted(evidence_paths),
+                     recheck_execution_ids=[], last_recheck_execution_id=None, stop_reason=None,
+                     attempts_exhausted=False)
+        prior_seq = max((seq for seq, _ in _inspection_rows(store, did, target)), default=0)
+        # Preserve the original failure/binding even if the process stops while
+        # awaiting the provider; recovery marks the reserved attempt interrupted.
+        with store._lock, store._conn:
+            store._conn.execute('UPDATE policy_repairs SET payload=? WHERE deployment_id=? AND attempt=?',
+                                (json.dumps(saved), did, attempt))
         started = time.monotonic()
         retry = False
         result_code, status = 'policy_repair_failed', 'failed'
@@ -222,6 +344,11 @@ async def repair(*, store, did, mapping, source, stage, target, initial, error,
                         spent + estimated_cost(size, limits.max_output_tokens) > limits.max_estimated_usd):
                     raise RepairStopped('policy_repair_budget_exhausted')
                 stats.update(backend=backend.name, model_calls=1, api_calls=int(backend.name == 'openai'), usage_complete=False)
+                # Persist the unknown-usage state before the external call so a
+                # process crash cannot turn a sent request into unused budget.
+                with store._lock, store._conn:
+                    store._conn.execute('UPDATE policy_repairs SET payload=? WHERE deployment_id=? AND attempt=? AND status=?',
+                                        (json.dumps(saved), did, attempt, 'running'))
                 async with asyncio.timeout(limits.timeout_seconds):
                     reply = await backend.respond(instructions=instruction,
                         input=[{'role': 'user', 'content': request}], tools=[],
@@ -238,6 +365,10 @@ async def repair(*, store, did, mapping, source, stage, target, initial, error,
                     raise RepairStopped('policy_repair_tool_forbidden')
                 if len(reply.text.encode()) > limits.max_request_bytes or redactor.contains_secret(reply.text):
                     raise RepairStopped('policy_repair_unsafe_output')
+                if evidence_baseline is not None:
+                    raw_proposal = json.loads(reply.text)
+                    saved.update(safe_diff(before, raw_proposal, redactor))
+                    _evidence_scope(evidence_baseline, raw_proposal, evidence_paths)
                 value = schema.model_validate_json(reply.text)
                 if stage == 'intent':
                     try:
@@ -265,10 +396,17 @@ async def repair(*, store, did, mapping, source, stage, target, initial, error,
                 saved.update(safe_diff(before, after, redactor, code=stage=='patch'))
                 if Snapshot(Path(source), mapping.tree, limits, redactor).digest != digest:
                     raise RepairStopped('policy_repair_source_changed')
+                if identity()['policy_digest'] != policy_digest:
+                    raise RepairStopped('policy_repair_policy_changed')
+                guard(store, did)
                 candidate = proposal
                 checked = validate(proposal, attempt)
                 if inspect.isawaitable(checked):
                     await checked
+                if identity()['policy_digest'] != policy_digest:
+                    raise RepairStopped('policy_repair_policy_changed')
+                if Snapshot(Path(source), mapping.tree, limits, redactor).digest != digest:
+                    raise RepairStopped('policy_repair_source_changed')
                 if stage == 'patch':
                     _assert_patch(proposal, mapping)
                     saved['fingerprint'] = proposal.fingerprint
@@ -306,6 +444,12 @@ async def repair(*, store, did, mapping, source, stage, target, initial, error,
                 result_code = 'policy_repair_timeout'
         finally:
             stats['duration_ms'] = int((time.monotonic()-started)*1000)
+            checks = [r for seq, r in _inspection_rows(store, did, target) if seq > prior_seq]
+            saved['recheck_execution_ids'] = [r['execution_id'] for r in checks if r.get('execution_id')]
+            saved['last_recheck_execution_id'] = next(iter(reversed(saved['recheck_execution_ids'])), None)
+            if status != 'passed' and (not retry or attempt >= MAX_ATTEMPTS):
+                saved['stop_reason'] = result_code
+                saved['attempts_exhausted'] = retry and attempt >= MAX_ATTEMPTS
             finish(store, did, attempt, status, result_code, saved)
         if status == 'passed':
             if notify:

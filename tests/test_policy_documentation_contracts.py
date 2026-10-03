@@ -159,7 +159,12 @@ class VersionContractTests(unittest.TestCase):
         historical = release('1.0.0')
         with tempfile.TemporaryDirectory() as folder, patch('policy_gate.catalog.release', return_value=historical):
             actual,diagnostics,summaries=record_walkthrough(Path(folder))
-        self.assertEqual(example('logs.md'),actual)
+        documented = example('logs.md')
+        # The frozen reading excerpt remains valid when the API adds verified
+        # successor metadata. Compare its original fields without rewriting it.
+        excerpt = copy.deepcopy(actual)
+        excerpt['review'] = {key: actual['review'][key] for key in documented['review']}
+        self.assertEqual(documented, excerpt)
         self.assertEqual(diagnostics[0]['payload'],dict(text='non_source_evidence',masked=False,truncated=False))
         self.assertEqual(summaries[0]['decision'],'NOT_RUN')
         self.assertFalse(summaries[0]['complete'])

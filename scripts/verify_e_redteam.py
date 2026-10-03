@@ -27,6 +27,7 @@ from policy_gate.gate import (
 
 
 from scripts.redteam_boundaries import verify_source, verify_prompt, verify_path
+from policy_gate.catalog import release
 
 
 EXPECTED_REJECTIONS = {
@@ -74,6 +75,10 @@ def verify(corpus):
     plan = json.loads((ROOT / "schemas/fixtures/v1/plan.local.json").read_text())
     plan.update(source_revision=revision, image_tag="app:" + revision)
     results = []
+    # Preserve the pinned corpus bytes and its original expectation. This one
+    # 1.0 control calls the HTTP entry as a worker without scripts.worker or a
+    # reviewed startup anchor. The explicit 1.1 contract change now rejects it.
+    worker_revision = next(r['revision'] for r in release()['rules'] if r['id']=='I-002')
     for case in manifest["cases"]:
         if case["category"] in ("prompt", "path"):
             try:
@@ -166,13 +171,19 @@ def verify(corpus):
                 decision = "allow"
             except PolicyError as exc:
                 decision, code = "reject", str(exc)
+            changed_control = case['id']=='intent-worker-control' and worker_revision==2
+            expected = 'reject' if changed_control else case['expected']['decision']
+            expected_code = 'worker_command_evidence_missing' if changed_control else EXPECTED_REJECTIONS.get(case['id'])
             results.append(
                 {
                     "id": case["id"],
-                    "expected": case["expected"]["decision"],
+                    "expected": expected,
+                    **({'original_expected':case['expected']['decision'],
+                        'policy_change':'worker-connected-evidence', 'rule_revision':worker_revision}
+                       if changed_control else {}),
                     "actual": decision,
                     "status": "pass"
-                    if decision == case["expected"]["decision"] and code == EXPECTED_REJECTIONS.get(case["id"])
+                    if decision == expected and code == expected_code
                     else "fail",
                     "code": code,
                 }

@@ -109,6 +109,54 @@ def current_targets(store):
           AND (n.created_at>d.created_at OR (n.created_at=d.created_at AND n.rowid>d.rowid)))''',())
 
 
+def comparison(store, base, target, base_policy_digest=None):
+    """Version comparison optionally bound to an immutable stored release snapshot."""
+    active=identity()
+    target_digest = active['policy_digest'] if target == active['version'] else None
+    if base_policy_digest is None:
+        return compare(base,target) | dict(base_policy_digest=None,target_policy_digest=target_digest)
+    unknown = dict(base=base,target=target,changes=[],added=[],removed=[],changed=[],major=False,
+                   history_status='confirmation_required',comparison_kind='implementation',
+                   base_policy_digest=base_policy_digest,target_policy_digest=target_digest)
+    row=store._one('SELECT payload FROM policy_releases WHERE digest=?',(base_policy_digest,))
+    if row is None:return unknown
+    try:
+        stored=json.loads(row[0]);meta=stored['identity'];snapshot=stored['release']
+        if (meta['policy_digest']!=base_policy_digest or meta['version']!=base
+                or meta['family']!='inframorph-policy' or snapshot['version']!=base):return unknown
+        delta=compare(base,target,base_release=snapshot)
+        if base_policy_digest==target_digest:
+            delta.update(changes=[],added=[],removed=[],changed=[],history_status='known')
+        return delta | dict(base_policy_digest=base_policy_digest,target_policy_digest=target_digest)
+    except (ValueError,KeyError,TypeError):return unknown
+
+
+def preserved_scope(store, deployment_id, target):
+    """Only verified stored source and claims determine a rule's applicability."""
+    from policy_gate.gate import read_tree,digest
+    row=store._one('SELECT digest,payload FROM policy_receipts WHERE deployment_id=? AND target=?',(deployment_id,target))
+    try:
+        if row is None:raise ValueError()
+        data=json.loads(row['payload'])
+        if fingerprint(data)!=row['digest']:raise ValueError()
+        snapshot=Path(data['snapshot'])
+        if any(p.is_symlink() for p in (snapshot,*snapshot.parents)):raise ValueError()
+        files,_=read_tree(snapshot,filter_source=True)
+        if digest(files)!=data['original_digest']:raise ValueError()
+        intent=data['intent'];mapping=data['repo_map']
+        deployment=store.get_deployment(deployment_id)
+        if (intent['source_revision']!=mapping['commit']
+                or deployment['commit_sha'] and deployment['commit_sha']!=mapping['commit']):raise ValueError()
+        package=json.loads(files.get('package.json',b'{}'))
+        if not isinstance(package,dict):raise ValueError()
+        scripts=package.get('scripts',{})
+        if not isinstance(scripts,dict):raise ValueError()
+        return dict(db='prisma/schema.prisma' in files or any(x['kind']=='relational_db' for x in intent['state']),
+                    worker=bool(scripts.get('worker')) or 'src/worker.js' in files
+                           or any(x['kind']=='worker' for x in intent['workloads']))
+    except (ValueError,KeyError,TypeError,OSError):return None
+
+
 def transition(store, deployment_id, target):
     meta=identity(); binding=store._one('SELECT digest FROM policy_bindings WHERE deployment_id=?',(deployment_id,))
     if target not in {t for change in release()['changes'] for t in change.get('targets',[])}:
@@ -118,15 +166,31 @@ def transition(store, deployment_id, target):
     old=store._one('SELECT payload FROM policy_releases WHERE digest=?',(binding[0],)) if binding else None
     base=json.loads(old[0])['identity']['version'] if old else 'legacy'
     try:
-        delta=compare(base,meta['version'])
-        # Same development version with changed bytes is never treated as compatible.
-        if base==meta['version']: raise ValueError('development_policy_changed')
-        changes=[c for c in delta['changes'] if target in c.get('targets',['local','aws']) and meta['profile'] in c.get('profiles',[meta['profile']])]
+        if base==meta['version']:
+            delta=comparison(store,base,meta['version'],binding[0] if binding else None)
+        else:
+            delta=compare(base,meta['version'])
+        if delta.get('history_status')=='confirmation_required':raise ValueError('policy_history_unknown')
+        candidates=[c for c in delta['changes'] if target in c.get('targets',['local','aws']) and meta['profile'] in c.get('profiles',[meta['profile']])]
+        scope=preserved_scope(store,deployment_id,target) if any(c.get('impact_scope') for c in candidates) else None
+        rule_impacts=[];changes=[]
+        for c in candidates:
+            field=c.get('impact_scope')
+            applicability=('unknown' if scope is None or field not in scope else 'applicable' if scope[field] else 'not_applicable') if field else 'applicable'
+            item=c | dict(applicability=applicability)
+            rule_impacts.append(item)
+            if applicability!='not_applicable':changes.append(item)
+        unknown=any(c['applicability']=='unknown' for c in changes)
         return dict(recheck=bool(changes) and (delta['major'] or any(c.get('recheck') for c in changes)),
                     review=bool(changes) and (delta['major'] or any(c.get('review') for c in changes)),
-                    redeploy=any(c.get('redeploy') for c in changes),reason='policy_transition',changes=changes)
+                    redeploy=any(c.get('redeploy') for c in changes),reason='policy_transition',changes=changes,
+                    rule_impacts=rule_impacts,applicability='unknown' if unknown else 'known',
+                    advisory=any(c.get('historical_mode')=='advisory' for c in changes),
+                    base_policy_digest=binding[0] if binding else None,target_policy_digest=meta['policy_digest'],
+                    comparison_kind=delta.get('comparison_kind','version'))
     except ValueError:
-        return dict(recheck=True,review=True,redeploy=False,reason='history_requires_review',changes=[])
+        return dict(recheck=True,review=True,redeploy=False,reason='history_requires_review',changes=[],
+                    applicability='unknown',history_status='confirmation_required')
 
 
 def enqueue(store, deployment_id, target, *, automatic=False):
@@ -219,22 +283,32 @@ def review(store, deployment_id, job_id, expected_digest):
 def failure_review(store,deployment_id,execution_id,value):
     allowed={'violation','false_positive','unsupported','validator_error','environment_error','unknown'}
     if value.get('classification') not in allowed:raise ValueError('invalid_failure_classification')
-    rows=store._all('SELECT payload FROM policy_results WHERE deployment_id=?',(deployment_id,))
-    record=next((json.loads(r[0]) for r in rows if json.loads(r[0]).get('execution_id')==execution_id),None)
+    rows=store._all('SELECT seq,target,payload FROM policy_results WHERE deployment_id=?',(deployment_id,))
+    original=next((r for r in rows if json.loads(r['payload']).get('execution_id')==execution_id),None)
+    record=json.loads(original['payload']) if original else None
     if not record or record['decision']=='PASS':raise ValueError('failure_record_missing')
     commit=value.get('fix_commit','');test=value.get('regression_test','');resolved=value.get('resolved_execution_id','')
     if commit and not re.fullmatch('[0-9a-f]{40}',commit):raise ValueError('invalid_fix_commit')
     if test and (not re.fullmatch('[A-Za-z0-9_./:-]{1,200}',test) or '..' in test):raise ValueError('invalid_regression_test')
+    resolution={}
     if resolved:
-        related=store._all('SELECT r.payload,r.target FROM policy_results r JOIN deployments d ON d.id=r.deployment_id WHERE d.project_id=(SELECT project_id FROM deployments WHERE id=?)',(deployment_id,))
-        candidate=next((json.loads(r['payload']) for r in related if json.loads(r['payload']).get('execution_id')==resolved),None)
-        failed_rules={r['rule_id'] for r in record.get('rules',[]) if r['decision'] in {'BLOCK','ERROR','UNSUPPORTED'}}
-        passed_rules={r['rule_id'] for r in (candidate or {}).get('rules',[]) if r['decision']=='PASS'}
-        if not candidate or candidate['decision']!='PASS' or not candidate.get('complete') or candidate['stage']!=record['stage'] or not failed_rules<=passed_rules:
+        related=store._all('SELECT r.payload,r.target,r.seq,r.deployment_id,d.commit_sha FROM policy_results r JOIN deployments d ON d.id=r.deployment_id WHERE d.project_id=(SELECT project_id FROM deployments WHERE id=?)',(deployment_id,))
+        matched=next((r for r in related if json.loads(r['payload']).get('execution_id')==resolved),None)
+        candidate=json.loads(matched['payload']) if matched else None
+        failed_rules={r['rule_id']:r.get('revision',0) for r in record.get('rules',[]) if r['decision'] in {'BLOCK','ERROR','UNSUPPORTED'}}
+        passed_rules={r['rule_id']:r.get('revision',0) for r in (candidate or {}).get('rules',[]) if r['decision']=='PASS'}
+        if (not candidate or candidate['decision']!='PASS' or not candidate.get('complete')
+                or candidate['stage']!=record['stage'] or matched['target']!=original['target']
+                or matched['seq']<=original['seq'] or not failed_rules
+                or candidate.get('family')!=record.get('family')
+                or any(passed_rules.get(k,-1)<revision for k,revision in failed_rules.items())):
             raise ValueError('resolved_execution_not_passed')
+        resolution=dict(resolved_deployment_id=matched['deployment_id'],resolved_target=matched['target'],
+                        resolved_policy_digest=candidate.get('policy_digest'),
+                        resolved_source_revision=matched['commit_sha'] or candidate.get('binding',{}).get('source_revision'))
     summary=sanitize(value.get('summary',''),limit=2000)['text']
     if value['classification']=='false_positive' and (not summary or not test):raise ValueError('false_positive_requires_evidence')
-    payload=dict(classification=value['classification'],summary=summary,fix_commit=commit,regression_test=test,resolved_execution_id=resolved,actor='local_operator',identity_verified=False)
+    payload=dict(classification=value['classification'],summary=summary,fix_commit=commit,regression_test=test,resolved_execution_id=resolved,actor='local_operator',identity_verified=False,**resolution)
     with store._lock,store._conn:
         ident=str(uuid.uuid4());store._conn.execute('INSERT INTO policy_failure_reviews VALUES (?,?,?,?,?)',(ident,deployment_id,execution_id,now(),canonical(payload)))
         audit(store,'failure_reviewed',deployment_id,execution_id=execution_id,review_id=ident,classification=value['classification'])
@@ -254,6 +328,20 @@ def details(store,deployment_id):
     return dict(jobs=jobs,events=events,diagnostics=logs,failure_reviews=failures,impact_assessments=assessments)
 
 
+def original_decision(records, stored_release):
+    """Summarize the original ledger against its own catalog, never infer from LIVE."""
+    if not stored_release or not stored_release.get('rules'):return None
+    required={r['stage'] for r in stored_release['rules']}
+    managed=[r for r in records if r.get('family')=='inframorph-policy']
+    if not managed:return None
+    digest=managed[-1].get('policy_digest')
+    latest={r['stage']:r for r in managed if r.get('policy_digest')==digest}
+    decisions={r['decision'] for r in latest.values()}
+    for failure in ('ERROR','BLOCK','UNSUPPORTED'):
+        if failure in decisions:return failure
+    return 'PASS' if required<=latest.keys() and all(r.get('complete') for r in latest.values()) else 'NOT_RUN'
+
+
 def impacts(store):
     active=identity();items=[]
     for row in current_targets(store):
@@ -266,7 +354,7 @@ def impacts(store):
 
         change=transition(store,did,target)
         job=store._one('SELECT * FROM policy_jobs WHERE deployment_id=? AND target=? AND policy_digest=? ORDER BY rowid DESC LIMIT 1',(did,target,active['policy_digest']))
-        status='current' if not change['recheck'] else 'recheck_required'
+        status='current' if not change['recheck'] else 'evidence_recheck_recommended' if change.get('advisory') else 'recheck_required'
         if status=='current' and change['reason']=='current_policy':
             from .policy_results import read
             summary=next((r for r in read(store,did).get('summaries',[]) if r['target']==target),None)
@@ -277,9 +365,16 @@ def impacts(store):
                 decision=json.loads(job['result'])['decision']
                 reviewed=bool(store._one('SELECT 1 FROM policy_reviews WHERE job_id=?',(job['id'],)))
                 status=('review_required' if change['review'] and not reviewed else 'redeploy_required' if change['redeploy'] else 'verified') if decision=='PASS' else 'unavailable' if decision=='UNAVAILABLE' else 'action_required'
+                if (decision=='BLOCK' and change.get('advisory') and json.loads(job['result'])['reason_code'] in
+                        {'db_provider_evidence_missing','worker_command_evidence_missing','worker_start_evidence_missing',
+                         'db_evidence_unrelated','worker_evidence_unrelated'}):
+                    status='evidence_confirmation_required'
         codes={r.get('reason_code') for r in original if r.get('decision')!='PASS' and r.get('reason_code')}
         if job and job['result'] and json.loads(job['result'])['decision']!='PASS':codes.add(json.loads(job['result'])['reason_code'])
-        item.update(reason_codes=sorted(codes),policy=meta,active=active,impact=change,action=status,job_id=job['id'] if job else None)
+        item.update(reason_codes=sorted(codes),policy=meta,active=active,impact=change,action=status,job_id=job['id'] if job else None,
+                    original_decision=original_decision(original,json.loads(old[0]).get('release') if old else None),
+                    latest_recheck=json.loads(job['result']) if job and job['result'] else None,
+                    record_type='deployment',read_only=False,service_unchanged=True)
         items.append(item)
     return items
 

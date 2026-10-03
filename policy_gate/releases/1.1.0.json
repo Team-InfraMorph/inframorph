@@ -115,24 +115,28 @@
     },
     {
       "id": "I-003",
-      "revision": 1,
+      "revision": 2,
       "stage": "intent",
       "title": "DB 종류와 근거 일치",
-      "expected": "DB 종류·요구 누락·datasource 근거를 확인합니다.",
-      "remedy": "Prisma datasource에 맞게 DB 요구와 근거를 수정하세요.",
+      "expected": "DB 종류와 Prisma provider 선언의 직접 근거를 확인합니다.",
+      "remedy": "동일 소스의 provider 선언을 직접 인용하고 DB 종류와 대조하세요.",
       "document": "rules/I-003",
       "introduced": "1.0.0",
       "tests": [
         "tests/test_policy_lifecycle.py",
         "tests/test_e_runtime.py",
-        "tests/test_policy_hardening.py"
+        "tests/test_policy_hardening.py",
+        "tests/test_policy_evidence_hardening.py",
+        "tests/test_policy_evidence_repair.py",
+        "tests/test_policy_evidence_lifecycle.py"
       ],
       "implementation": "policy_gate/gate.py + policy_gate/rules.py",
       "reason_codes": [
         "db_evidence_unrelated",
         "db_provider_mismatch",
         "db_requirement_missing",
-        "db_schema_missing"
+        "db_schema_missing",
+        "db_provider_evidence_missing"
       ],
       "applicability": "rule('I-003')"
     },
@@ -160,17 +164,20 @@
     },
     {
       "id": "I-002",
-      "revision": 1,
+      "revision": 2,
       "stage": "intent",
       "title": "worker 실행 근거",
-      "expected": "worker 명령·파일·근거와 요구 누락을 확인합니다.",
-      "remedy": "지원하는 worker 진입 파일과 실행 명령을 확인하세요.",
+      "expected": "worker 실행 명령과 진입 파일의 실제 시작 코드를 함께 확인합니다.",
+      "remedy": "등록된 실행 명령과 해당 진입 파일의 시작 코드를 함께 인용하세요.",
       "document": "rules/I-002",
       "introduced": "1.0.0",
       "tests": [
         "tests/test_policy_lifecycle.py",
         "tests/test_e_runtime.py",
-        "tests/test_policy_hardening.py"
+        "tests/test_policy_hardening.py",
+        "tests/test_policy_evidence_hardening.py",
+        "tests/test_policy_evidence_repair.py",
+        "tests/test_policy_evidence_lifecycle.py"
       ],
       "implementation": "policy_gate/gate.py + policy_gate/rules.py",
       "reason_codes": [
@@ -178,7 +185,9 @@
         "worker_command_unsupported",
         "worker_entry_missing",
         "worker_evidence_unrelated",
-        "worker_requirement_missing"
+        "worker_requirement_missing",
+        "worker_command_evidence_missing",
+        "worker_start_evidence_missing"
       ],
       "applicability": "rule('I-002')"
     },
@@ -421,6 +430,95 @@
         "intent_source_mismatch",
         "plan_config_mismatch",
         "javascript_syntax_invalid"
+      ]
+    },
+    {
+      "id": "db-direct-provider-evidence",
+      "title": "DB 종류의 직접 근거 확인",
+      "reason": "datasource 블록의 무관한 줄을 DB 종류의 근거로 인정하던 범위를 provider 선언으로 좁힙니다.",
+      "before_condition": "datasource 블록과 인용 줄이 겹치면 근거로 인정했습니다.",
+      "after_condition": "실제 DB 종류와 분석값이 같고 provider 선언을 직접 인용해야 합니다.",
+      "applies": "보존된 코드 또는 분석에 관계형 DB가 있는 배포",
+      "impact_scope": "db",
+      "historical_mode": "advisory",
+      "targets": [
+        "local",
+        "aws"
+      ],
+      "profiles": [
+        "reviewed-node22"
+      ],
+      "rule_ids": [
+        "I-003"
+      ],
+      "recheck": true,
+      "review": false,
+      "redeploy": false,
+      "actions": [
+        "보존한 입력을 재검사합니다.",
+        "근거가 부족하면 원래 기록을 보존하고 동일 소스의 provider 선언을 확인합니다.",
+        "서비스를 중단하지 않으며 근거 부족만으로 재배포하지 않습니다."
+      ],
+      "examples": [
+        {
+          "id": "db-url-only",
+          "description": "SQLite라고 분석하면서 URL 설정 줄만 인용",
+          "before_decision": "PASS",
+          "after_decision": "BLOCK"
+        }
+      ],
+      "regression_tests": [
+        "tests/test_policy_evidence_hardening.py",
+        "tests/test_policy_evidence_repair.py",
+        "tests/test_policy_evidence_lifecycle.py"
+      ],
+      "failure_references": [
+        "db_provider_evidence_missing"
+      ]
+    },
+    {
+      "id": "worker-connected-evidence",
+      "title": "worker 명령과 시작 코드 연결",
+      "reason": "초기화 코드나 실행 명령 한쪽만으로 worker 실행 근거를 인정하던 조건을 보완합니다.",
+      "before_condition": "진입 파일의 비어 있지 않은 줄 또는 package 실행 명령을 인용하면 인정했습니다.",
+      "after_condition": "등록된 명령과 해당 진입 파일의 지원하는 시작 코드에 대한 근거가 모두 필요합니다.",
+      "applies": "보존된 코드 또는 분석에 worker가 있는 배포",
+      "impact_scope": "worker",
+      "historical_mode": "advisory",
+      "targets": [
+        "local",
+        "aws"
+      ],
+      "profiles": [
+        "reviewed-node22"
+      ],
+      "rule_ids": [
+        "I-002"
+      ],
+      "recheck": true,
+      "review": false,
+      "redeploy": false,
+      "actions": [
+        "보존한 입력을 재검사합니다.",
+        "명령과 시작 코드의 근거를 확인합니다.",
+        "정책 통과는 worker 실행 성공을 뜻하지 않습니다. 기존 서비스 상태는 유지합니다."
+      ],
+      "examples": [
+        {
+          "id": "worker-initializer-only",
+          "description": "worker의 dotenv 초기화 줄만 인용",
+          "before_decision": "PASS",
+          "after_decision": "BLOCK"
+        }
+      ],
+      "regression_tests": [
+        "tests/test_policy_evidence_hardening.py",
+        "tests/test_policy_evidence_repair.py",
+        "tests/test_policy_evidence_lifecycle.py"
+      ],
+      "failure_references": [
+        "worker_command_evidence_missing",
+        "worker_start_evidence_missing"
       ]
     }
   ],

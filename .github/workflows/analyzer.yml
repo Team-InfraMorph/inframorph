@@ -22,6 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          fetch-depth: 0 # Evidence comparison executes the frozen 1.0.0 checker.
           persist-credentials: false
       - name: Validate branch and PR body for every base branch
         run: python3 scripts/repo_policy.py --event "$GITHUB_EVENT_PATH"

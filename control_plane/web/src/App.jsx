@@ -267,9 +267,22 @@ export default function App() {
     window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change);
   },[]);
   const [error, setError] = useState("");
+  const [linkedError,setLinkedError]=useState(''),[linkedLoading,setLinkedLoading]=useState(false);
+  useEffect(()=>{
+    const id=route.startsWith('/deploy?')?new URLSearchParams(route.split('?')[1]).get('deployment_id'):null;
+    if(!id){setLinkedError('');setLinkedLoading(false);return;}
+    let alive=true;setSelectedId(id);setDeployments([]);setLinkedError('');setLinkedLoading(true);
+    api.deployment(id).then(async deployment=>{
+      const list=await api.deployments(deployment.project_id);
+      if(!list.some(row=>row.id===id))throw new Error('연결된 배포 기록이 목록에 없습니다.');
+      if(alive){setProjectId(deployment.project_id);setDeployments(list);setSelectedId(id);save('projectId',deployment.project_id);}
+    }).catch(()=>{if(alive)setLinkedError('연결된 배포를 불러오지 못했습니다. 다른 배포를 해결 결과로 대신 표시하지 않습니다.');})
+      .finally(()=>{if(alive)setLinkedLoading(false);});
+    return()=>{alive=false;};
+  },[route]);
 
   const project = projects.find((p) => p.project_id === projectId);
-  const selected = deployments.find((d) => d.id === selectedId) ?? deployments[0];
+  const selected = linkedLoading||linkedError?null:selectedId?deployments.find((d) => d.id === selectedId):deployments[0];
 
   useEffect(() => {
     let alive = true;
@@ -394,6 +407,8 @@ export default function App() {
       </p>}
       {runtime?.aws_enabled && <p className="usage">AWS 실제 배포 연결됨 · 프로젝트별로 앱과 데이터를 분리해 배포합니다.</p>}
       {error && <p className="error banner">{error}</p>}
+      {linkedLoading&&<p role="status">연결된 배포의 검사 기록을 불러오는 중입니다.</p>}
+      {linkedError&&<p className="error banner" role="alert">{linkedError} <a href="#/deploy">배포 목록으로 돌아가기</a></p>}
 
       <DeployBar runtime={runtime} project={project} running={running} versions={versions} lastCommit={deployments[0]?.commit_sha}
                  onDeploy={async (body) => {

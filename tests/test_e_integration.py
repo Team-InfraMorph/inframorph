@@ -174,6 +174,11 @@ class CorpusIntegrationTests(unittest.TestCase):
         report = verify(self.corpus)
         self.assertEqual((report["passed"], report["failed"], report["not_run"]), (39, 0, 0))
         self.assertEqual(report["live_model_behavior"], "not_measured")
+        changed = next(r for r in report['results'] if r['id']=='intent-worker-control')
+        self.assertEqual((changed['original_expected'],changed['expected'],changed['actual']),
+                         ('allow','reject','reject'))
+        self.assertEqual(changed['policy_change'],'worker-connected-evidence')
+        self.assertEqual(changed['code'],'worker_command_evidence_missing')
 
     def test_expectation_tampering_and_missing_case_cannot_turn_green(self):
         with tempfile.TemporaryDirectory() as directory:

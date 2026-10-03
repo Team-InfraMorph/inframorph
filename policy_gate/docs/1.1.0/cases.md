@@ -103,3 +103,29 @@ module.exports.admin = true;
 세 사례는 `tests.test_policy_documentation_baseline.WalkthroughTests`의 `test_missing_evidence_then_repair`, `test_db_analysis_then_approved_transform`, `test_unrelated_patch_then_regenerate`로 연결합니다. 보존된 정상 v1 fixture와 임시 bundle을 사용하며 실제 모델 호출·Docker 실행·원격 배포를 수행하지 않습니다.
 
 Local 선행 실패의 원격 명령 미호출, 온프레미스 자료 부족 시 UNAVAILABLE은 [검증 기록](verification.md#results)에서 별도 확인합니다. 사례의 성공 결과를 전체 배포 안전성이나 탐지율로 확대하지 않습니다.
+
+## 직접 근거 보완의 비교 사례 {#evidence-hardening}
+
+이 사례들은 검토된 V2 원본과 source_revision을 유지하고 Intent의 인용만 바꿉니다. 숫자는 고정된 회귀 snapshot 기준이며 다른 소스에는 그대로 적용하지 않습니다.
+
+| 사례 | 최소 입력 차이 | 이전 조건 | 강화된 1.1.0 | 보완과 확인 |
+|---|---|---|---|---|
+| DB URL 인용 | state[0].evidence가 prisma/schema.prisma:7 | datasource 범위에 겹쳐 PASS | I-003 db_provider_evidence_missing | 같은 파일의 provider 토큰 줄 6을 인용하고 G-002·Intent 전체 재검사 |
+| DB 중괄호 인용 | 같은 evidence가 schema 8줄 | datasource 범위에 겹쳐 PASS | 같은 근거 부족 BLOCK | DB 종류는 바꾸지 않고 직접 인용 보완 |
+| worker 명령만 인용 | workloads[1].evidence가 package.json:12 | 명령 인용으로 PASS | I-002 worker_start_evidence_missing | src/worker.js:21 또는 :22의 시작점도 인용 |
+| worker 초기화만 인용 | 같은 evidence가 src/worker.js:1 | 비어 있지 않은 진입 파일 줄로 PASS | worker_command_evidence_missing; 두 역할 부족 | 명령 값과 시작점 둘 다 추가 |
+| 정상 직접 근거 | provider + 명령 값 + 시작점 | PASS | PASS | 정책 조건 충족이며 서비스 실행은 별도 |
+
+DB 근거와 worker 근거가 동시에 부족하면 I-003이 먼저 차단하고 I-002는 NOT_RUN입니다. 원래 실패와 AI 보완 결과를 분리하고, DB 보완 후에 새로 실행된 worker 검사에서 다음 실패를 확인합니다. 첫 기록의 미실행을 사후에 차단으로 고쳐 적지 않습니다.
+
+새 배포의 근거 보완은 해당 evidence 경로만 수정합니다. AI가 provider 인용을 보완하면서 engine이나 reason도 바꾸면 evidence_repair_scope_violation으로 중단합니다. 정상 근거 보완 뒤에도 전체 Intent를 다시 통과해야 합니다. 같은 부족 응답이 반복되면 공유 3회 제한 안에서 종료하고 후속 실행을 시작하지 않습니다.
+
+과거 배포 예시는 고정된 1.0.0 검사기를 별도 프로세스로 실행한 결과와 현재 검사 결과를 사용합니다. 실제 정책 결과와 모의 서비스 문맥을 구분하며, 생성하지 않은 과거 판정을 새 결과에 이름만 바꿔 표시하지 않습니다. 보존 소스가 없으면 재검사 불가입니다. 예시 화면의 AI 수정은 기록에 따라 응답 재생 또는 실제 모델 호출로 구분합니다.
+
+## 직접 근거 사례의 구현·검증 근거 {#evidence-references}
+
+- `tests.test_policy_evidence_hardening.EvidenceRuleTests.test_datasource_url_and_closing_brace_are_not_provider_evidence`
+- `tests.test_policy_evidence_hardening.EvidenceRuleTests.test_worker_needs_registered_command_and_start_anchor`
+- `tests.test_policy_evidence_hardening.EvidenceRuleTests.test_approved_evidence_continues_through_patch_and_build_input`
+
+검증 예시의 실제 생성 결과와 이전 commit·입력 식별값은 [전환 예시 안내](upgrade.md#examples)와 생성된 검증 기록에서 확인합니다. 회귀에서 사용한 모의 AI 응답을 실제 모델 성공으로 해석하지 않습니다.

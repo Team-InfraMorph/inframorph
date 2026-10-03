@@ -1,0 +1,121 @@
+{
+  "scope": "Policy 1.1.0 direct evidence and constrained repair",
+  "base_commit": "4c0896b055512b522086eb312ca48a2d546ca505",
+  "policy_examples": {
+    "schema_version": 1,
+    "generated_at": "2026-10-03T23:46:03.692485+00:00",
+    "baseline_commit": "cf987c3c8e87a856a3d3e46ead457ec3754df0bd",
+    "baseline_declared_source_commit": "b003fd9b6b0fd007eee90ebf01e2b3db518f8d41",
+    "baseline_policy_digest": "80ac5e421d16d418a806c8bbef2b158590f46169b86dedbf7d8ba053dd0f86ba",
+    "active": {
+      "family": "inframorph-policy",
+      "version": "1.1.0",
+      "status": "development",
+      "profile": "reviewed-node22",
+      "policy_digest": "e66ac553419723d2305a21b0258b2a4b897083547fe59306d3f6ed517d2bb1a1",
+      "implementation_digest": "f158ec51333eb20a080589f6fa68baf99a21bd8793fe0fe607d77abe8020bd03",
+      "rules_digest": "77653db39dd20561571193e5c29b32751aac6bd5c5cfe626b336ff6bf56209da",
+      "documents_digest": "91063bbe1682f24f85dc8f2dccd53909ebcb807d048ff839e0aebc63b5f959b2"
+    },
+    "live_ai": "not_run",
+    "service_verification": "not_run",
+    "cases": [
+      {
+        "case": "direct",
+        "before": "PASS",
+        "after": "PASS",
+        "reason": "passed",
+        "input_sha256": "b905a901725d2531986f99119d044a69192d432c76aa25b4cc72e939a21f8416"
+      },
+      {
+        "case": "db-url-only",
+        "before": "PASS",
+        "after": "BLOCK",
+        "reason": "db_provider_evidence_missing",
+        "input_sha256": "dcb824f0fe9d49687054bb383294e2a5084a918e0a8008a022ee7089132b62d5"
+      },
+      {
+        "case": "worker-initializer",
+        "before": "PASS",
+        "after": "BLOCK",
+        "reason": "worker_command_evidence_missing",
+        "input_sha256": "46e9788099f29618dacca270cb8536766e927bd4ded2722bb55597beca54fc5d"
+      },
+      {
+        "case": "missing",
+        "after": "UNAVAILABLE",
+        "reason": "recheck_inputs_unavailable"
+      },
+      {
+        "case": "repair-db",
+        "after": "PASS",
+        "reason": "passed",
+        "attempts": 1,
+        "backend": "replay",
+        "stop_reason": null
+      },
+      {
+        "case": "repair-worker",
+        "after": "PASS",
+        "reason": "passed",
+        "attempts": 1,
+        "backend": "replay",
+        "stop_reason": null
+      },
+      {
+        "case": "repair-exhausted",
+        "after": "BLOCK",
+        "reason": "db_provider_evidence_missing",
+        "attempts": 3,
+        "backend": "replay",
+        "stop_reason": "db_provider_evidence_missing"
+      }
+    ],
+    "validation_status": "passed"
+  },
+  "checks": {
+    "python_regression": {
+      "passed": 522,
+      "failed": 0,
+      "redteam_cases_included": 39
+    },
+    "aws_adapter_mock": {
+      "passed": 54,
+      "failed": 0
+    },
+    "web_regression": {
+      "passed": 46,
+      "failed": 0
+    },
+    "web_production_build": "passed",
+    "catalog_and_frozen_1_0_0": "passed",
+    "final_examples_regeneration": "passed",
+    "browser": {
+      "desktop": "passed",
+      "mobile_width_px": 390,
+      "horizontal_overflow": false,
+      "keyboard_disclosure": "passed",
+      "original_current_service_states_separate": true,
+      "examples_have_no_mutation_controls": true
+    }
+  },
+  "redteam": {
+    "revision": "488833528c3c9a389d0af05606c9bb1cdeaa1c99",
+    "source_modified": false,
+    "declared_expectation_change": {
+      "case": "intent-worker-control",
+      "before": "allow",
+      "after": "reject",
+      "reason": "worker_command_evidence_missing",
+      "rule": "I-002",
+      "rule_revision": 2
+    },
+    "unchanged_expectations": 38
+  },
+  "limits": [
+    "Actual OpenAI calls not run: credentials unavailable. Repair responses replayed against real host checks.",
+    "No Docker, public endpoint, physical phone or live AWS service verification in this policy-only change.",
+    "Example service context is simulated; old/current decisions are produced by actual checkers.",
+    "New restrictions integrated into unreleased 1.1.0 by the agreed contract exception; frozen 1.0.0 unchanged."
+  ]
+}

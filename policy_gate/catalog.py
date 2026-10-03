@@ -68,7 +68,7 @@ def index(version):
     return [document(version,p.relative_to(folder).as_posix()[:-3]) for p in sorted(folder.rglob('*.md'))]
 
 
-def compare(base, target):
+def compare(base, target, *, base_release=None):
     """Accumulate every migration, fail closed on a broken release chain."""
     current = release(target)
     changes, seen = [], set()
@@ -80,9 +80,23 @@ def compare(base, target):
             if base != 'legacy': raise ValueError('policy_history_incomplete')
             break
         current = release(previous)
-    before = {} if base == 'legacy' else {r['id']:r for r in release(base)['rules']}
+    baseline = base_release if base_release is not None else (None if base == 'legacy' else release(base))
+    if baseline is not None and baseline.get('version') != base:
+        raise ValueError('policy_snapshot_version_mismatch')
+    before = {} if baseline is None else {r['id']:r for r in baseline['rules']}
     after = {r['id']:r for r in release(target)['rules']}
+    changed = sorted(k for k in before.keys() & after.keys() if before[k] != after[k])
+    history_status = 'known'
+    if base_release is not None and base == target:
+        # A version label alone cannot identify a development implementation.
+        advanced = {k for k in before.keys() & after.keys()
+                    if after[k]['revision'] > before[k]['revision']}
+        changes = [c for c in release(target)['changes'] if advanced.intersection(c.get('rule_ids', []))]
+        covered = {k for c in changes for k in c.get('rule_ids', [])}
+        if (not advanced or set(changed) - covered or before.keys() != after.keys()):
+            history_status = 'confirmation_required'
     return dict(base=base,target=target,changes=changes,added=sorted(after.keys()-before.keys()),
-                removed=sorted(before.keys()-after.keys()),
-                changed=sorted(k for k in before.keys() & after.keys() if before[k] != after[k]),
+                removed=sorted(before.keys()-after.keys()),changed=changed,
+                history_status=history_status,
+                comparison_kind='implementation' if base_release is not None and base == target else 'version',
                 major=base == 'legacy' or int(base.split('.')[0]) != int(target.split('.')[0]))

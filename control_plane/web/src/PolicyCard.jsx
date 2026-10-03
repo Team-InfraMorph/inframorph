@@ -6,6 +6,7 @@ const inspectionKind = row => row?.purpose==='policy_update'||row?.checkpoint===
 const labels = {PASS:'통과',BLOCK:'차단',UNSUPPORTED:'미지원',ERROR:'검사 오류',NOT_RUN:'미실행',NOT_APPLICABLE:'적용 제외'};
 const stages = {source:'지원 소스',profile:'배포 프로필',intent:'분석 근거',plan:'배포 설계',patch:'코드 변경',build_profile:'빌드 입력',build:'빌드 직전',policy_update:'정책 업데이트'};
 const time = value => value ? new Date(value).toLocaleString() : '시각 기록 없음';
+const roleLabel=role=>({db_provider:'DB provider 선언',worker_command:'worker 실행 명령',worker_start:'worker 시작 코드'})[role]||role;
 const docLink = row => `#/policy/${row.family === 'inframorph-policy' ? row.version : 'legacy'}/rules/${row.rule_id}`;
 
 export default function PolicyCard({data,error,onRecheck,history,onReview,onFailureReview,deploymentId}) {
@@ -53,13 +54,15 @@ export default function PolicyCard({data,error,onRecheck,history,onReview,onFail
               <details open={['BLOCK','ERROR','UNSUPPORTED'].includes(r.decision)}>
                 <summary><span>{r.title}</span><span className={`policy-decision policy-${r.decision.toLowerCase()}`}>{labels[r.decision]||r.decision}</span></summary>
                 {r.expected&&<p><strong>기대 조건</strong> {r.expected}</p>}
-                {r.evidence && Object.keys(r.evidence).length>0 && <div><strong>관찰한 근거</strong><pre>{Object.entries(r.evidence).map(([key,value])=>`${({references:'근거 파일·줄',path:'파일',observed:'관찰값',claimed:'분석값',setting_names:'일반 설정 이름',secret_count:'비밀정보 이름 수',before:'변경 전',after:'변경 후',file_count:'검사 파일 수',changed_paths:'변경 파일',target:'배포 대상',source_revision:'소스 commit',services:'서비스',public_services:'공개 서비스',input_digest:'입력 해시'})[key]||key}: ${Array.isArray(value)?value.join(', '):typeof value==='object'?JSON.stringify(value):String(value)}`).join('\n')}</pre></div>}
+                {r.evidence?.required_anchors&&<EvidenceRequirements evidence={r.evidence}/>}
+                {r.evidence && !r.evidence.required_anchors && Object.keys(r.evidence).length>0 && <div><strong>관찰한 근거</strong><pre>{Object.entries(r.evidence).map(([key,value])=>`${({references:'근거 파일·줄',path:'파일',observed:'관찰값',claimed:'분석값',setting_names:'일반 설정 이름',secret_count:'비밀정보 이름 수',before:'변경 전',after:'변경 후',file_count:'검사 파일 수',changed_paths:'변경 파일',target:'배포 대상',source_revision:'소스 commit',services:'서비스',public_services:'공개 서비스',input_digest:'입력 해시'})[key]||key}: ${Array.isArray(value)?value.join(', '):typeof value==='object'?JSON.stringify(value):String(value)}`).join('\n')}</pre></div>}
                 {r.path&&<p><code>{r.path}{r.line?`:${r.line}`:''}</code></p>}
                 {r.decision!=='PASS'&&r.remedy&&<p>다음 조치: {r.remedy}</p>}
                 <p><a href={docLink({...row,rule_id:r.rule_id})}>{r.rule_id} · 규칙 설명 ↗</a>{row.family==='inframorph-policy'&&<> · <a href={docLink({...row,rule_id:r.rule_id})+'?section='+(['BLOCK','ERROR','UNSUPPORTED'].includes(r.decision)?'remedy':'procedure')}>{['BLOCK','ERROR','UNSUPPORTED'].includes(r.decision)?'해결과 재검증':'처리 과정'} ↗</a></>}</p>
-                <small className="dim">{r.reason_code}</small>
+                <small className="dim">{r.reason_code}{r.revision?` · 규칙 정의 ${r.revision}`:''}</small>
               </details>
             </li>)}</ul>
+            {row.family==='inframorph-policy'&&row.policy_digest&&<p><a href={`#/policy/1.1.0/compare?base=${encodeURIComponent(row.version)}&base_policy_digest=${encodeURIComponent(row.policy_digest)}`}>당시 정책에서 변경된 조건 확인 ↗</a></p>}
             <details><summary>검사 식별 정보</summary><pre>{JSON.stringify({execution_id:row.execution_id,policy_digest:row.policy_digest,checkpoint:row.checkpoint,binding:row.binding},null,2)}</pre></details>
           </details>
           {row.decision!=='PASS' && row.execution_id && onFailureReview && <details className="policy-detail"><summary>실패 원인 검토와 수정 연결</summary><p>원래 판정은 유지합니다. 이 검토로 실행을 허용하거나 정책을 완화하지 않습니다.</p>
@@ -74,14 +77,24 @@ export default function PolicyCard({data,error,onRecheck,history,onReview,onFail
           </details>}
         </>}
       </>}
-    {impact && <aside className="policy-impact"><strong>현재 정책 변경 영향</strong><p>{impact.impact.reason==='target_scope_requires_review'?'온프레미스는 Local에서 검증한 이미지를 사용합니다. 대상별 정책 재검사 자료는 아직 연결되지 않았습니다.':impact.impact.reason==='current_policy'?'현재 활성 정책으로 검사한 배포입니다.':impact.impact.review?'새 정책으로 재검사하고 배포별 검토가 필요합니다.':'변경 영향을 확인하세요.'}</p><a href="#/policy/1.0.0/impacts">배포 영향과 필요한 조치 ↗</a>
+    {impact && <aside className="policy-impact"><strong>현재 정책 변경 영향</strong><p>{impact.action==='evidence_confirmation_required'?'근거 보완 권고 · 서비스 유지. 당시 판정과 새 근거 점검 결과는 별도로 보존합니다.':impact.impact.reason==='target_scope_requires_review'?'온프레미스는 Local에서 검증한 이미지를 사용합니다. 대상별 정책 재검사 자료는 아직 연결되지 않았습니다.':impact.impact.reason==='current_policy'?'현재 활성 정책으로 검사한 배포입니다.':impact.impact.review?'새 정책으로 재검사하고 배포별 검토가 필요합니다.':'변경 영향을 확인하세요.'}</p><a href={`#/policy/${impact.active?.version||'1.1.0'}/impacts`}>배포 영향과 필요한 조치 ↗</a>
       {onRecheck&&<button className="secondary" disabled={pending||error} onClick={()=>act(()=>onRecheck(actualTarget))}>정책 재검사</button>}
       {job?.result && <p>최근 재검사: {labels[job.result.decision]||'재검사 불가'} · {job.result.reason_code}</p>}
-      {job?.result?.decision==='PASS'&&!job.reviewed&&<a href="#/policy/1.0.0/impacts">변경 내용을 확인하고 검토하기</a>}
+      {job?.result?.decision==='PASS'&&!job.reviewed&&<a href={`#/policy/${impact.active?.version||'1.1.0'}/impacts`}>변경 내용을 확인하고 검토하기</a>}
     </aside>}
     <PolicyHistory key={deploymentId} results={rows} history={history} target={actualTarget} selectable={rows.map(r=>r.execution_id)} onSelect={id=>{const found=rows.find(r=>r.execution_id===id);if(found){setTarget(found.target);setSelected(id);}}}/>
     {actionError&&<p role="alert">{actionError}</p>}
   </section>;
+}
+
+export function EvidenceRequirements({evidence}) {
+  const missing=evidence.missing_roles||[];
+  return <div className="policy-evidence">
+    <dl className="policy-evidence-dl"><dt>분석한 내용</dt><dd><code>{typeof evidence.claimed==='string'?evidence.claimed:JSON.stringify(evidence.claimed??'미보존')}</code></dd><dt>소스에서 확인한 내용</dt><dd><code>{typeof evidence.observed==='string'?evidence.observed:JSON.stringify(evidence.observed??'미보존')}</code></dd><dt>제출한 근거</dt><dd>{evidence.submitted_references?.length?evidence.submitted_references.map(ref=><code key={ref}>{ref} </code>):'제출 근거 미보존'}</dd></dl>
+    <strong>필요한 직접 근거</strong><ul>{(evidence.required_anchors||[]).map((anchor,i)=><li key={anchor.role+anchor.path+i}><strong>{roleLabel(anchor.role)}</strong> · <code>{anchor.path}:{anchor.lines?.length?anchor.lines.join(', '):`${anchor.start_line}–${anchor.end_line}`}</code> · {missing.includes(anchor.role)?'인용 보완 필요':'인용 확인'}</li>)}</ul>
+    {!!missing.length&&<p className="policy-warning">부족한 근거: {missing.map(roleLabel).join(' · ')}</p>}
+    <small>파일·줄은 이 검사에 보존된 소스 기준입니다. worker 실행 성공이나 DB 접속 성공을 뜻하지 않습니다.</small>
+  </div>;
 }
 
 export function RepairHistory({rows=[],limit=3}) {
@@ -91,12 +104,17 @@ export function RepairHistory({rows=[],limit=3}) {
   const last=rows.at(-1);
   return <div className="policy-detail" aria-label="AI 자동 수정 이력">
     <h3>AI 자동 수정 · {rows.length} / 최대 {limit}회</h3>
-    <p>배포용 복사본과 분석·계획만 수정합니다. 원본 저장소와 Policy는 유지하며, 배포 전 Local 테스트를 통과해야 합니다.</p>
+    <p>수정 후보는 호스트가 같은 정책으로 다시 검사합니다. 근거 보완에서는 해당 항목의 인용만 변경할 수 있습니다.</p><p>배포용 복사본과 분석·계획만 수정합니다. 원본 저장소와 Policy는 유지하며, 배포 전 Local 테스트를 통과해야 합니다.</p>
     {last.status!=='running' && last.status!=='passed' && <p role="status">자동 수정이 중단됐습니다. 마지막 사유: <code>{last.result_code||last.reason}</code></p>}
     {rows.map(r=><details className="policy-detail" key={r.attempt} open={r.status==='running'}>
       <summary>{r.attempt}회 · {targetName(r.target)} · {stage[r.stage]||r.stage} · {state[r.status]||r.status}</summary>
-      <p>차단 사유: <code>{r.reason}</code>{r.result_code&&<> → <code>{r.result_code}</code></>}</p>
-      <p className="dim">{r.metrics?.backend==='replay'?'응답 재생':'모델 호출'} {r.metrics?.model_calls??0}회 · 입력 {r.metrics?.input_tokens??0} / 출력 {r.metrics?.output_tokens??0} 토큰{r.metrics?.usage_complete===false?' · 사용량 확인 미완료':''}</p>
+      <p>원래 정책 차단: <code>{r.original_failure?.code||r.reason}</code></p>
+      <p>{r.status==='passed'?'후보 재검사':'자동 수정 종료 사유'}: <code>{r.stop_reason||r.result_code||'진행 중'}</code></p>
+      {r.status==='passed'&&<p>후속 단계 진행 조건을 만족했습니다. 서비스 실행 확인은 별도 결과입니다.</p>}
+      {r.repair_mode==='evidence_only'&&<p>허용된 변경: 해당 분석 항목의 근거 인용만 보완. 분석 결론과 원본 소스는 유지합니다.</p>}
+      {r.original_failure?.diagnostics?.required_anchors&&<EvidenceRequirements evidence={r.original_failure.diagnostics}/>}
+      <details><summary>원래 실패와 재검사 연결</summary><dl className="policy-evidence-dl"><dt>정책 식별값</dt><dd><code>{r.policy_digest||'미보존'}</code></dd><dt>원래 실패 검사</dt><dd><code>{r.original_execution_id||'미보존'}</code></dd><dt>마지막 재검사</dt><dd><code>{r.last_recheck_execution_id||'미보존'}</code></dd><dt>허용된 수정 위치</dt><dd>{r.allowed_evidence_paths?.length?r.allowed_evidence_paths.map(path=><code key={path}>{path} </code>):'근거 전용 수정 범위 미보존'}</dd></dl></details>
+      <p className="dim">{r.metrics?.backend==='replay'?'응답 재생 · 실제 모델 호출 아님':r.metrics?.backend==='openai'?'실제 모델 호출':'모델 호출 방식 미보존'} {r.metrics?.model_calls??0}회 · 입력 {r.metrics?.input_tokens??0} / 출력 {r.metrics?.output_tokens??0} 토큰{r.metrics?.usage_complete===false?' · 사용량 확인 미완료':''}</p>
       {r.diff&&<><pre>{r.diff}</pre>{r.diff_truncated&&<p>긴 수정 내역은 일부만 표시됩니다.</p>}</>}
     </details>)}
   </div>;
@@ -128,7 +146,7 @@ function HistoryAttachments({history,executionId}) {
   const diagnostics=(history.diagnostics||[]).filter(d=>(d.execution_id||null)===(executionId||null));
   const reviews=(history.failure_reviews||[]).filter(r=>(r.execution_id||null)===(executionId||null));
   return <>{diagnostics.map(d=><details className="history-attachment" key={d.id}><summary>진단 로그 · {d.payload?'마스킹됨':'상세 로그 보존 기간 만료'}</summary>{d.payload&&<><pre>{d.payload.text}</pre><small>{d.payload.masked?'민감정보 제거됨 · ':''}{d.payload.truncated?'일부 생략됨':''}</small></>}</details>)}
-    {reviews.map(r=><article className="history-review" key={r.id}><strong>원인 검토 · {causeLabels[r.payload.classification]||'확인 불가'}</strong><p>{r.payload.summary}</p><dl><dt>수정 commit</dt><dd>{r.payload.fix_commit||'수정 기록 없음'}</dd><dt>회귀 테스트</dt><dd>{r.payload.regression_test||'연결 전'}</dd><dt>해결 검사</dt><dd>{r.payload.resolved_execution_id||'미해결'}</dd></dl></article>)}</>;
+    {reviews.map(r=><article className="history-review" key={r.id}><strong>원인 검토 · {causeLabels[r.payload.classification]||'확인 불가'}</strong><p>{r.payload.summary}</p><dl><dt>수정 commit</dt><dd>{r.payload.fix_commit||'수정 기록 없음'}</dd><dt>회귀 테스트</dt><dd>{r.payload.regression_test||'연결 전'}</dd><dt>해결 검사</dt><dd>{r.payload.resolved_execution_id||'미해결'}</dd>{r.payload.resolved_deployment_id&&<><dt>해결 배포 기록</dt><dd><a href={`#/deploy?deployment_id=${encodeURIComponent(r.payload.resolved_deployment_id)}`}>{r.payload.resolved_deployment_id} · 검사 보기 ↗</a></dd><dt>해결 소스</dt><dd><code>{r.payload.resolved_source_revision||'미보존'}</code></dd><dt>해결 정책 식별값</dt><dd><code>{r.payload.resolved_policy_digest||'미보존'}</code></dd></>}</dl></article>)}</>;
 }
 export function PolicyHistory({history,target,onSelect,selectable=[],results=[]}) {
   const [message,setMessage]=useState('');
