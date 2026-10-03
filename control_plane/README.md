@@ -9,7 +9,8 @@ git push가 오면 다시 실행할 범위와 승인 필요 여부를 판단한�
 ## 실행
 
 실제 C 분석·복구와 E Docker 배포를 연결한 로컬 모드는 [LOCAL_RUNTIME.md](LOCAL_RUNTIME.md)를 따른다.
-`--demo`는 B fixture와 저장된 모델 응답을 명시적으로 선택한다. 실제 B 구현은 아직 연결 전이다.
+`--demo`는 B fixture와 저장된 모델 응답을 명시적으로 선택한다.
+실제 GitHub Repo Mapper·B Planner와 OpenAI API는 아래 실행 경로를 사용한다.
 아래 데모 실행 방식은 사용 가능한 팀 모듈을 자동 연결한다. `INFRAMORPH_DEMO_MODE=1`에서만 없는 모듈을 대역으로 사용한다.
 기본 모드는 B 연결이나 필수 배포 입력이 없으면 실패한다. E 실제 연결 검증은 [E_INTEGRATION.md](../E_INTEGRATION.md)를 참조한다.
 
@@ -22,6 +23,29 @@ INFRAMORPH_DEMO_MODE=1 GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn con
 
 - 화면: http://localhost:8000 · API 문서: http://localhost:8000/docs
 - 화면을 고치는 중이면 `cd control_plane/web && npm run dev`(5173, `/api`는 8000으로 넘김)
+
+### GitHub 소스 + 팀 OpenAI API
+
+서버 프로젝트 루트의 `.env`에 `OPENAI_API_KEY`를 넣으면 시작 시 자동으로 읽는다.
+이미 주입된 환경변수가 우선이며, 다른 위치는 `--env-file /absolute/path/.env`로 지정한다.
+분석 대상 저장소의 `.env`는 읽지 않으며 파일 내용을 셸로 실행하거나 변수 치환하지 않는다.
+
+```sh
+.venv/bin/python -m control_plane.runtime --github --openai --model gpt-6-luna \
+  --root .local/control-plane --port 8000
+```
+
+- 모델은 `gpt-6-luna`, reasoning은 `low`. 분석 1회 제한은 180초·예상 $0.10이며,
+  과금 시스템이 강제하는 한도가 아닌 Analyzer의 추정 예산이다. API 오류 때 Codex·replay로 대체하지 않는다.
+- Mapper는 공개 GitHub의 정확한 커밋에서 실행에 필요한 파일을 읽기 전용 스냅샷으로 만들고,
+  Planner는 검증된 Intent로 Local·AWS 설계를 계산한다. fixture 소스·계획을 사용하지 않는다.
+- demo-app의 V1·V2 선택도 실제 원격 커밋을 가져온다. 버전을 지정하지 않은 API 배포는 프로젝트 브랜치의 HEAD를 확인한다.
+- `/api/runtime`과 화면 상단에 실제 분석 방식·모델·Mapper 모드가 표시된다.
+- `--aws-config /absolute/path/runtime.json`을 추가하면 기존 AWS 연결을 사용한다.
+  키는 서버 분석과 명시된 Local 복구 프로세스에만 전달하며 Mapper·Planner·Docker·AWS 프로세스에는 전달하지 않는다.
+- 현재 실행 정책은 검토된 demo-app 소스만 허용한다. 임의의 레포를 입력해도 정책 검사를 생략하지 않는다.
+
+아래 모듈 연결 표는 `control_plane.app:app` 데모 실행 경로의 설명이다.
 
 | 환경 변수 | 기본값 | 의미 |
 |---|---|---|

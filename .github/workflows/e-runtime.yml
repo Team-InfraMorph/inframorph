@@ -64,7 +64,7 @@ jobs:
         working-directory: control_plane/web
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          node --test tests/policy-card.test.mjs
+          node --test tests/*.test.mjs
           npm run build
       - name: Test gates, contracts and recovery without cloud credentials
         run: |

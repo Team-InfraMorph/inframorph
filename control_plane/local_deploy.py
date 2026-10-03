@@ -16,14 +16,14 @@ from analyzer.recovery import Approval, PatchedCandidate, _assert_patch, _check_
 from analyzer.retry_store import RetryStore
 from analyzer.runner import Metrics
 from analyzer.snapshot import Snapshot
-from analyzer.config import Limits
+from analyzer.config import Limits, MODEL
 from analyzer.redaction import Redactor
 from code_patch import patch_snapshot
 from .b_bridge import DemoModules, call_json
 from .change_detector import plan_diff
 from .db import Store
 from .results import finish_run
-from .runtime import (LocalContext, analysis_backend, analysis_limits, context_plans,
+from .runtime import (LocalContext, analysis_session, analysis_limits, context_plans,
                       record_analysis_diagnostics, requirements_clarifier)
 
 
@@ -46,9 +46,10 @@ def load_context(path):
             context.fault not in {"none", "first", "always"} or
             (context.fault != "none" and not context.demo) or
             (not context.demo and not context.planner_command) or
-            (context.analysis_backend == "codex-cli" and (context.replay is not None or
-                context.metrics.get("backend") != "codex-cli" or
+            (context.analysis_backend in {"codex-cli", "openai"} and (context.replay is not None or
+                context.metrics.get("backend") != context.analysis_backend or
                 context.metrics.get("model") != context.analysis_model)) or
+            (context.analysis_backend == "openai" and context.analysis_model != MODEL) or
             (context.analysis_backend == "replay" and context.replay is None)):
         raise ValueError("runtime_context_binding_mismatch")
     _check_plan(context.intent, context.plan, context.repo_map.commit)
@@ -155,13 +156,13 @@ async def deploy(context, store):
             return 0
         retry_store = RetryStore(Path(context.output_dir) / "retry-state.sqlite")
         previous = Metrics(**{k: v for k, v in context.metrics.items() if k in {f.name for f in fields(Metrics)}})
-        result = await recover_local(deployment_id=context.deployment_id, repo_map=context.repo_map,
-            snapshot_dir=Path(context.snapshot), previous_intent=context.intent, previous_plan=context.plan,
-            previous_patch=PatchReference.from_manifest(manifest), failure=checked.failure,
-            backend=analysis_backend(context.analysis_backend, context.analysis_model, context.replay),
-            limits=analysis_limits(context.analysis_backend), hooks=connector.hooks(), store=retry_store,
-            output_dir=Path(context.output_dir) / "retry", previous_metrics=previous, emit=send,
-            clarify_requirements=requirements_clarifier(context.snapshot, context.repo_map))
+        async with analysis_session(context.analysis_backend, context.analysis_model, context.replay) as backend:
+            result = await recover_local(deployment_id=context.deployment_id, repo_map=context.repo_map,
+                snapshot_dir=Path(context.snapshot), previous_intent=context.intent, previous_plan=context.plan,
+                previous_patch=PatchReference.from_manifest(manifest), failure=checked.failure,
+                backend=backend, limits=analysis_limits(context.analysis_backend), hooks=connector.hooks(), store=retry_store,
+                output_dir=Path(context.output_dir) / "retry", previous_metrics=previous, emit=send,
+                clarify_requirements=requirements_clarifier(context.snapshot, context.repo_map))
         if result.reanalysis_metrics is not None:
             record_analysis_diagnostics(Path(context.output_dir) / "recovery-analysis-diagnostics.json",
                 asdict(result.reanalysis_metrics), result.reanalysis_diagnostics,
@@ -202,9 +203,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--context", type=Path, required=True)
     parser.add_argument("--database", type=Path, required=True)
+    parser.add_argument("--openai", action="store_true", help="Allow the trusted recovery worker to use the team API")
     args = parser.parse_args(argv)
     try:
         context = load_context(args.context)
+        if context.analysis_backend == "openai" and not args.openai:
+            raise ValueError("explicit_api_recovery_required")
         store = Store(args.database)  # Never recover_interrupted() in a worker.
         return asyncio.run(main_async(context, store))
     except (Exception, asyncio.CancelledError):

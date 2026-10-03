@@ -8,6 +8,7 @@ import selectors
 import shutil
 import signal
 import subprocess
+import sys
 import time
 
 from schemas import Plan, RepoMap
@@ -114,6 +115,7 @@ def call_json(command, payload, *, timeout=TIMEOUT):
 
 
 class BCommands:
+    source_mode = "external"
     def __init__(self, *, mapper_command, planner_command, timeout=TIMEOUT):
         if not mapper_command or not planner_command:
             raise ValueError("b_modules_unavailable")
@@ -142,13 +144,32 @@ class BCommands:
                                             {"intent": intent.model_dump(mode="json"), "target": target}, timeout=self.timeout))
 
 
-class DemoModules:
-    """Reviewed development fixtures enabled only by the explicit demo mode."""
-    def versions(self):
-        return [{"id": case, "label": label,
+def reviewed_versions():
+    """Operator-owned revision catalog; selecting one never supplies source data."""
+    return [{"id": case, "label": label,
                  "commit_sha": RepoMap.model_validate_json(
                      (ROOT / f"tests/fixtures/analyzer/{case}/repo_map.json").read_text()).commit}
                 for case, label in (("v1", "V1 · 기본 웹 앱"), ("v2", "V2 · 노트 집계 worker 추가"))]
+
+
+class GitHubModules(BCommands):
+    """Real GitHub snapshots and the merged B Planner, through isolated commands."""
+    source_mode = "github"
+
+    def __init__(self):
+        super().__init__(mapper_command=[sys.executable, "-m", "repo_mapper"],
+                         planner_command=[sys.executable, "-m", "planner"])
+
+    def versions(self):
+        return reviewed_versions()
+
+
+class DemoModules:
+    """Reviewed development fixtures enabled only by the explicit demo mode."""
+    source_mode = "fixture"
+
+    def versions(self):
+        return reviewed_versions()
 
     def map(self, project, deployment, output):
         if project["repo_url"].rstrip("/").removesuffix(".git") != "https://github.com/Team-InfraMorph/demo-app":
@@ -168,7 +189,13 @@ class DemoModules:
         case = "v2" if any(w.kind.value == "worker" for w in intent.workloads) else "v1"
         if target not in {"local", "aws"}:
             raise ValueError("unsupported_target")
-        return Plan.model_validate_json((ROOT / f"schemas/fixtures/{case}/plan.{target}.json").read_text())
+        if intent.config not in ({}, {"PORT": "3000"}):
+            raise ValueError("unsupported_demo_config")
+        plan = Plan.model_validate_json((ROOT / f"schemas/fixtures/{case}/plan.{target}.json").read_text())
+        # Preserve the reviewed optional source setting. Deployment-specific
+        # storage settings still come from the operator-owned target fixture.
+        plan.config.update(intent.config)
+        return plan
 
     def replay(self, mapping):
         case = "v2" if "src/worker.js" in mapping.tree else "v1"
