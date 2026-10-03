@@ -66,7 +66,7 @@ body {
   overflow-wrap: anywhere;     /* 긴 주소·경로는 어디서든 줄바꿈 */
   -webkit-font-smoothing: antialiased;
 }
-.app { max-width: 1320px; margin: 0 auto; padding: 24px 28px 64px; }
+.app { max-width: 1640px; margin: 0 auto; padding: 24px 28px 64px; }
 @media (max-width: 640px) { .app { padding: 16px 16px 40px; } }
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 h1 { font-size: 20px; margin: 0; }
@@ -460,3 +460,42 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .ct-onprem { color: var(--env-onprem); } .ct-aws { color: var(--env-aws); } .ct-local { color: var(--env-local); }
 .tab.on.tab-deploy { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .lr-onprem .lane-title, .lr-aws .lane-title { padding-left: 10px; border-left: 2px solid currentColor; }
+
+/* ── 한 화면 배포 바: 레포 · 브랜치 · 배포 위치 · 버전 · 배포 ───────────── */
+.deploybar { display: grid; grid-template-columns: minmax(260px, 2fr) minmax(120px, 1fr) auto auto auto; gap: 12px 14px; align-items: end; margin-bottom: 14px; }
+.deploybar label { display: grid; gap: 4px; font-size: 12px; color: var(--dim); }
+.deploybar input, .deploybar select { max-width: none; width: 100%; }
+.db-dest { display: grid; gap: 4px; }
+.db-label { font-size: 12px; color: var(--dim); }
+.seg { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.seg-fixed { font-size: 12px; color: var(--env-local); font-weight: 700; padding: 0 4px; white-space: nowrap; }
+.seg-btn { background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 7px 12px; border-radius: 8px; font-size: 13px; }
+.seg-btn.on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.seg-btn.on.sb-onprem { border-color: var(--env-onprem); color: var(--env-onprem); background: color-mix(in srgb, var(--env-onprem) 12%, transparent); }
+.seg-btn.on.sb-aws { border-color: var(--env-aws); color: var(--env-aws); background: color-mix(in srgb, var(--env-aws) 12%, transparent); }
+.seg-btn:disabled { opacity: .4; cursor: not-allowed; }
+.db-go { height: 38px; padding: 0 22px; }
+.empty-hint { margin: 4px 2px 18px; }
+@media (max-width: 1100px) { .deploybar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .db-go { grid-column: 1 / -1; } }
+
+/* ── 왼쪽 배포 기록 + 오른쪽 선택한 배포 ───────────── */
+.shell.with-side { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
+.shell .main { min-width: 0; }
+.hist.side { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; padding: 14px 12px; }
+.hist-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.hist-head h2 { font-size: 14px; margin: 0; }
+.hist.side .hitem { padding: 10px 8px 10px 30px; align-items: flex-start; }
+.hid { font-size: 12px; color: var(--text); }
+.htgts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.htgt.hg-local { border-color: color-mix(in srgb, var(--env-local) 50%, var(--line)); }
+.htgt.hg-onprem { border-color: color-mix(in srgb, var(--env-onprem) 50%, var(--line)); }
+.htgt.hg-aws { border-color: color-mix(in srgb, var(--env-aws) 50%, var(--line)); }
+.hroll { margin-top: 8px; }
+.dep-id { font-size: 12px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; margin-left: 8px; }
+@media (max-width: 1100px) { .shell.with-side { grid-template-columns: minmax(0, 1fr); } .hist.side { position: static; max-height: none; } }
+.htgts .htgt { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+.deploybar { grid-template-columns: minmax(0, 1.7fr) minmax(0, .8fr) minmax(170px, auto);
+  grid-template-areas: "repo branch version" "dest dest go"; }
+.db-repo { grid-area: repo; } .db-branch { grid-area: branch; } .db-version { grid-area: version; }
+.db-dest { grid-area: dest; } .db-go { grid-area: go; justify-self: stretch; }
+@media (max-width: 1100px) { .deploybar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "repo" "branch" "version" "dest" "go"; } }

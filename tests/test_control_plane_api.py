@@ -121,6 +121,21 @@ class ControlPlaneApiTest(unittest.TestCase):
         status = self.client.get(f"/api/deployments/{deployment_id}").json()["status"]
         self.assertEqual(status, "ROLLED_BACK")
 
+    def test_one_step_deploy_reuses_project_and_picks_targets_per_deploy(self):
+        # 한 화면 배포: 같은 레포·브랜치는 같은 프로젝트(같은 앱). 대상은 배포마다 고른다.
+        os.environ["INFRAMORPH_FAKE_FIXTURE"] = str(FIXTURES / "happy_path.jsonl")
+        body = {"repo_url": REPO, "branch": "main", "targets": ["local", "aws"]}
+        first = self.client.post("/api/deploy", json=body)
+        self.assertEqual(first.status_code, 202, first.text)
+        second = self.client.post("/api/deploy", json=body | {"targets": ["local"]})
+        self.assertEqual(second.json()["project_id"], first.json()["project_id"])
+        self.assertEqual(len(self.client.get("/api/projects").json()), 1)
+        deployment = self.client.get(f"/api/deployments/{second.json()['deployment_id']}").json()
+        self.assertEqual(sorted(deployment["targets"]), ["local"])
+        # 행선지를 줄였다고 '대상 제거' 승인을 받지 않는다(대상마다 그 대상의 직전 정상 구조와 비교).
+        self.assertEqual(deployment["status"], "LIVE")
+        self.assertEqual(self.client.get(f"/api/projects/{first.json()['project_id']}").json()["targets"], ["local"])
+
     def test_failed_local_test_blocks_other_targets(self):
         # Local 테스트가 실패(롤백)하면 AWS는 실행하지 않고 '배포하지 않음'으로 남긴다.
         os.environ["INFRAMORPH_FAKE_FIXTURE"] = str(FIXTURES / "rollback.jsonl")

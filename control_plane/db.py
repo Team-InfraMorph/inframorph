@@ -287,15 +287,20 @@ class Store:
         )
         return latest is not None and latest["status"] == Status.CREATED.value
 
-    def begin_deploy(self, project_id, *, revision=None):
+    def begin_deploy(self, project_id, *, revision=None, targets=None):
         """진행 중 배포가 없을 때만 DEPLOYING으로 바꾼다. 확인과 변경을 한 잠금 안에서 해서 동시 요청을 막는다.
 
         가장 최근 CREATED 작업을 실행하고, 그보다 오래된 CREATED 작업은 SUPERSEDED로 닫는다.
         대상(local·aws)마다 상태 행을 만든다.
         명시한 revision은 수동 요청으로 고정하며 대기 중인 push의 커밋을 덮어쓰지 않는다.
+        targets를 주면 이번 배포는 그 대상에만 나가고, 프로젝트의 기본 대상(push 재배포용)도 그것으로 바꾼다.
         """
         if revision is not None:
             check_revision(revision)
+        if targets is not None:
+            targets = [t for t in ("local", "onprem", "aws") if t in set(targets)]
+            if not targets:
+                raise ValueError("deploy_targets_required")
         with self._lock, self._conn:
             if self._one(
                 "SELECT 1 FROM deployments WHERE project_id=? AND status IN (?, ?)", (project_id, *BLOCKING)
@@ -328,8 +333,11 @@ class Store:
                 "UPDATE deployments SET status=?, updated_at=? WHERE id=?",
                 (Status.DEPLOYING.value, now, deployment_id),
             )
-            targets = json.loads(self._one(
-                "SELECT targets FROM projects WHERE id=?", (project_id,))["targets"])
+            if targets is None:
+                targets = json.loads(self._one(
+                    "SELECT targets FROM projects WHERE id=?", (project_id,))["targets"])
+            else:
+                self._conn.execute("UPDATE projects SET targets=? WHERE id=?", (json.dumps(targets), project_id))
             self._conn.executemany(
                 "INSERT OR REPLACE INTO deployment_targets (deployment_id, target, status, url) VALUES (?, ?, ?, NULL)",
                 [(deployment_id, target, Status.DEPLOYING.value) for target in targets],
@@ -449,6 +457,24 @@ class Store:
             (before_deployment_id, project_id, Status.LIVE.value),
         )
         return self._deployment(row) if row else None
+
+    def last_live_plans(self, project_id, before_deployment_id, targets):
+        """대상마다, 그 대상이 마지막으로 정상(LIVE)이었던 배포의 설계도(승인 비교 기준).
+
+        배포마다 대상을 고르므로 '직전 배포 전체'가 아니라 대상별 직전 정상 상태와 비교한다.
+        """
+        rows = self._all(
+            "SELECT t.target, p.plan FROM deployment_targets t "
+            "JOIN plans p ON p.deployment_id=t.deployment_id AND p.target=t.target "
+            "JOIN deployments d ON d.id=t.deployment_id, deployments ref "
+            "WHERE ref.id=? AND d.project_id=? AND d.rowid < ref.rowid AND (t.status=? OR d.status=?) ORDER BY d.rowid DESC",
+            (before_deployment_id, project_id, Status.LIVE.value, Status.LIVE.value),
+        )
+        found = {}
+        for row in rows:
+            if row["target"] in targets and row["target"] not in found:
+                found[row["target"]] = json.loads(row["plan"])
+        return found
 
     def await_approval(self, deployment_id, reasons):
         with self._lock, self._conn:

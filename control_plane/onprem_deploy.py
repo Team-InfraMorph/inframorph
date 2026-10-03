@@ -175,7 +175,8 @@ def deploy(context, store, config):
         env_file(directory / "app.env", {"DATABASE_URL": "postgresql://inframorph:" + password + "@db:5432/inframorph"})
         env_file(directory / "db.env", {"POSTGRES_USER": "inframorph", "POSTGRES_DB": "inframorph",
                                         "POSTGRES_PASSWORD": password})
-        project = "inframorph-onprem-" + plan.app
+        # 프로젝트마다 컨테이너·DB 볼륨을 분리한다(앱 이름이 같아도 다른 프로젝트의 데이터를 덮지 않게).
+        project = "inframorph-onprem-" + context.project_id
         config_path = directory / "compose.json"
         private_file(config_path, json.dumps(onprem_document(plan, image_id, project, config.bind), indent=2))
         args = ["compose", "--project-name", project, "-f", str(config_path)]
