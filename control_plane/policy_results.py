@@ -19,7 +19,7 @@ def start(store,deployment_id,target,value):
 
 def save(store, deployment_id, target, attempt, value, *, enforce_binding=True):
     from .policy_lifecycle import guard,audit,diagnostic
-    if target not in {'local','aws','onprem'} or type(attempt) is not int or not 0 <= attempt <= 3:
+    if target not in {'local','aws','gcp','onprem'} or type(attempt) is not int or not 0 <= attempt <= 3:
         raise ValueError('invalid_policy_scope')
     if value.get('decision') not in {'PASS','BLOCK','UNSUPPORTED','ERROR'}:
         raise ValueError('invalid_policy_result')

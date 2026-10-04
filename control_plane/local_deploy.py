@@ -58,9 +58,14 @@ def load_context(path):
         raise ValueError("runtime_context_binding_mismatch")
     if ("aws" in context.targets) != (context.aws_plan is not None):
         raise ValueError("runtime_context_binding_mismatch")
+    if ("gcp" in context.targets) != (context.gcp_plan is not None):
+        raise ValueError("runtime_context_binding_mismatch")
     if context.aws_plan is not None:
         from analyzer.source_policy import validate_demo_plan
         validate_demo_plan(context.aws_plan, context.repo_map, target="aws")
+    if context.gcp_plan is not None:
+        from analyzer.source_policy import validate_demo_plan
+        validate_demo_plan(context.gcp_plan, context.repo_map, target="gcp")
     return context
 
 

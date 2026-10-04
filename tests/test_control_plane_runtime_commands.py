@@ -1,4 +1,4 @@
-"""Control Plane -> deployer command lines (no FastAPI needed). AWS uses the real AWS Adapter contract."""
+"""Control Plane -> deployer command lines (no FastAPI needed). Cloud targets use real adapter contracts."""
 import json
 import os
 import sys
@@ -17,14 +17,14 @@ class DeployerCommandTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         base = Path(self.tmp.name)
         self.root = base / "modules"
-        for package in ("adapters/aws", "adapters/local"):
+        for package in ("adapters/aws", "adapters/gcp", "adapters/local"):
             (self.root / package).mkdir(parents=True)
             (self.root / package / "__main__.py").write_text("")
         self.previous_root = os.environ.get("INFRAMORPH_MODULES_ROOT")
         os.environ["INFRAMORPH_MODULES_ROOT"] = str(self.root)
         self.folder = base / "home" / "dep-1"
         self.folder.mkdir(parents=True)
-        for target in ("aws", "local"):
+        for target in ("aws", "gcp", "local"):
             (self.folder / f"plan.{target}.json").write_text(json.dumps({"app": "demo-v2", "target": target}))
             (self.folder / f"build.{target}.json").write_text(json.dumps({"image": "app:" + SHA}))
         self.state = str(base / "home" / "state" / "demo-v2")
@@ -54,6 +54,17 @@ class DeployerCommandTest(unittest.TestCase):
     def test_aws_rollback_needs_only_state_dir(self):
         self.assertEqual(self.cmd("aws", "rollback"), [
             "adapters.aws", "rollback", "--state-dir", self.state, "--execute", "--deployment-id", "dep-1",
+        ])
+
+    def test_gcp_deploy_and_rollback_require_execute(self):
+        self.assertEqual(self.cmd("gcp"), [
+            "adapters.gcp", "deploy", "--plan", str(self.folder / "plan.gcp.json"),
+            "--artifact", str(self.folder / "build.gcp.json"), "--state-dir", self.state,
+            "--execute", "--deployment-id", "dep-1",
+        ])
+        self.assertEqual(self.cmd("gcp", "rollback"), [
+            "adapters.gcp", "rollback", "--state-dir", self.state,
+            "--execute", "--deployment-id", "dep-1",
         ])
 
     def test_local_commands_are_unchanged(self):

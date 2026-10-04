@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 
 from . import Intent, Plan, RepoMap
-from planner.pricing import estimate_aws_monthly_krw
+from planner.pricing import estimate_aws_monthly_krw, estimate_gcp_monthly_krw
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -144,6 +144,7 @@ def make(label: str, tag: str) -> None:
 
     def plan(target: str) -> dict:
         is_aws = target == "aws"
+        is_gcp = target == "gcp"
         return {
             "source_revision": sha,
             "target": target,
@@ -151,18 +152,19 @@ def make(label: str, tag: str) -> None:
             "image_tag": f"app:{sha}",
             "services": services,
             "db": {
-                "type": "rds_postgres" if is_aws else "postgres_container",
+                "type": "cloudsql_postgres" if is_gcp else "rds_postgres" if is_aws else "postgres_container",
                 "patch": "sqlite_to_postgres",
             },
             "storage": {
-                "type": "s3" if is_aws else "volume",
+                "type": "gcs" if is_gcp else "s3" if is_aws else "volume",
                 "patch": "fs_to_storage",
                 "path": "uploads/",
             },
             "secrets": ["DATABASE_URL"],
-            "config": {"STORAGE_DRIVER": "s3" if is_aws else "fs"},
-            "logs": "cloudwatch" if is_aws else "docker",
-            "est_monthly_krw": estimate_aws_monthly_krw(services) if is_aws else 0,
+            "config": {"STORAGE_DRIVER": "gcs" if is_gcp else "s3" if is_aws else "fs"},
+            "logs": "cloud_logging" if is_gcp else "cloudwatch" if is_aws else "docker",
+            "est_monthly_krw": (estimate_gcp_monthly_krw(services) if is_gcp else
+                                estimate_aws_monthly_krw(services) if is_aws else 0),
             "mermaid": diagram,
         }
 
@@ -174,6 +176,7 @@ def make(label: str, tag: str) -> None:
         "intent.json": (Intent, intent),
         "plan.local.json": (Plan, plan("local")),
         "plan.aws.json": (Plan, plan("aws")),
+        "plan.gcp.json": (Plan, plan("gcp")),
     }
     for filename, (model, data) in files.items():
         checked = model.model_validate(data)

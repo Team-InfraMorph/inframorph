@@ -37,7 +37,7 @@
 
 보존하는 기준선 파일은 policy_gate/baselines/1.0.0.json입니다. 정책·규칙·구현 식별값과 문서 목록·해시를 대조하며, Git 비교 기준이 있으면 기준선 파일 자체의 수정·삭제도 검사합니다.
 
-현재 구현 해시에는 Gate·규칙·기록·정책 API·Local/AWS Adapter·Builder 등의 명시된 파일이 포함됩니다. control_plane/runtime.py, control_plane/auto_repair.py, code_patch/runner.py도 포함합니다. control_plane/orchestrator.py와 control_plane/onprem_deploy.py는 그 목록과 추가 폴더 범위에 없습니다. 이 파일의 변경은 Git 차이와 실행 회귀도 함께 확인합니다. 전체 배포 제어 흐름이 같은 해시 아래 불변이라는 보장은 아닙니다. 저장소 검증을 외부 감사 시스템 수준의 위변조 방지 보장으로 해석하지 않습니다.
+현재 구현 해시에는 Gate·규칙·기록·정책 API·Local/AWS/GCP 배포 경계·Builder 등의 명시된 파일이 포함됩니다. control_plane/runtime.py, control_plane/auto_repair.py, code_patch/runner.py도 포함합니다. control_plane/orchestrator.py와 control_plane/onprem_deploy.py는 그 목록과 추가 폴더 범위에 없습니다. 이 파일의 변경은 Git 차이와 실행 회귀도 함께 확인합니다. 전체 배포 제어 흐름이 같은 해시 아래 불변이라는 보장은 아닙니다. 저장소 검증을 외부 감사 시스템 수준의 위변조 방지 보장으로 해석하지 않습니다.
 
 ## 1.1.0 구현 범위 {#repair-identity}
 

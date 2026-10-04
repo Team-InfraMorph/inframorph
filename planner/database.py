@@ -5,6 +5,7 @@ from schemas.plan import DbPlan
 DB_TYPES = {
     "local": "postgres_container",
     "aws": "rds_postgres",
+    "gcp": "cloudsql_postgres",
 }
 
 

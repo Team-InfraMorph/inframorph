@@ -1,6 +1,6 @@
 // 코드 변경 내역: 파일마다 '실제로 바뀐 핵심 줄'을 바로 보여 준다. 요약 문장을 지어내지 않고 diff에서 뽑는다.
 
-const TARGET = { local: "Local", aws: "AWS" };
+const TARGET = { local: "Local", aws: "AWS", gcp: "GCP", onprem: "온프레미스" };
 
 function lines(diff) {
   return (diff ?? "").split("\n").filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l));
