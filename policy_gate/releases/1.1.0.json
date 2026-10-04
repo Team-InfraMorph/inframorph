@@ -38,7 +38,7 @@
       "stage": "profile",
       "title": "지원 배포 프로필",
       "expected": "대상 환경에 맞는 검토된 배포 설계여야 합니다.",
-      "remedy": "지원하는 Local/AWS 프로필을 확인하세요.",
+      "remedy": "지원하는 Local/AWS/GCP 프로필을 확인하세요.",
       "document": "rules/G-003",
       "introduced": "1.0.0",
       "tests": [
@@ -414,7 +414,8 @@
       "reason": "Policy 차단 후 Intent·Plan·배포용 코드 패치를 배포당 총 3회까지 수정하고 기존 규칙으로 다시 검사합니다. 검사 규칙과 지원 소스 범위는 변경하지 않습니다.",
       "targets": [
         "local",
-        "aws"
+        "aws",
+        "gcp"
       ],
       "profiles": [
         "reviewed-node22"

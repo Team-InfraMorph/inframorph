@@ -7,7 +7,7 @@
 
 `python -m planner`에 `{"intent": <Intent JSON>, "target": "local"}`
 형식의 요청을 stdin으로 넘기면 Plan JSON을 stdout에 출력한다. target은
-`aws`도 가능하다. 이번 MVP는 demo-app의
+`aws`, `gcp`도 가능하다. 이번 MVP는 demo-app의
 web, 선택적 worker, SQLite/Prisma, `uploads/`, `DATABASE_URL` 조합을
 지원한다. `unknowns`가 남거나 지원하지 않는 조합이면 계획 생성을 중단한다.
 Local Plan의 0원은 이 시스템이 별도로 청구하는 클라우드 비용이 없다는

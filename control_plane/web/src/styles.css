@@ -22,6 +22,7 @@
   --muted-bg: #f0f3f7;
   --env-local: #4f7fd9;   /* Local 고유색: 파랑 */
   --env-aws: #c97d1e;     /* AWS 고유색: 주황(AWS 계열, 채도 낮춤) */
+  --env-gcp: #17856d;     /* GCP 고유색: 청록 */
   --env-onprem: #7a63c9;  /* 온프레미스 고유색: 보라(사내 서버) */
   color-scheme: light dark;
 }
@@ -51,6 +52,7 @@
     --muted-bg: #191e25;
     --env-local: #7d9fe6;
     --env-aws: #d99a4a;
+    --env-gcp: #5bc5a7;
     --env-onprem: #a493ec;
   }
 }
@@ -274,6 +276,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 6px; }
 .tag-local { background: var(--muted-bg); color: var(--text); }
 .tag-aws { background: #ff99001f; color: #c26a00; }
+.tag-gcp { background: color-mix(in srgb, var(--env-gcp) 14%, transparent); color: var(--env-gcp); }
 @media (prefers-color-scheme: dark) { .tag-aws { color: #ffb444; } }
 
 @media (prefers-reduced-motion: reduce) {
@@ -347,6 +350,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .ac-head .dim { font-weight: 400; font-size: 12px; }
 .tab { background: var(--muted-bg); color: var(--dim); border: 1px solid var(--line); font-size: 12px; padding: 6px 12px; border-radius: 8px; }
 .tab.on.tab-aws { color: var(--env-aws); border-color: var(--env-aws); background: color-mix(in srgb, var(--env-aws) 10%, transparent); }
+.tab.on.tab-gcp { color: var(--env-gcp); border-color: var(--env-gcp); background: color-mix(in srgb, var(--env-gcp) 10%, transparent); }
 .tab.on.tab-local { color: var(--env-local); border-color: var(--env-local); background: color-mix(in srgb, var(--env-local) 10%, transparent); }
 .tree-file { border-radius: 6px; padding: 0 6px; margin: 0 -6px; transition: background 0.15s; }
 .tree-file.hl { background: color-mix(in srgb, var(--accent) 22%, transparent); }
@@ -354,6 +358,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 
 .carch { display: flex; flex-direction: column; align-items: center; padding: 16px; border-radius: 14px; border: 1px solid var(--line); }
 .ca-aws { border-color: color-mix(in srgb, var(--env-aws) 45%, var(--line)); }
+.ca-gcp { border-color: color-mix(in srgb, var(--env-gcp) 45%, var(--line)); }
 .ca-local { border-color: color-mix(in srgb, var(--env-local) 45%, var(--line)); }
 .cbox { width: 230px; padding: 10px 12px; border-radius: 12px; background: var(--muted-bg); border: 1px solid var(--line); text-align: center;
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
@@ -455,13 +460,14 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .lr-local .lane-title { color: var(--env-local); }
 .lr-onprem .lane-title { color: var(--env-onprem); }
 .lr-aws .lane-title { color: var(--env-aws); }
+.lr-gcp .lane-title { color: var(--env-gcp); }
 .carch-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .carch-pair .cbox { width: 180px; }
 @media (max-width: 1100px) { .carch-pair { grid-template-columns: minmax(0, 1fr); } }
 .ca-title { align-self: stretch; font-size: 12px; font-weight: 700; margin: -4px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
-.ct-onprem { color: var(--env-onprem); } .ct-aws { color: var(--env-aws); } .ct-local { color: var(--env-local); }
+.ct-onprem { color: var(--env-onprem); } .ct-aws { color: var(--env-aws); } .ct-gcp { color: var(--env-gcp); } .ct-local { color: var(--env-local); }
 .tab.on.tab-deploy { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.lr-onprem .lane-title, .lr-aws .lane-title { padding-left: 10px; border-left: 2px solid currentColor; }
+.lr-onprem .lane-title, .lr-aws .lane-title, .lr-gcp .lane-title { padding-left: 10px; border-left: 2px solid currentColor; }
 
 /* ── 한 화면 배포 바: 레포 · 브랜치 · 배포 위치 · 버전 · 배포 ───────────── */
 .deploybar { display: grid; grid-template-columns: minmax(260px, 2fr) minmax(120px, 1fr) auto auto auto; gap: 12px 14px; align-items: end; margin-bottom: 14px; }
@@ -475,6 +481,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .seg-btn.on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .seg-btn.on.sb-onprem { border-color: var(--env-onprem); color: var(--env-onprem); background: color-mix(in srgb, var(--env-onprem) 12%, transparent); }
 .seg-btn.on.sb-aws { border-color: var(--env-aws); color: var(--env-aws); background: color-mix(in srgb, var(--env-aws) 12%, transparent); }
+.seg-btn.on.sb-gcp { border-color: var(--env-gcp); color: var(--env-gcp); background: color-mix(in srgb, var(--env-gcp) 12%, transparent); }
 .seg-btn:disabled { opacity: .4; cursor: not-allowed; }
 .db-go { height: 38px; padding: 0 22px; }
 .empty-hint { margin: 4px 2px 18px; }
@@ -492,6 +499,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .htgt.hg-local { border-color: color-mix(in srgb, var(--env-local) 50%, var(--line)); }
 .htgt.hg-onprem { border-color: color-mix(in srgb, var(--env-onprem) 50%, var(--line)); }
 .htgt.hg-aws { border-color: color-mix(in srgb, var(--env-aws) 50%, var(--line)); }
+.htgt.hg-gcp { border-color: color-mix(in srgb, var(--env-gcp) 50%, var(--line)); }
 .hroll { margin-top: 8px; }
 .dep-id { font-size: 12px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; margin-left: 8px; }
 @media (max-width: 1100px) { .shell.with-side { grid-template-columns: minmax(0, 1fr); } .hist.side { position: static; max-height: none; } }
@@ -624,6 +632,7 @@ dialog.policy-modal>.card {width:auto;margin:0;}
 .policy-targets button[data-target=local] { --target-color:var(--env-local); }
 .policy-targets button[data-target=onprem] { --target-color:var(--env-onprem); }
 .policy-targets button[data-target=aws] { --target-color:var(--env-aws); }
+.policy-targets button[data-target=gcp] { --target-color:var(--env-gcp); }
 .policy-targets button[aria-pressed=true] { color:var(--target-color);background:color-mix(in srgb,var(--target-color) 12%,var(--card));box-shadow:inset 0 0 0 1px var(--target-color); }
 .policy-card .policy-summary strong { font-size:16px; }
 .policy-card .row,.policy-workspace .row { flex-wrap:wrap; }

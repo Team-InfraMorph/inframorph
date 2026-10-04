@@ -71,7 +71,7 @@ class ControlPlaneApiTest(unittest.TestCase):
             {"repo_url": "ftp://example.com/x"},
             {"repo_url": "https://evil.example/owner/repo"},
             {"targets": []},
-            {"targets": ["gcp"]},
+            {"targets": ["azure"]},
             {"targets": ["aws", "aws"]},
             {"branch": "../main"},
             {"branch": "feature..x"},

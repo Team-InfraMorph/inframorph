@@ -2,7 +2,7 @@
 
 Use --demo explicitly for fixture B; --codex enables fresh local Codex inference.
 Use --github for the real Repo Mapper/Planner and --openai for the team API.
-AWS requires an explicit operator-owned --aws-config. --publish exposes only the
+AWS/GCP require explicit operator-owned configuration. --publish exposes only the
 verified Local app. The control plane stays on localhost.
 """
 import argparse
@@ -60,8 +60,9 @@ class LocalContext(ContractModel):
     planner_command: list[str] | None = None
     analysis_backend: Literal["replay", "codex-cli", "openai"] = "replay"
     analysis_model: Literal["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"] = LOCAL_MODEL
-    targets: list[Literal["local", "aws", "onprem"]] = ["local"]
+    targets: list[Literal["local", "aws", "gcp", "onprem"]] = ["local"]
     aws_plan: Plan | None = None
+    gcp_plan: Plan | None = None
 
 
 def context_plans(context):
@@ -70,6 +71,8 @@ def context_plans(context):
     plans["onprem"] = context.plan.model_copy(update={"target": Target.ONPREM}).model_dump(mode="json")
     if context.aws_plan is not None:
         plans["aws"] = context.aws_plan.model_dump(mode="json")
+    if context.gcp_plan is not None:
+        plans["gcp"] = context.gcp_plan.model_dump(mode="json")
     return {target: plans[target] for target in context.targets}
 
 
@@ -151,7 +154,8 @@ def requirements_clarifier(candidate):
 
 class LocalRuntime:
     def __init__(self, *, root, b_modules, replay=None, fault="none", publish=False,
-                 codex=False, openai=False, model=LOCAL_MODEL, aws_config=None, onprem_config=None):
+                 codex=False, openai=False, model=LOCAL_MODEL, aws_config=None,
+                 gcp_config=None, onprem_config=None):
         self.root = Path(root).absolute()
         if any(p.is_symlink() for p in (self.root, *self.root.parents)):
             raise ValueError("runtime_state_symlink")
@@ -165,6 +169,10 @@ class LocalRuntime:
         if self.aws_config:
             from .aws_config import load_config
             load_config(self.aws_config)
+        self.gcp_config = Path(gcp_config).absolute() if gcp_config else None
+        if self.gcp_config:
+            from .gcp_config import load_config as load_gcp
+            load_gcp(self.gcp_config)
         self.onprem_config = Path(onprem_config).absolute() if onprem_config else None
         if self.onprem_config:
             from .onprem_config import load_config as load_onprem
@@ -204,7 +212,9 @@ class LocalRuntime:
 
     def analyze(self, store, deployment):
         targets = set(deployment["targets"])
-        if (not targets or not targets <= {"local", "aws", "onprem"} or ("aws" in targets and self.aws_config is None)
+        if (not targets or not targets <= {"local", "aws", "gcp", "onprem"} or
+                ("aws" in targets and self.aws_config is None) or
+                ("gcp" in targets and self.gcp_config is None)
                 or ("onprem" in targets and (self.onprem_config is None or "local" not in targets))):
             raise AnalysisFailed("local_runtime_only")
         folder = self.context_file(deployment["id"]).parent
@@ -297,6 +307,11 @@ class LocalRuntime:
                 aws_plan = (Plan.model_validate(store.get_plans(deployment["id"])["aws"])
                             if deployment.get("triggered_by") == "rollback" else self.b.plan(intent, "aws"))
                 aws_plan = validated_plan(aws_plan, 'aws')
+            gcp_plan = None
+            if "gcp" in targets:
+                gcp_plan = (Plan.model_validate(store.get_plans(deployment["id"])["gcp"])
+                            if deployment.get("triggered_by") == "rollback" else self.b.plan(intent, "gcp"))
+                gcp_plan = validated_plan(gcp_plan, 'gcp')
             stage = "context"
             context = LocalContext(deployment_id=deployment["id"], project_id=project["project_id"],
                 snapshot=str(mapped.snapshot), repo_map=mapped.repo_map, intent=intent, plan=plan,
@@ -304,7 +319,7 @@ class LocalRuntime:
                 output_dir=str(folder), fault=self.fault, demo=isinstance(self.b, DemoModules), publish=self.publish,
                 planner_command=None if isinstance(self.b, DemoModules) else self.b.planner_command,
                 analysis_backend=self.analysis_backend, analysis_model=self.analysis_model,
-                targets=list(deployment["targets"]), aws_plan=aws_plan)
+                targets=list(deployment["targets"]), aws_plan=aws_plan, gcp_plan=gcp_plan)
             private_json(folder / "context.json", context.model_dump(mode="json"))
             report_status = "passed"
             return {"commit_sha": mapped.repo_map.commit, "repo_map": mapped.repo_map.model_dump(mode="json"),
@@ -333,7 +348,9 @@ class LocalRuntime:
                     status=report_status, stage=stage, fields=report_fields)
 
     def command(self, store, deployment_id, target):
-        if (target not in {"local", "aws", "onprem"} or (target == "aws" and self.aws_config is None)
+        if (target not in {"local", "aws", "gcp", "onprem"} or
+                (target == "aws" and self.aws_config is None) or
+                (target == "gcp" and self.gcp_config is None)
                 or (target == "onprem" and self.onprem_config is None)):
             raise ValueError("local_runtime_only")
         path = self.context_file(deployment_id)
@@ -350,6 +367,8 @@ class LocalRuntime:
             command.append("--openai")  # Authorize only this trusted worker's recovery API credential.
         if target == "aws":
             command += ["--aws-config", str(self.aws_config)]
+        if target == "gcp":
+            command += ["--gcp-config", str(self.gcp_config)]
         if target == "onprem":
             command += ["--onprem-config", str(self.onprem_config)]
         return command
@@ -372,6 +391,7 @@ def main(argv=None):
     parser.add_argument("--publish", action="store_true", help="Publish only the Local app via cloudflared; never the control plane")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--aws-config", type=Path, help="Private operator-owned AWS configuration; never repository/model input")
+    parser.add_argument("--gcp-config", type=Path, help="Private operator-owned GCP configuration; never repository/model input")
     parser.add_argument("--onprem-config", type=Path, help="Private operator-owned on-prem Docker host (SSH); never repository/model input")
     args = parser.parse_args(argv)
     from .environment import load_server_environment
@@ -389,7 +409,7 @@ def main(argv=None):
                BCommands(mapper_command=json.loads(args.mapper_command), planner_command=json.loads(args.planner_command)))
     runtime = LocalRuntime(root=args.root / "runtime", b_modules=modules, replay=args.replay, publish=args.publish,
                            codex=args.codex, openai=args.openai, model=args.model, aws_config=args.aws_config,
-                           onprem_config=args.onprem_config)
+                           gcp_config=args.gcp_config, onprem_config=args.onprem_config)
     from .app import create_app
     import uvicorn
     app = create_app(db_path=args.root / "control-plane.db", runtime=runtime)

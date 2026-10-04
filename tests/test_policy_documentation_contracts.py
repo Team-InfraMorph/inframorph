@@ -19,6 +19,8 @@ from schemas import Plan, RepoMap
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT/'policy_gate/docs/1.0.0'
+ACTIVE_VERSION = json.loads((ROOT/'policy_gate/active.json').read_text())['version']
+ACTIVE_DOCS = ROOT/'policy_gate/docs'/ACTIVE_VERSION
 SOURCE = ROOT/'tests/fixtures/analyzer/v1/snapshot'
 MAPPING = RepoMap.model_validate_json((ROOT/'tests/fixtures/analyzer/v1/repo_map.json').read_text())
 INTENT = json.loads((ROOT/'schemas/fixtures/v1/intent.json').read_text())
@@ -26,8 +28,8 @@ PLAN = json.loads((ROOT/'schemas/fixtures/v1/plan.local.json').read_text())
 TEST_REF = 'tests.test_policy_documentation_contracts.VersionContractTests.test_record_walkthrough'
 
 
-def example(name):
-    return json.loads(re.search(r'```json\n(.*?)\n```', (DOCS/name).read_text(), re.S)[1])
+def example(name, docs=DOCS):
+    return json.loads(re.search(r'```json\n(.*?)\n```', (docs/name).read_text(), re.S)[1])
 
 
 def record_walkthrough(folder):
@@ -126,7 +128,9 @@ class VersionContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             bundle=Path(folder).resolve()/'bundle'
             actual=patch_snapshot(SOURCE,MAPPING,PLAN,bundle)
-            documented=example('rules/P-001.md')
+            # The generator follows the active policy. Historical examples are
+            # immutable and are exercised separately under their own manifest.
+            documented=example('rules/P-001.md', ACTIVE_DOCS)
             self.assertEqual(documented,actual)
             (bundle/'manifest.json').write_text(json.dumps(documented))
             report=[]

@@ -19,16 +19,19 @@ from tests.test_e_runtime import plan
 from builder.runtime import check_build_profile
 
 ROOT=Path(__file__).resolve().parents[1]
-DOCS=ROOT/'policy_gate/docs/1.0.0'
+ACTIVE_VERSION=json.loads((ROOT/'policy_gate/active.json').read_text())['version']
+DOCS=ROOT/'policy_gate/docs'/ACTIVE_VERSION
+BASELINE_DOCS=ROOT/'policy_gate/docs/1.0.0'
 
 class DocumentationContract(unittest.TestCase):
     def test_one_document_set_preserves_baseline_and_declares_rule_changes(self):
-        baseline=json.loads((DOCS/'review.json').read_text())['baseline']
+        baseline=json.loads((BASELINE_DOCS/'review.json').read_text())['baseline']
         self.assertEqual(fingerprint(release('1.0.0')['rules']),baseline['rules_digest'])
         previous={r['id']:r for r in release('1.0.0')['rules']}
         current={r['id']:r for r in release()['rules']}
         self.assertEqual(set(previous),set(current))
-        self.assertEqual({key for key in previous if previous[key]!=current[key]}, {'I-002','I-003'})
+        self.assertEqual({key for key in previous if previous[key]!=current[key]}, {'G-003','I-002','I-003'})
+        self.assertEqual(current['G-003'], previous['G-003'] | {'remedy': '지원하는 Local/AWS/GCP 프로필을 확인하세요.'})
         for key in ('I-002','I-003'):
             self.assertEqual(previous[key]['revision'],1)
             self.assertEqual(current[key]['revision'],2)

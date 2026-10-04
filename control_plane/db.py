@@ -305,7 +305,7 @@ class Store:
         if revision is not None:
             check_revision(revision)
         if targets is not None:
-            targets = [t for t in ("local", "onprem", "aws") if t in set(targets)]
+            targets = [t for t in ("local", "onprem", "aws", "gcp") if t in set(targets)]
             if not targets:
                 raise ValueError("deploy_targets_required")
         with self._lock, self._conn:

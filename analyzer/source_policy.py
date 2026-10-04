@@ -120,13 +120,14 @@ def validate_demo_plan(value, mapping, *, target="local"):
         actual = [(s.name, s.kind.value, s.port, s.health, s.public, s.command) for s in plan.services]
         config = dict(plan.config)
         config.pop("PORT", None)
-        if target not in {"local", "aws"}:
+        if target not in {"local", "aws", "gcp"}:
             raise SourcePolicyError("plan_source_mismatch")
+        storage_driver = {"local": "fs", "aws": "s3", "gcp": "gcs"}[target]
         if (plan.source_revision != mapping.commit or plan.app != "demo-app" or plan.target.value != target or
                 sorted(actual) != sorted(expected) or plan.db is None or plan.storage is None or
                 plan.storage.path.rstrip("/") != "uploads" or plan.secrets != ["DATABASE_URL"] or
-                config != {"STORAGE_DRIVER": "fs" if target == "local" else "s3"} or
+                config != {"STORAGE_DRIVER": storage_driver} or
                 plan.config.get("PORT", "3000") != "3000" or
-                (target == "aws" and any(s.cpu != 256 or s.mem != 512 for s in plan.services))):
+                (target in {"aws", "gcp"} and any(s.cpu != 256 or s.mem != 512 for s in plan.services))):
             raise SourcePolicyError("plan_source_mismatch")
         return plan

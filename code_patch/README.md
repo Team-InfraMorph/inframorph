@@ -114,7 +114,7 @@ A/E 통합 시 확정할 제안이며, 공통 Plan에 AWS 리소스 식별자를
 
 검증 순서는 다음과 같다.
 
-1. Local/AWS 소스가 동일한지, 원본과 diff 해시·수정 허용 경로·JS 문법 확인.
+1. Local/AWS/GCP 소스가 동일한지, 원본과 diff 해시·수정 허용 경로·JS 문법 확인.
 2. `linux/amd64` Node 22 이미지 빌드. `npm ci --ignore-scripts`, 고정 Prisma 도구의
    validate/generate 실행. 레포의 install/start 스크립트는 실행하지 않는다.
    설치한 S3 SDK도 `--network none` 컨테이너의 loopback HTTP 대역 서버에 연결해

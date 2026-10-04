@@ -55,10 +55,12 @@ class CodePatchTests(unittest.TestCase):
         self.assertEqual({p.relative_to(applied): p.read_bytes() for p in applied.rglob("*") if p.is_file()},
                          {p.relative_to(patched): p.read_bytes() for p in patched.rglob("*") if p.is_file()})
 
-    def test_local_and_aws_emit_identical_code_and_lockfile(self):
+    def test_local_aws_and_gcp_emit_identical_code_and_lockfile(self):
         local = self.patch()
         aws = json.loads((ROOT / "schemas/fixtures/v1/plan.aws.json").read_text())
         self.assertEqual(local["patched_digest"], self.patch("aws", aws)["patched_digest"])
+        gcp = json.loads((ROOT / "schemas/fixtures/v1/plan.gcp.json").read_text())
+        self.assertEqual(local["patched_digest"], self.patch("gcp", gcp)["patched_digest"])
 
     def test_repeat_patch_is_unchanged(self):
         self.patch()

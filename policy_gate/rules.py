@@ -48,7 +48,7 @@ def package_scripts(files):
 
 def config_check(config, secrets):
     if set(config) & set(secrets): fail('config_overrides_secret')
-    allowed = {'PORT': r'[0-9]{1,5}', 'STORAGE_DRIVER': r'fs|s3', 'THUMB_SIZE': r'[1-9][0-9]{0,3}'}
+    allowed = {'PORT': r'[0-9]{1,5}', 'STORAGE_DRIVER': r'fs|s3|gcs', 'THUMB_SIZE': r'[1-9][0-9]{0,3}'}
     for key, value in config.items():
         if re.search(r'SECRET|PASSWORD|TOKEN|API_KEY|DATABASE_URL', key) or key in {'NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD', 'PATH', 'HOME'}:
             fail('config_policy_violation')
@@ -250,7 +250,10 @@ def patch_rules(original, patched, plan, changed, js, *, profile="reviewed"):
             if name == 'package.json':
                 try:
                     a, b = json.loads(original[name]), json.loads(patched[name])
-                    from code_patch.runner import SDK_VERSION
-                    expected = dict(a); expected['dependencies'] = a.get('dependencies', {}) | {'@aws-sdk/client-s3': SDK_VERSION}
+                    from code_patch.runner import GCS_SDK_VERSION, SDK_VERSION
+                    expected = dict(a); expected['dependencies'] = a.get('dependencies', {}) | {
+                        '@aws-sdk/client-s3': SDK_VERSION,
+                        '@google-cloud/storage': GCS_SDK_VERSION,
+                    }
                     if b != expected: fail('dependency_change_forbidden', name)
                 except (ValueError, KeyError): fail('dependency_change_forbidden', name)
