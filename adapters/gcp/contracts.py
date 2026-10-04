@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 from .errors import ContractError
+from schemas.plan import DbPlan as SharedDbPlan
 
 
 SCHEMA_VERSION = "1.0.0"
@@ -175,6 +176,9 @@ class ServiceSpec:
 class DbPlan:
     type: str
     patch: str
+    source_engine: str
+    target_engine: str
+    orm: str
 
 
 @dataclass(frozen=True)
@@ -240,10 +244,14 @@ class Plan:
         if raw_db is not None:
             if not isinstance(raw_db, dict):
                 raise ContractError("plan.db must be an object or null")
-            _keys(raw_db, "plan.db", {"type", "patch"}, set())
-            if raw_db["type"] != "cloudsql_postgres" or raw_db["patch"] != "sqlite_to_postgres":
-                raise ContractError("GCP database must be cloudsql_postgres with sqlite_to_postgres patch")
-            db = DbPlan(raw_db["type"], raw_db["patch"])
+            # Same as AWS: the shared schema owns the source-engine conversion rules.
+            try:
+                checked = SharedDbPlan.model_validate(raw_db)
+            except ValueError:
+                raise ContractError("invalid database plan") from None
+            if checked.type != "cloudsql_postgres":
+                raise ContractError("GCP database must be cloudsql_postgres")
+            db = DbPlan(checked.type, checked.patch, checked.source_engine, checked.target_engine, checked.orm)
 
         storage = None
         raw_storage = value.get("storage")

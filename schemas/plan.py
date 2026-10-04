@@ -26,8 +26,7 @@ class ServiceSpec(ContractModel):
         return self
 
 class DbPlan(ContractModel):
-
-    type: Literal["postgres_container", "rds_postgres"]
+    type: Literal["postgres_container", "rds_postgres", "cloudsql_postgres"]
     patch: Literal[
         "sqlite_to_postgres",
         "none",
@@ -74,7 +73,6 @@ class DbPlan(ContractModel):
                 data.pop(key, None)
 
         return data
-
 
 class StoragePlan(ContractModel):
     type: Literal["volume", "s3", "gcs"]
@@ -151,6 +149,17 @@ class Plan(ContractModel):
                 if self.config.get("STORAGE_DRIVER") != "s3":
                     raise ValueError("AWS STORAGE_DRIVER는 s3입니다")
 
+        elif self.target == Target.GCP:
+            if self.logs != "cloud_logging":
+                raise ValueError("GCP 로그는 cloud_logging입니다")
+
+            if self.db is not None and self.db.type != "cloudsql_postgres":
+                raise ValueError("GCP DB는 cloudsql_postgres입니다")
+
+            if self.storage is not None:
+                if self.storage.type != "gcs":
+                    raise ValueError("GCP 저장소는 gcs입니다")
+                if self.config.get("STORAGE_DRIVER") != "gcs":
+                    raise ValueError("GCP STORAGE_DRIVER는 gcs입니다")
 
         return self
-

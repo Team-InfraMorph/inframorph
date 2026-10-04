@@ -709,5 +709,26 @@ class ControlPlaneStateDirTests(unittest.TestCase):
         self.assertIn("--execute", stderr.getvalue())
 
 
+
+class ProviderAwareDatabasePlanTests(unittest.TestCase):
+    """GCP accepts the same source-engine-preserving DB plans as AWS (main #48)."""
+
+    def test_gcp_accepts_the_new_plan_contract(self):
+        from planner.engine import make_plan
+        from tests.test_database_planning import intent_for
+
+        for engine, patch in (("mysql", "prisma_to_postgres"), ("postgresql", "none"), ("sqlite", "sqlite_to_postgres")):
+            with self.subTest(engine=engine):
+                parsed = Plan.parse(make_plan(intent_for(engine), "gcp").model_dump(mode="json"))
+                self.assertEqual(parsed.db.type, "cloudsql_postgres")
+                self.assertEqual((parsed.db.source_engine, parsed.db.target_engine, parsed.db.patch), (engine, "postgresql", patch))
+
+    def test_gcp_rejects_an_aws_database_type(self):
+        value = plan_data()
+        value["db"] = {"type": "rds_postgres", "patch": "sqlite_to_postgres"}
+        with self.assertRaisesRegex(ContractError, "cloudsql_postgres"):
+            Plan.parse(value)
+
+
 if __name__ == "__main__":
     unittest.main()

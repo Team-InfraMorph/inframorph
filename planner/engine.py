@@ -1,8 +1,6 @@
 from schemas import Intent, Plan
-
-from .pricing import estimate_aws_monthly_krw
+from .pricing import estimate_aws_monthly_krw, estimate_gcp_monthly_krw
 from .database import make_db_plan
-
 
 def make_plan(raw_intent, target):
     intent = Intent.model_validate(raw_intent)
@@ -77,9 +75,7 @@ def make_plan(raw_intent, target):
         "app": intent.app,
         "image_tag": f"app:{intent.source_revision}",
         "services": services,
-
         "db": db_plan,
-
         "storage": {
             "type": {"local": "volume", "aws": "s3", "gcp": "gcs"}[target],
             "patch": "fs_to_storage",
