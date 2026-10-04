@@ -24,6 +24,8 @@ class BoardTests(unittest.TestCase):
         self.assertEqual([p['id'] for p in DemoModules().versions()], ['v1','v2'])
         versions=GitHubModules().versions()
         self.assertEqual([p['id'] for p in versions], ['v1','v2','v3'])
+        for p in versions[:2]:
+            self.assertIn('gcp', p['supported_targets'])
         for p in versions[2:]:
             self.assertEqual(p['supported_targets'], ['local'])
             self.assertRegex(p['commit_sha'], r'^[0-9a-f]{40}$')

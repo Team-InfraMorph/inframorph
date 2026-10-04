@@ -15,7 +15,7 @@ FILE_WRITE = re.compile(r"\b(?:writeFile|writeFileSync|appendFile|appendFileSync
 PRISMA_ENV = re.compile(r"\benv\(\s*\"([A-Z][A-Z0-9_]*)\"\s*\)")
 # Required configuration only: references with a `||` / `??` default are optional.
 PROCESS_ENV = re.compile(r"\bprocess\.env(?:\.([A-Z][A-Z0-9_]*+)|\[\s*[\"']([A-Z][A-Z0-9_]*+)[\"']\s*\])(?!\s*(?:\|\||\?\?))")
-PROVIDER = re.compile(r"^\s*provider\s*=\s*\"([a-z]+)\"", re.M)
+PROVIDER = re.compile(r'^\s*provider\s*=\s*"([a-z][a-z0-9_+-]*)"', re.M,)
 DATASOURCE = re.compile(r"^\s*datasource\s+\w+\s*\{([^}]*)\}", re.M)
 SOURCE_SUFFIXES = (".js", ".cjs", ".mjs", ".ts")
 HINT_ORDER = {"file_write": 0, "env": 1, "process": 2}
@@ -48,11 +48,16 @@ def _db(files):
     schema = files.get("prisma/schema.prisma")
     if schema is None:
         return None
-    block = DATASOURCE.search(schema.decode("utf-8"))
-    provider = PROVIDER.search(block[1]) if block else None
-    value = provider[1] if provider else None
-    return {"orm": "prisma", "provider": value if value in {"sqlite", "postgresql"} else None}
-
+    text = schema.decode("utf-8")
+    blocks = list(DATASOURCE.finditer(text))
+    if len(blocks) != 1:
+        return {"orm": "prisma", "provider": None}
+    providers = list(PROVIDER.finditer(blocks[0][1]))
+    value = providers[0][1] if len(providers) == 1 else None
+    return {
+        "orm": "prisma",
+        "provider": value
+    }
 
 def _sources(files):
     return [(path, data.decode("utf-8")) for path, data in sorted(files.items())

@@ -12,6 +12,7 @@ from schemas import Intent, Plan
 from policy_gate.reporting import checked, rule
 from schemas.common import parse_evidence
 from code_patch.runner import read_snapshot
+from policy_gate.structure import prisma_shape_digest, prisma_structure
 
 
 POLICY_CODES = frozenset({"unreviewed_runtime_source", "intent_source_mismatch",
@@ -55,7 +56,19 @@ def validate_demo_intent(value, source, mapping):
                 raise SourcePolicyError("unreviewed_runtime_source")
             required = {name: [digest] for name, digest in board["files"].items()}
         for name, hashes in required.items():
-            if name not in files or hashlib.sha256(files[name]).hexdigest() not in hashes:
+            if name not in files:
+                raise SourcePolicyError("unreviewed_runtime_source")
+            try:
+                actual_hash = (
+                    prisma_shape_digest(files[name])
+                    if name == "prisma/schema.prisma" and board is None
+                    else hashlib.sha256(files[name]).hexdigest()
+                )
+            except (ValueError, UnicodeError):
+                raise SourcePolicyError(
+                    "unreviewed_runtime_source"
+                ) from None
+            if actual_hash not in hashes:
                 raise SourcePolicyError("unreviewed_runtime_source")
         # Every executable/build input must be reviewed, even if the model never reads it.
         allowed = set(required) | {"package.json", "package-lock.json"}
@@ -81,8 +94,13 @@ def validate_demo_intent(value, source, mapping):
             workloads.append(("worker", "worker", None, None, False, "node src/worker.js"))
         actual = [(w.name, w.kind.value, w.port, w.health, w.public, w.command) for w in intent.workloads]
         states = sorted((s.kind, s.engine, s.orm, s.path.rstrip("/") if s.path else None) for s in intent.state)
-        expected_states = sorted([("relational_db", "sqlite", "prisma", None),
-                                  ("persistent_files", None, None, "uploads")])
+        provider, _, _ = prisma_structure(
+            files["prisma/schema.prisma"]
+        )
+        expected_states = sorted([
+            ("relational_db", provider, "prisma", None),
+            ("persistent_files", None, None, "uploads"),
+        ])
         mismatches = {
             "source_revision": intent.source_revision != mapping.commit,
             "app": intent.app != package["name"],
@@ -121,13 +139,14 @@ def validate_demo_plan(value, mapping, *, target="local"):
         # UI assets identify a board even when a caller supplies an unregistered SHA.
         if any(name.startswith("src/web/") for name in mapping.tree) and (board is None or target not in board["supported_targets"]):
             raise SourcePolicyError("plan_source_mismatch")
-        if target not in {"local", "aws"}:
+        if target not in {"local", "aws", "gcp"}:
             raise SourcePolicyError("plan_source_mismatch")
+        storage_driver = {"local": "fs", "aws": "s3", "gcp": "gcs"}[target]
         if (plan.source_revision != mapping.commit or plan.app != "demo-app" or plan.target.value != target or
                 sorted(actual) != sorted(expected) or plan.db is None or plan.storage is None or
                 plan.storage.path.rstrip("/") != "uploads" or plan.secrets != ["DATABASE_URL"] or
-                config != {"STORAGE_DRIVER": "fs" if target == "local" else "s3"} or
+                config != {"STORAGE_DRIVER": storage_driver} or
                 plan.config.get("PORT", "3000") != "3000" or
-                (target == "aws" and any(s.cpu != 256 or s.mem != 512 for s in plan.services))):
+                (target in {"aws", "gcp"} and any(s.cpu != 256 or s.mem != 512 for s in plan.services))):
             raise SourcePolicyError("plan_source_mismatch")
         return plan

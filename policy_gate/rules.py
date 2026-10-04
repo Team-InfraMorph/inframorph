@@ -16,7 +16,7 @@ def fail(code, path=None, line=None):
 
 def config_check(config, secrets):
     if set(config) & set(secrets): fail('config_overrides_secret')
-    allowed = {'PORT': r'[0-9]{1,5}', 'STORAGE_DRIVER': r'fs|s3', 'THUMB_SIZE': r'[1-9][0-9]{0,3}'}
+    allowed = {'PORT': r'[0-9]{1,5}', 'STORAGE_DRIVER': r'fs|s3|gcs', 'THUMB_SIZE': r'[1-9][0-9]{0,3}'}
     for key, value in config.items():
         if re.search(r'SECRET|PASSWORD|TOKEN|API_KEY|DATABASE_URL', key) or key in {'NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD', 'PATH', 'HOME'}:
             fail('config_policy_violation')
@@ -97,6 +97,20 @@ def intent_rules(intent, files):
 
 
 def plan_rules(intent, plan):
+    databases = [
+        state
+        for state in intent.state
+        if state.kind == "relational_db"
+    ]
+    if plan.db is not None:
+        if len(databases) != 1:
+            fail("plan_state_mismatch")
+        source = databases[0]
+        if (
+            plan.db.source_engine != source.engine
+            or plan.db.orm != source.orm
+        ):
+            fail("plan_state_mismatch")
     config_check(plan.config, plan.secrets)
     if plan.source_revision != intent.source_revision or plan.app != intent.app: fail('plan_intent_mismatch')
     fields = lambda x: (x.name, x.kind.value, x.public, x.port, x.health, x.command)
@@ -117,15 +131,34 @@ def plan_rules(intent, plan):
 
 
 def patch_rules(original, patched, plan, changed, js, *, profile="reviewed"):
-    with rule('P-003', applies='prisma/schema.prisma' in changed, reason='schema_unchanged') as evidence:
-        name = 'prisma/schema.prisma'
-        if name in changed:
-            if name not in original or not plan.db: fail('prisma_transform_unsupported', name)
-            old, structure, _ = prisma_structure(original[name])
+    name = 'prisma/schema.prisma'
+    with rule('P-003', applies=plan.db is not None or name in changed, reason="database_not_requested",) as evidence:
+        if plan.db is not None:
+            if name not in original or name not in patched:
+                fail("prisma_transform_unsupported", name)
+
+            old, before, _ = prisma_structure(original[name])
             new, after, _ = prisma_structure(patched[name])
-            evidence.update(path=name,before=old,after=new)
-            if structure != after: fail('prisma_structure_changed', name)
-            if new != 'postgresql': fail('prisma_provider_invalid', name)
+
+            evidence.update(path=name, before=old, after=new)
+
+            if old != plan.db.source_engine:
+                fail("prisma_transform_unsupported", name)
+
+            if new != plan.db.target_engine:
+                fail("prisma_provider_invalid", name)
+
+            if before != after:
+                fail("prisma_structure_changed", name)
+
+            if (
+                plan.db.patch == "none"
+                and original[name] != patched[name]
+            ):
+                fail("prisma_transform_unsupported", name)
+        elif name in changed:
+            fail("prisma_transform_unsupported", name)
+
     with rule('P-004', applies=any(n.endswith(('.js','.cjs','.mjs')) for n in changed), reason='javascript_unchanged') as evidence:
         evidence.update(changed_paths=[n for n in changed if n.endswith(('.js','.cjs','.mjs'))])
         before_js = inspect_js({k: original[k] for k in changed if k in original})
@@ -161,7 +194,10 @@ def patch_rules(original, patched, plan, changed, js, *, profile="reviewed"):
             if name == 'package.json':
                 try:
                     a, b = json.loads(original[name]), json.loads(patched[name])
-                    from code_patch.runner import SDK_VERSION
-                    expected = dict(a); expected['dependencies'] = a.get('dependencies', {}) | {'@aws-sdk/client-s3': SDK_VERSION}
+                    from code_patch.runner import GCS_SDK_VERSION, SDK_VERSION
+                    expected = dict(a); expected['dependencies'] = a.get('dependencies', {}) | {
+                        '@aws-sdk/client-s3': SDK_VERSION,
+                        '@google-cloud/storage': GCS_SDK_VERSION,
+                    }
                     if b != expected: fail('dependency_change_forbidden', name)
                 except (ValueError, KeyError): fail('dependency_change_forbidden', name)

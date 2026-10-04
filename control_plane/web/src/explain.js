@@ -1,5 +1,5 @@
 // 모듈이 남긴 실패 문구를 "무슨 일인지 + 다음에 할 일"로 바꾼다. 모르는 문구는 원문만 보여 준다.
-// 오류 코드 출처: E policy_gate/gate.py, C analyzer·code_patch, A adapters/aws, 조종실 orchestrator.
+// 오류 코드 출처: E policy_gate/gate.py, C analyzer·code_patch, A cloud adapters, 조종실 orchestrator.
 
 const CODES = {
   board_worker_timeout: ["worker가 제한 시간 안에 검증 메모를 집계하지 못했습니다", "현재 worker의 실행 상태와 DB 연결을 확인하세요. 정책 위반과 별도인 실행 실패입니다."],
@@ -13,6 +13,10 @@ const CODES = {
   aws_plan_unknown_action: ["지원하지 않는 인프라 변경 작업이 감지됐습니다", "배포 계획을 확인한 뒤 다시 시도하세요."],
   aws_worker_removal_requires_approval: ["기존 worker 제거에 대한 승인이 필요합니다", "새 배포의 변경 목록에서 worker 제거를 확인하고 승인하세요."],
   aws_worker_removal_base_mismatch: ["승인 기준과 현재 AWS 배포 기록이 일치하지 않습니다", "현재 배포 상태를 확인하고 새 변경 목록으로 다시 승인하세요."],
+  gcp_plan_destructive_change: ["승인 범위를 벗어난 GCP 리소스 삭제·교체가 있어 적용 전에 중단했습니다", "DB·Cloud Storage·공용 인프라 삭제는 별도 작업으로 검토하세요."],
+  gcp_plan_outside_app_module: ["이 앱의 범위를 벗어난 GCP 인프라 변경이 감지됐습니다", "Foundation이 소유하는 공용 인프라를 앱 배포가 변경하지 않는지 확인하세요."],
+  gcp_plan_unknown_action: ["지원하지 않는 GCP 인프라 변경 작업이 감지됐습니다", "Terraform 변경 계획을 확인한 뒤 다시 시도하세요."],
+  gcp_context_not_approved: ["승인된 GCP 설계와 실행할 배포 정보가 일치하지 않습니다", "현재 커밋과 GCP 설계로 다시 분석하고 승인하세요."],
   plan_config_mismatch: ["분석 결과의 환경설정이 배포 설계에 반영되지 않았습니다", "Planner가 검증된 PORT 등 설정을 보존하는지 확인하세요."],
   policy_gate_failed: ["정책 검사를 완료하지 못했습니다", "정책 검사 결과에서 실패한 규칙과 단계를 확인하세요."],
   // E Intent Gate: AI 판단의 근거 검사
@@ -44,6 +48,7 @@ const CODES = {
   // #30 AWS 배포 경로: 상세 원인은 화면에 내보내지 않고 조종실 서버의 비공개 기록에 남긴다
   aws_pipeline_failed: ["AWS 배포 단계를 완료하지 못했습니다", "원인은 보안상 화면에 표시하지 않습니다. 조종실 서버의 배포 작업 폴더에 있는 failure.json을 확인하세요."],
   aws_adapter_failed: ["AWS 배포 단계를 완료하지 못했습니다", "원인은 보안상 화면에 표시하지 않습니다. 조종실 서버의 배포 작업 폴더에 있는 failure.json을 확인하세요."],
+  gcp_adapter_failed: ["GCP 배포 단계를 완료하지 못했습니다", "원인은 보안상 화면에 표시하지 않습니다. 조종실 서버의 GCP 배포 작업 폴더에 있는 failure.json을 확인하세요."],
   local_pipeline_failed: ["Local 배포 단계를 완료하지 못했습니다", null],
   mapper_planner_not_connected: ["레포 지도·배포 설계(B)가 연결되지 않았습니다", "데모 모드(control_plane.runtime --demo)로 실행하거나 B Mapper/Planner 명령을 연결하세요."],
   runtime_source_changed: ["분석한 뒤에 소스가 바뀌었습니다", "같은 소스로 다시 분석하고 배포하세요."],
@@ -120,10 +125,19 @@ export function describe(detail) {
     aws_plan_review_started: "AWS 변경 계획을 생성하고 승인 범위를 확인합니다.",
     aws_services_activating: "DB 준비를 확인했습니다. ECS 서비스를 실행하고 기존 태스크 정리를 기다립니다.",
     aws_adapter_failed: "AWS 배포 단계를 완료하지 못했습니다. 비공개 진단 기록을 확인해 주세요.",
+    gcp_intent_source_approved: "앱 소스와 GCP 분석 결과를 확인했습니다.",
+    gcp_patch_started: "GCP에 맞게 DB와 저장소 코드를 수정합니다.",
+    gcp_patch_approved: "GCP 코드 수정의 정책 검사를 통과했습니다.",
+    gcp_plan_review_started: "GCP 변경 계획을 생성하고 앱 소유 범위를 확인합니다.",
+    gcp_adapter_failed: "GCP 배포 단계를 완료하지 못했습니다. 비공개 진단 기록을 확인해 주세요.",
     "validating exact local linux/amd64 image": "승인된 이미지를 확인합니다.",
     "publishing immutable ECR tag": "승인된 이미지를 ECR에 업로드합니다.",
+    "publishing immutable Artifact Registry tag": "승인된 이미지를 Artifact Registry에 업로드합니다.",
     "activating digest-pinned ECS services": "ECS 서비스를 실행합니다.",
     "waiting for ALB target health": "로드밸런서에서 앱 상태를 확인합니다.",
+    "activating digest-pinned Cloud Run revisions": "Cloud Run 리비전을 실행합니다.",
+    "waiting for the latest revision to serve all traffic": "최신 Cloud Run 리비전의 준비 상태와 트래픽을 확인합니다.",
+    "latest revisions are ready and serve 100% of traffic": "최신 Cloud Run 리비전이 모든 트래픽을 처리합니다.",
     "all registered public targets are healthy": "로드밸런서 상태 검사를 통과했습니다.",
     "performing verified external HTTPS health request": "외부 HTTPS 접속을 확인합니다.",
   };

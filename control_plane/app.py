@@ -194,6 +194,7 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         if runtime is not None:
             # 처음 가는 실제 배포 환경은 무엇이 만들어지는지 사람이 확인한다.
             first = {"aws": "aws: 최초 실제 배포 · 프로젝트 전용 ECS·DB·S3 리소스 생성",
+                     "gcp": "gcp: 최초 실제 배포 · 프로젝트 전용 Cloud Run·Cloud SQL·Cloud Storage 리소스 생성",
                      "onprem": "onprem: 사내 서버에 처음 배포 · 컨테이너·DB 볼륨 생성"}
             for target, reason in first.items():
                 if target in result["plans"] and target not in old:
@@ -290,6 +291,7 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         from policy_gate.catalog import release
         return {"active_policy_version": release()["version"], "analysis_backend": backend,
                 "aws_enabled": getattr(runtime, "aws_config", None) is not None,
+                "gcp_enabled": getattr(runtime, "gcp_config", None) is not None,
                 "onprem_enabled": getattr(runtime, "onprem_config", None) is not None,
                 "model": getattr(runtime, "analysis_model", None) if backend in {"codex-cli", "openai"} else None,
                 "reasoning_effort": REASONING_EFFORT if backend in {"codex-cli", "openai"} else None,

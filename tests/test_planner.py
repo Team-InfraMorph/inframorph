@@ -3,17 +3,17 @@ from pathlib import Path
 import unittest
 
 from planner.engine import make_plan
-from planner.pricing import estimate_aws_monthly_krw
+from planner.pricing import estimate_aws_monthly_krw, estimate_gcp_monthly_krw
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class PlannerTests(unittest.TestCase):
-    def test_v1_v2_local_aws_contracts(self):
+    def test_v1_v2_local_aws_gcp_contracts(self):
         for version in ("v1", "v2"):
             fixture = ROOT / "schemas" / "fixtures" / version
             intent = json.loads((fixture / "intent.json").read_text())
-            for target in ("local", "aws"):
+            for target in ("local", "aws", "gcp"):
                 with self.subTest(version=version, target=target):
                     expected = json.loads((fixture / f"plan.{target}.json").read_text())
                     actual = make_plan(intent, target).model_dump(mode="json")
@@ -39,6 +39,8 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(
             estimate_aws_monthly_krw(services * 2), 271296
         )
+        self.assertEqual(estimate_gcp_monthly_krw(services), 168491)
+        self.assertEqual(estimate_gcp_monthly_krw(services * 2), 274662)
 
 
 if __name__ == "__main__":

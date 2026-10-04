@@ -147,7 +147,7 @@ class BCommands:
 def reviewed_versions():
     """Operator-owned revision catalog; selecting one never supplies source data."""
     return [{"id": case, "label": label,
-                 "supported_targets": ["local", "aws", "onprem"],
+                 "supported_targets": ["local", "aws", "gcp", "onprem"],
                  "commit_sha": RepoMap.model_validate_json(
                      (ROOT / f"tests/fixtures/analyzer/{case}/repo_map.json").read_text()).commit}
                 for case, label in (("v1", "V1 · 기본 웹 앱"), ("v2", "V2 · 노트 집계 worker 추가"))]
@@ -189,7 +189,7 @@ class DemoModules:
     def plan(self, intent, target="local"):
         # This is a fixture, not an attempt to implement B's mapping rules.
         case = "v2" if any(w.kind.value == "worker" for w in intent.workloads) else "v1"
-        if target not in {"local", "aws"}:
+        if target not in {"local", "aws", "gcp"}:
             raise ValueError("unsupported_target")
         if intent.config not in ({}, {"PORT": "3000"}):
             raise ValueError("unsupported_demo_config")

@@ -42,6 +42,7 @@ INFRAMORPH_DEMO_MODE=1 GITHUB_WEBHOOK_SECRET=dev .venv/bin/python -m uvicorn con
 - demo-app의 V1·V2 선택도 실제 원격 커밋을 가져온다. 버전을 지정하지 않은 API 배포는 프로젝트 브랜치의 HEAD를 확인한다.
 - `/api/runtime`과 화면 상단에 실제 분석 방식·모델·Mapper 모드가 표시된다.
 - `--aws-config /absolute/path/runtime.json`을 추가하면 기존 AWS 연결을 사용한다.
+- `--gcp-config /absolute/path/runtime.json`을 추가하면 서비스 계정 가장 방식의 GCP 연결을 사용한다.
   키는 서버 분석과 명시된 Local 복구 프로세스에만 전달하며 Mapper·Planner·Docker·AWS 프로세스에는 전달하지 않는다.
 - 현재 실행 정책은 검토된 demo-app 소스만 허용한다. 임의의 레포를 입력해도 정책 검사를 생략하지 않는다.
 

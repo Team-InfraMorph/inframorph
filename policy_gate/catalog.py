@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 IMPLEMENTATION = ['policy_gate/gate.py','policy_gate/rules.py','policy_gate/reporting.py','policy_gate/catalog.py',
                   'policy_gate/structure.py','policy_gate/inspect_js.cjs','policy_gate/vendor/acorn.cjs',
-                  'analyzer/e_worker.py','analyzer/e_runtime.py','control_plane/policy_results.py','control_plane/policy_lifecycle.py','control_plane/policy_api.py','control_plane/local_deploy.py','control_plane/aws_deploy.py','analyzer/source_policy.py','analyzer/demo-profile.json','builder/runtime.py','builder/trusted-profile.json',
+                  'analyzer/e_worker.py','analyzer/e_runtime.py','control_plane/policy_results.py','control_plane/policy_lifecycle.py','control_plane/policy_api.py','control_plane/local_deploy.py','control_plane/aws_deploy.py','control_plane/gcp_deploy.py','analyzer/source_policy.py','analyzer/demo-profile.json','builder/runtime.py','builder/trusted-profile.json',
                   'control_plane/auto_repair.py','control_plane/runtime.py','code_patch/runner.py','analyzer/board-profiles.json','adapters/local/board_check.py','adapters/local/runtime.py']
 
 

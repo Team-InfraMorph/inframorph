@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import { describe, explain } from "./explain.js";
 
-export const TARGETS = { local: "Local 테스트 (노트북)", onprem: "온프레미스 (사내 서버)", aws: "AWS (서울)" };
-// 화면 순서: Local 테스트 → (통과하면) 온프레미스 · AWS
-export const ORDER = ["local", "onprem", "aws"];
+export const TARGETS = { local: "Local 테스트 (노트북)", onprem: "온프레미스 (사내 서버)", aws: "AWS (서울)", gcp: "GCP (서울)" };
+// 화면 순서: Local 테스트 → (통과하면) 온프레미스 · AWS · GCP
+export const ORDER = ["local", "onprem", "aws", "gcp"];
 export const ordered = (targets) => [...targets].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
 export const STATUS = {
   CREATED: "대기", DEPLOYING: "배포 중", AWAITING_APPROVAL: "승인 대기", LIVE: "정상",
   FAILED: "실패", ROLLED_BACK: "롤백됨", SUPERSEDED: "건너뜀",
 };
 export const TERMINAL = ["LIVE", "FAILED", "ROLLED_BACK", "SUPERSEDED"];
-const SHORT = { local: "Local 테스트", onprem: "온프레미스", aws: "AWS" };
+const SHORT = { local: "Local 테스트", onprem: "온프레미스", aws: "AWS", gcp: "GCP" };
 
 // 배포 한 번 = 공통 단계(대상마다 같은 일) → 대상별 배포 레인 → 조종실 직접 확인.
 // 이벤트의 step 이름만으로는 '근거 검사'와 '패치 검사'가 둘 다 policy라서, 코드 수정 전후로 나눈다.
@@ -24,7 +24,11 @@ const DEPLOY_STEPS = {
   url: "주소 발급", smoke: "외부 접속 테스트", rollback: "롤백",
 };
 // 대상별 배포 단계의 기본 순서. 배포기가 이 밖의 단계를 보내면 뒤에 붙인다.
-const LANE = { aws: ["plan", "push", "infra", "start", "health", "url", "smoke"], local: ["start", "health", "url", "smoke"] };
+const LANE = {
+  aws: ["plan", "push", "infra", "start", "health", "url", "smoke"],
+  gcp: ["plan", "push", "infra", "start", "health", "url", "smoke"],
+  local: ["start", "health", "url", "smoke"],
+};
 const MARK = { ok: "✓", fail: "✗", wait: "!", skip: "–", notrun: "" };
 const HEADLINE = {
   LIVE: "배포 완료", FAILED: "배포 실패", ROLLED_BACK: "이전 버전으로 복구됨",
@@ -202,7 +206,7 @@ function lane(target, events, running, now, hasDb) {
     const ms = end - start;
     prevEnd = end;
     const prior = nodes.at(-1);
-    const dbSlot = hasDb && target === "aws" && i > 0 && order[i - 1].step === "infra" && cur.step === "start";
+    const dbSlot = hasDb && ["aws", "gcp"].includes(target) && i > 0 && order[i - 1].step === "infra" && cur.step === "start";
     const gap = prior && cur.started ? Date.parse(cur.first) - Date.parse(order[i - 1].last) : 0;
     const database = cur.events.map((e) => json(e.detail)?.database).find(Boolean);
     if (dbSlot && gap > 0) nodes.push({ step: "db", label: "DB 준비", status: "ok",
@@ -216,7 +220,7 @@ function lane(target, events, running, now, hasDb) {
   }
   // 인프라가 끝났고 아직 '실행'이 시작되지 않았으면 지금 DB 준비 중이다.
   const last = order.at(-1);
-  if (running && hasDb && target === "aws" && last?.step === "infra" && last.status === "ok") {
+  if (running && hasDb && ["aws", "gcp"].includes(target) && last?.step === "infra" && last.status === "ok") {
     nodes.splice(nodes.findIndex((n) => n.step === "infra") + 1, 0,
       { step: "db", label: "DB 준비", status: "started", ms: now - Date.parse(last.last), gap: "db" });
   }
@@ -434,7 +438,7 @@ function StepDetail({ item, onClose }) {
   );
 }
 
-const AWS_MODE = {
+const CLOUD_MODE = {
   first: "처음 배포 · 새 앱과 새 주소를 만듦",
   resume: "이전에 멈춘 첫 배포를 이어서 · 새 주소",
   redeploy: "기존 앱 갱신 · 주소는 그대로",
@@ -446,7 +450,7 @@ function json(text) {
 
 /** 대상별 '바뀐 것 / 그대로인 것'. 배포기가 알려 준 사실만 쓰고, 모르면 줄을 만들지 않는다. */
 function changes(target, deploy, failure) {
-  if (target !== "aws") return []; // Local 배포기는 아직 바뀐 것 요약을 남기지 않는다
+  if (!["aws", "gcp"].includes(target)) return []; // Local 배포기는 아직 바뀐 것 요약을 남기지 않는다
   const rows = [];
   let mode = null, applied = null, preview = null;
   for (const e of deploy?.events ?? []) {
@@ -460,8 +464,9 @@ function changes(target, deploy, failure) {
       .filter(([, n]) => n).map(([w, n]) => `${w} ${n}`);
     return parts.length ? parts.join(" · ") : "바뀐 것 없음 (그대로)";
   };
-  if (mode) rows.push(["배포 방식", AWS_MODE[mode.mode] ?? mode.mode]);
-  if (deploy?.events.some((e) => e.step === "push" && e.status === "ok")) rows.push(["이미지", "새 이미지를 저장소(ECR)에 올림"]);
+  if (mode) rows.push(["배포 방식", CLOUD_MODE[mode.mode] ?? mode.mode]);
+  if (deploy?.events.some((e) => e.step === "push" && e.status === "ok"))
+    rows.push(["이미지", `새 이미지를 저장소(${target === "gcp" ? "Artifact Registry" : "ECR"})에 올림`]);
   if (applied) rows.push(["클라우드 자원", count(applied)]);
   else if (preview) rows.push(["클라우드 자원", `예정: ${count(preview)}${failure ? " · 반영 완료 전에 멈춤" : ""}`]);
   else if (failure?.step === "infra") rows.push(["클라우드 자원", "반영 완료 전에 멈춤"]);

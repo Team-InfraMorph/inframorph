@@ -60,10 +60,28 @@ class RuleTests(unittest.TestCase):
         self.assertNotEqual(ast['a.js']['normalized'],ast['b.js']['normalized'])
 
     def test_arbitrary_behavior_inside_allowed_file_is_blocked(self):
-        fixture=test_e_runtime.GateTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
-        fixture.make_bundle({'src/storage.js': b'module.exports = {admin: true};\n'})
+        fixture = test_e_runtime.GateTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+
+        fixture.make_bundle({
+            "src/storage.js": b"module.exports = {admin: true};\n",
+        })
+
+        patch_plan = test_e_runtime.plan()
+        patch_plan["db"] = None
+
         from policy_gate.gate import validate_patch
-        with self.assertRaisesRegex(PolicyError,'patch_behavior_changed'): validate_patch(fixture.original,fixture.bundle,test_e_runtime.plan())
+
+        with self.assertRaisesRegex(
+            PolicyError,
+            "patch_behavior_changed",
+        ):
+            validate_patch(
+                fixture.original,
+                fixture.bundle,
+                patch_plan,
+            )
 
     def test_unsupported_config_and_parser_failure_are_not_pass(self):
         reports=[]

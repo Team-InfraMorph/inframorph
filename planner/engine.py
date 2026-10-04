@@ -1,10 +1,11 @@
 from schemas import Intent, Plan
-from .pricing import estimate_aws_monthly_krw
+from .pricing import estimate_aws_monthly_krw, estimate_gcp_monthly_krw
+from .database import make_db_plan
 
 def make_plan(raw_intent, target):
     intent = Intent.model_validate(raw_intent)
 
-    if target not in {"local", "aws"} or intent.unknowns:
+    if target not in {"local", "aws", "gcp"} or intent.unknowns:
         raise ValueError("unresolved_or_unsupported_plan")
     if intent.app != "demo-app" or intent.runtime != "node22":
         raise ValueError("unsupported_app")
@@ -42,12 +43,11 @@ def make_plan(raw_intent, target):
 
     db = states["relational_db"]
     storage = states["persistent_files"]
-    if (
-        db.engine,
-        db.orm,
-        storage.path.rstrip("/"),
-    ) != ("sqlite", "prisma", "uploads"):
-        raise ValueError("unsupported_state")
+
+    if storage.path.rstrip("/") != "uploads":
+        raise ValueError("unsupported_storage")
+
+    db_plan = make_db_plan(db, target)
 
     if intent.secrets != ["DATABASE_URL"] or intent.config not in (
         {}, {"PORT": "3000"}
@@ -63,7 +63,7 @@ def make_plan(raw_intent, target):
         services.append(service)
 
     config = dict(intent.config)
-    config["STORAGE_DRIVER"] = "fs" if target == "local" else "s3"
+    config["STORAGE_DRIVER"] = {"local": "fs", "aws": "s3", "gcp": "gcs"}[target]
 
     mermaid = "flowchart LR\nweb --> db\nweb --> storage"
     if "worker" in names:
@@ -75,21 +75,17 @@ def make_plan(raw_intent, target):
         "app": intent.app,
         "image_tag": f"app:{intent.source_revision}",
         "services": services,
-        "db": {
-            "type": (
-                "postgres_container"
-                if target == "local" else "rds_postgres"
-            ),
-            "patch": "sqlite_to_postgres",
-        },
+        "db": db_plan,
         "storage": {
-            "type": "volume" if target == "local" else "s3",
+            "type": {"local": "volume", "aws": "s3", "gcp": "gcs"}[target],
             "patch": "fs_to_storage",
             "path": storage.path,
         },
         "secrets": intent.secrets,
         "config": config,
-        "logs": "docker" if target == "local" else "cloudwatch",
-        "est_monthly_krw": (0 if target == "local" else estimate_aws_monthly_krw(services)),
+        "logs": {"local": "docker", "aws": "cloudwatch", "gcp": "cloud_logging"}[target],
+        "est_monthly_krw": (0 if target == "local" else
+                            estimate_aws_monthly_krw(services) if target == "aws" else
+                            estimate_gcp_monthly_krw(services)),
         "mermaid": mermaid,
     })

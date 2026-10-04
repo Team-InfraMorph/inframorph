@@ -7,6 +7,8 @@
 | Local 롤백 | E Local Adapter | `python -m adapters.local rollback --state-dir --deployment-id` |
 | AWS 배포 | A AWS Adapter | `python -m adapters.aws deploy --plan --artifact --state-dir --execute --deployment-id` |
 | AWS 롤백 | A AWS Adapter | `python -m adapters.aws rollback --state-dir --execute --deployment-id` |
+| GCP 배포 | A GCP Adapter | `python -m adapters.gcp deploy --plan --artifact --state-dir --execute --deployment-id` |
+| GCP 롤백 | A GCP Adapter | `python -m adapters.gcp rollback --state-dir --execute --deployment-id` |
 
 빌드는 실제 배포기가 있는 대상만 한다(가짜 배포기는 이미지가 필요 없다). 배포 작업 폴더 구조:
 <INFRAMORPH_HOME>/<deployment_id>/{snapshot, patched/<target>, plan.<target>.json, build.<target>.json}
@@ -18,9 +20,9 @@ import sys
 
 from .analysis import module_root, StageFailed
 
-ADAPTERS = {"local": "adapters/local", "aws": "adapters/aws"}
+ADAPTERS = {"local": "adapters/local", "aws": "adapters/aws", "gcp": "adapters/gcp"}
 # AWS Adapter는 실제 계정을 바꾸므로 --execute 없이는 거부한다. 이 명령은 조종실 승인을 거친 뒤에만 실행된다.
-EXECUTE = {"aws": ["--execute"]}
+EXECUTE = {"aws": ["--execute"], "gcp": ["--execute"]}
 NO_BUILD_NOTE = "새 커밋의 코드가 없어 다시 빌드하지 않음 (B Repo Mapper 연결 전) · 기존 버전 유지"
 
 

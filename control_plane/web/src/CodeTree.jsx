@@ -3,9 +3,9 @@ import { useState } from "react";
 // 배포할 앱 한 장: 왼쪽 = 코드 트리(B repo_map.tree), 오른쪽 = '앱이 필요로 하는 것 → 대상별로 무엇이 되나'.
 // 필요(근거 줄)는 C Analyzer의 intent, 대상별 구성은 B Planner의 plan, 바뀐 파일은 C Code Patch 결과에서 온다.
 
-const DB = { postgres_container: "PostgreSQL 컨테이너", rds_postgres: "RDS PostgreSQL" };
-const STORAGE = { volume: "Docker 볼륨", s3: "S3 버킷" };
-const LOGS = { docker: "Docker 로그", cloudwatch: "CloudWatch" };
+const DB = { postgres_container: "PostgreSQL 컨테이너", rds_postgres: "RDS PostgreSQL", cloudsql_postgres: "Cloud SQL PostgreSQL" };
+const STORAGE = { volume: "Docker 볼륨", s3: "S3 버킷", gcs: "Cloud Storage 버킷" };
+const LOGS = { docker: "Docker 로그", cloudwatch: "CloudWatch", cloud_logging: "Cloud Logging" };
 
 /** 파일 경로 → 짧은 역할 이름(AI가 근거로 든 파일만). */
 function roleOf(intent) {
@@ -74,7 +74,8 @@ function partsOf(intent, plan, patchFiles) {
     return {
       id: db ? "db" : "storage", st, db,
       files: [...new Set([...files(st.evidence), ...added(db ? /prisma|schema|db/i : /storage|upload|image/i)])],
-      fix: db ? plan.db?.patch && "패치: SQLite → PostgreSQL" : plan.storage?.patch && "패치: 디스크·S3 겸용 저장",
+      fix: db ? plan.db?.patch && "패치: SQLite → PostgreSQL"
+        : plan.storage?.patch && `패치: 디스크·${plan.storage.type === "gcs" ? "Cloud Storage" : "S3"} 겸용 저장`,
     };
   });
   return { svc, data };
@@ -96,23 +97,25 @@ function Box({ part, title, role, sub, fix, shared, tone, hl, onHover }) {
 
 const Down = ({ label }) => <div className="cdown"><span>{label}</span></div>;
 
-/** 이 레포에 맞게 실제로 배포된 구조. AWS = A의 terraform(foundation 공용 + app 전용), Local = E의 docker compose. */
-const USER = { aws: ["사용자 (인터넷 어디서나)", "HTTPS 공개 주소"], onprem: ["사용자 (사내망 · Tailscale)", "사내 서버 주소"], local: ["사용자 (이 PC)", "127.0.0.1"] };
-const ZONE = { aws: "VPC 비공개 구역 · 직접 접속 불가", onprem: "사내 서버 Docker · 같은 이미지", local: "docker compose · 테스트용" };
-const TAB = { local: "Local 테스트 · 내 노트북", onprem: "온프레미스 · 사내 서버", aws: "AWS · 서울 리전" };
+/** 이 레포에 맞게 실제로 배포된 구조. Cloud = A의 Terraform, Local = E의 docker compose. */
+const USER = { aws: ["사용자 (인터넷 어디서나)", "HTTPS 공개 주소"], gcp: ["사용자 (인터넷 어디서나)", "HTTPS 공개 주소"], onprem: ["사용자 (사내망 · Tailscale)", "사내 서버 주소"], local: ["사용자 (이 PC)", "127.0.0.1"] };
+const ZONE = { aws: "VPC 비공개 구역 · 직접 접속 불가", gcp: "VPC 비공개 연결 · Cloud Run 직접 egress", onprem: "사내 서버 Docker · 같은 이미지", local: "docker compose · 테스트용" };
+const TAB = { local: "Local 테스트 · 내 노트북", onprem: "온프레미스 · 사내 서버", aws: "AWS · 서울 리전", gcp: "GCP · 서울 리전" };
 
 function CloudArch({ target, intent, plan, parts, url, hl, onHover, title }) {
   const aws = target === "aws";
+  const gcp = target === "gcp";
+  const cloud = aws || gcp;
   const web = parts.svc.find((p) => p.w.public);
   const host = url?.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-  const svcTitle = (p) => (aws ? "ECS Fargate" : "앱 컨테이너");
+  const svcTitle = (p) => aws ? "ECS Fargate" : gcp ? (p.w.kind === "worker" ? "Cloud Run Worker Pool" : "Cloud Run") : "앱 컨테이너";
   return (
     <div className={`carch ca-${target}`}>
       {title && <div className={`ca-title ct-${target}`}>{title}</div>}
       <Box title={USER[target][0]} sub={host ?? USER[target][1]} tone="user" hl={hl} onHover={onHover} />
-      <Down label={aws ? "HTTPS" : `HTTP${web?.w.port ? ` :${web.w.port}` : ""}`} />
-      {aws && <>
-        <Box title="로드밸런서 (ALB)" sub="HTTPS 인증서 · 앱 주소별로 나눠 보냄" shared tone="edge" hl={hl} onHover={onHover} />
+      <Down label={cloud ? "HTTPS" : `HTTP${web?.w.port ? ` :${web.w.port}` : ""}`} />
+      {cloud && <>
+        <Box title={aws ? "로드밸런서 (ALB)" : "Google HTTPS Load Balancer"} sub="HTTPS 인증서 · 앱 주소별로 나눠 보냄" shared tone="edge" hl={hl} onHover={onHover} />
         <Down />
       </>}
       <div className="czone">
@@ -121,7 +124,7 @@ function CloudArch({ target, intent, plan, parts, url, hl, onHover, title }) {
           {parts.svc.map((p) => (
             <Box key={p.id} part={p} title={svcTitle(p)} tone="svc" hl={hl} onHover={onHover}
                  role={`${p.w.kind === "http" ? "웹 서버" : "백그라운드 작업"}${p.w.port ? ` :${p.w.port}` : ""}`}
-                 sub={aws ? `${plan.services.find((s) => s.name === p.id)?.cpu ?? ""} CPU · ${plan.services.find((s) => s.name === p.id)?.mem ?? ""}MB` : p.w.command ?? ""} />
+                 sub={cloud ? `${plan.services.find((s) => s.name === p.id)?.cpu ?? ""} CPU · ${plan.services.find((s) => s.name === p.id)?.memory ?? plan.services.find((s) => s.name === p.id)?.mem ?? ""}MB` : p.w.command ?? ""} />
           ))}
         </div>
       </div>
@@ -131,13 +134,14 @@ function CloudArch({ target, intent, plan, parts, url, hl, onHover, title }) {
           <Box key={p.id} part={p} tone="data" hl={hl} onHover={onHover} fix={p.fix}
                title={p.db ? DB[plan.db?.type] ?? plan.db?.type : STORAGE[plan.storage?.type] ?? plan.storage?.type}
                role={p.db ? "DB" : `업로드 파일 · ${p.st.path}`}
-               sub={p.db ? (aws ? "공용 DB 서버 안의 앱 전용 DB" : "데이터는 Docker 볼륨에 보관") : aws ? "재배포해도 파일 유지" : "재시작해도 파일 유지"}
-               shared={aws && p.db} />
+               sub={p.db ? (aws ? "공용 DB 서버 안의 앱 전용 DB" : gcp ? "공용 Cloud SQL 인스턴스의 앱 전용 DB" : "데이터는 Docker 볼륨에 보관") : cloud ? "재배포해도 파일 유지" : "재시작해도 파일 유지"}
+               shared={cloud && p.db} />
         ))}
       </div>
       <div className="cside">
         {aws && <span><b>ECR</b> 앱 이미지 {plan.image_tag.slice(0, 11)}</span>}
-        {intent.secrets.length > 0 && <span><b>{aws ? "Secrets Manager" : "app.env"}</b> {intent.secrets.join(", ")}</span>}
+        {gcp && <span><b>Artifact Registry</b> 앱 이미지 {plan.image_tag.slice(0, 11)}</span>}
+        {intent.secrets.length > 0 && <span><b>{aws ? "Secrets Manager" : gcp ? "Secret Manager" : "app.env"}</b> {intent.secrets.join(", ")}</span>}
         <span><b>{LOGS[plan.logs] ?? plan.logs}</b> 로그</span>
       </div>
     </div>
@@ -152,7 +156,7 @@ export function AppCode({ repoMap, intent, patch, plans, targets, urls = {} }) {
   const views = deploys.length > 1 ? ["deploy", ...shown.filter((t) => t === "local")] : shown;
   const [tab, setTab] = useState(null); // 고르기 전에는 배포 대상(나란히) 또는 AWS를 보여 준다. 설계도가 늦게 와도 따라간다
   const [hl, setHl] = useState(new Set());
-  const current = tab && views.includes(tab) ? tab : ["deploy", "aws", "onprem", "local"].find((t) => views.includes(t));
+  const current = tab && views.includes(tab) ? tab : ["deploy", "gcp", "aws", "onprem", "local"].find((t) => views.includes(t));
   const patchFiles = Object.values(patch ?? {})[0]?.files ?? [];
   if (!intent || !current) return null;
   const panels = current === "deploy" ? deploys : [current];

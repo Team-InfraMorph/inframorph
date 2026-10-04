@@ -34,17 +34,15 @@ function save(key, value) {
 
 const DEMO_REPO = "https://github.com/Team-InfraMorph/demo-app";
 const sameRepo = (a, b) => a.replace(/\/$/, "").replace(/\.git$/, "").toLowerCase() === b.replace(/\/$/, "").replace(/\.git$/, "").toLowerCase();
-// 배포 위치: Local 테스트는 항상 먼저 거치고, 통과하면 고른 곳에 배포한다.
-const DESTS = { onprem: ["온프레미스", ["local", "onprem"]], aws: ["AWS", ["local", "aws"]],
-  both: ["온프레미스 + AWS", ["local", "onprem", "aws"]], none: ["Local 테스트만", ["local"]] };
-const destOf = (targets = []) => targets.includes("onprem") && targets.includes("aws") ? "both"
-  : targets.includes("aws") ? "aws" : targets.includes("onprem") ? "onprem" : "none";
+// Local 테스트는 항상 먼저 거치고, 통과하면 체크한 원격 대상에 동시에 배포한다.
+const DESTS = { onprem: "온프레미스", aws: "AWS", gcp: "GCP" };
+const remoteOf = (targets = []) => Object.keys(DESTS).filter((target) => targets.includes(target));
 
 /** 한 화면에서 레포·브랜치·배포 위치를 고르고 바로 배포한다. 같은 레포·브랜치면 같은 앱으로 이어진다. */
 export function supportedDestinations(runtime, supported) {
   const supports = (target) => !supported || supported.includes(target);
   return { onprem: runtime?.onprem_enabled && supports("onprem"), aws: runtime?.aws_enabled && supports("aws"),
-    both: runtime?.onprem_enabled && runtime?.aws_enabled && supports("onprem") && supports("aws"), none: true };
+    gcp: runtime?.gcp_enabled && supports("gcp") };
 }
 
 function DeployBar({ runtime, project, running, versions, lastCommit, onDeploy }) {
@@ -59,12 +57,12 @@ function DeployBar({ runtime, project, running, versions, lastCommit, onDeploy }
   const picked = version || versions.find((v) => v.commit_sha === lastCommit)?.id || versions[0]?.id;
   const supported = demo ? versions.find((v) => v.id === picked)?.supported_targets : null;
   const allowed = supportedDestinations(runtime, supported);
-  const remembered = project && sameRepo(project.repo_url, repo) && project.branch === branch ? destOf(project.targets) : null;
-  const current = dest && allowed[dest] ? dest
-    : [remembered, "aws", "onprem", "none"].find((d) => d && allowed[d]);
+  const remembered = project && sameRepo(project.repo_url, repo) && project.branch === branch ? remoteOf(project.targets) : null;
+  const current = (dest ?? remembered ?? ["gcp", "aws", "onprem"].filter((target) => allowed[target]).slice(0, 1))
+    .filter((target) => allowed[target]);
   const submit = (e) => {
     e.preventDefault();
-    onDeploy({ repo_url: repo.trim(), branch: branch.trim(), targets: DESTS[current][1],
+    onDeploy({ repo_url: repo.trim(), branch: branch.trim(), targets: ["local", ...current],
                ...(demo ? { demo_version: picked } : {}) });
   };
   return (
@@ -73,15 +71,15 @@ function DeployBar({ runtime, project, running, versions, lastCommit, onDeploy }
       <label className="db-branch">브랜치 <input value={branch} onChange={(e) => setBranch(e.target.value)} /></label>
       <div className="db-dest">
         <span className="db-label">배포 위치</span>
-        <div className="seg" role="radiogroup" aria-label="배포 위치">
+        <div className="seg" role="group" aria-label="배포 위치">
           <span className="seg-fixed" title="항상 먼저 거칩니다">Local 테스트 →</span>
-          {Object.entries(DESTS).filter(([k]) => k !== "none").map(([k, [label]]) => (
-            <button type="button" key={k} role="radio" aria-checked={current === k} disabled={!allowed[k]}
-                    className={`seg-btn sb-${k}${current === k ? " on" : ""}`} onClick={() => setDest(k)}
+          {Object.entries(DESTS).map(([k, label]) => (
+            <button type="button" key={k} role="checkbox" aria-checked={current.includes(k)} disabled={!allowed[k]}
+                    className={`seg-btn sb-${k}${current.includes(k) ? " on" : ""}`}
+                    onClick={() => setDest(current.includes(k) ? current.filter((target) => target !== k) : [...current, k])}
                     title={allowed[k] ? undefined : supported?.length === 1 ? "이 체험 버전은 Local 전용입니다" : "이 조종실에 연결 설정이 없습니다"}>{label}</button>
           ))}
-          <button type="button" role="radio" aria-checked={current === "none"} className={`seg-btn${current === "none" ? " on" : ""}`}
-                  onClick={() => setDest("none")}>테스트만</button>
+          {!current.length && <span className="dim">테스트만</span>}
         </div>
       </div>
       {demo && <label className="db-version" title={runtime?.mapper_mode === "github" ? "선택한 버전의 커밋을 GitHub에서 가져와 배포합니다" : "선택한 버전의 고정된 데모 소스로 배포합니다"}>
@@ -205,7 +203,7 @@ const versionOf = (versions, sha) => { const v = versions.find((x) => x.commit_s
 
 const TRIGGER_LONG = { manual: "수동 배포", push: "git push", rollback: "되돌리기" };
 
-const SHORT_T = { local: "Local", onprem: "온프레미스", aws: "AWS" };
+const SHORT_T = { local: "Local", onprem: "온프레미스", aws: "AWS", gcp: "GCP" };
 
 /** 배포 기록(왼쪽): 배포 한 번 = 한 줄. 누르면 그 배포의 과정·결과·구조가 그대로 다시 열린다. */
 function History({ deployments, selectedId, following, onSelect, onFollow, onRollback, versions = [] }) {
@@ -377,7 +375,7 @@ export default function App() {
         <h1>InfraMorph 조종실</h1>
         {projects.length > 0 && <select aria-label="배포 기록을 볼 레포" value={projectId ?? ""} onChange={(e) => choose(e.target.value)}>
           {projects.map((p) => (
-            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch} · {ordered(p.targets).map((t) => ({ local: "Local 테스트", onprem: "온프레미스", aws: "AWS" })[t] ?? t).join(" · ")} · {p.project_id.slice(-6)}</option>
+            <option key={p.project_id} value={p.project_id}>{p.repo_url.replace("https://github.com/", "")} · {p.branch} · {ordered(p.targets).map((t) => ({ local: "Local 테스트", onprem: "온프레미스", aws: "AWS", gcp: "GCP" })[t] ?? t).join(" · ")} · {p.project_id.slice(-6)}</option>
           ))}
         </select>}
       </header>
@@ -399,6 +397,7 @@ export default function App() {
         GitHub Repo Mapper 연결됨 · 선택한 커밋의 소스를 직접 가져와 분석합니다.
       </p>}
       {runtime?.aws_enabled && <p className="usage">AWS 실제 배포 연결됨 · 프로젝트별로 앱과 데이터를 분리해 배포합니다.</p>}
+      {runtime?.gcp_enabled && <p className="usage">GCP 실제 배포 연결됨 · Cloud Run과 프로젝트별 데이터 리소스로 배포합니다.</p>}
       {error && <p className="error banner">{error}</p>}
 
       <DeployBar runtime={runtime} project={project} running={running} versions={versions} lastCommit={deployments[0]?.commit_sha}

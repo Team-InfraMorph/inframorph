@@ -3,6 +3,7 @@ import re
 
 
 SECRET_NAME = re.compile(r"(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|DATABASE_URL|CREDENTIAL)", re.I)
+NON_SECRET_ASSIGNMENTS = frozenset({"gtoken"})  # npm package name used by @google-cloud/storage
 PATTERNS = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
@@ -33,7 +34,9 @@ class Redactor:
         def assignment(match):
             value = match[3]
             name = re.split(r"[:=]", match[1], maxsplit=1)[0]
-            if SECRET_NAME.search(name) and value and not value.startswith(("${", "[REDACTED]")):
+            normalized = name.strip().strip("\"'").lower()
+            if (normalized not in NON_SECRET_ASSIGNMENTS and SECRET_NAME.search(name)
+                    and value and not value.startswith(("${", "[REDACTED]"))):
                 return match[1] + match[2] + self._mask(value) + match[2]
             return match[0]
 
