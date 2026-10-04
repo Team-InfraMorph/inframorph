@@ -1,0 +1,52 @@
+[
+  {
+    "board": "v2",
+    "source_revision": "f67109815d689ae52c2474dcb1bf04209d154a5d",
+    "analysis": "deterministic contract input; no model called",
+    "policy": "1.1.0",
+    "image_id": "sha256:802a753a5b62fe155ddd1f8e03002d02b967519ce6aceab05a9bfb39d34e56aa",
+    "url": "http://127.0.0.1:58772",
+    "checks": {},
+    "preserved": {
+      "note": {
+        "id": 2,
+        "text": "V2 → V3에서 다시 만나는 체험 기록",
+        "createdAt": "2026-10-03T22:23:21.120Z"
+      },
+      "key": "dc02a683-5d05-4ad3-a538-9a36e361f78d.png",
+      "image_sha256": "6b1048f8a6d40bac0b2954c18fefa40c4ea7a96120fc2e54b7317c0e43c2bbec"
+    }
+  },
+  {
+    "board": "v3",
+    "source_revision": "0d5d90b4310e6e510ce3c564f032c52beb973558",
+    "analysis": "deterministic contract input; no model called",
+    "policy": "1.1.0",
+    "image_id": "sha256:e8727bf57da9abb34b36041743b9e5b00e77a6d89cfb2669709182b3f47813c0",
+    "url": "http://127.0.0.1:59062",
+    "checks": {
+      "assets": {
+        "code": "board_assets_verified",
+        "file_count": 10
+      },
+      "worker": {
+        "code": "board_worker_verified",
+        "container_id": "e46d7e990a0912f2ebe268f13969743c83689d14be60d711772ea1df83af0ab8",
+        "image_id": "sha256:e8727bf57da9abb34b36041743b9e5b00e77a6d89cfb2669709182b3f47813c0",
+        "probe_note_id": 4,
+        "minimum_count": 4,
+        "observed_count": 4,
+        "observed_at": "2026-10-03T22:24:12.165Z"
+      }
+    },
+    "preserved": {
+      "note": {
+        "id": 2,
+        "text": "V2 → V3에서 다시 만나는 체험 기록",
+        "createdAt": "2026-10-03T22:23:21.120Z"
+      },
+      "key": "dc02a683-5d05-4ad3-a538-9a36e361f78d.png",
+      "image_sha256": "6b1048f8a6d40bac0b2954c18fefa40c4ea7a96120fc2e54b7317c0e43c2bbec"
+    }
+  }
+]

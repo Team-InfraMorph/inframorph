@@ -48,7 +48,7 @@ def _perform(data):
         result = deploy(plan, data["artifact"], state, publish=publish,
                         deployment_id=data["deployment_id"])
         # Keep paths/passwords/payloads private. Only return runtime identifiers.
-        return {"ok": True, "deployment": {"url": result["public_url"] or result["url"], "image_id": result["image_id"]}}
+        return {"ok": True, "deployment": {"url": result["public_url"] or result["url"], "image_id": result["image_id"], "checks": result.get("checks", {})}}
     if action == "cleanup":
         configs = sorted(state.glob("*/compose.json"))
         if configs:
@@ -76,7 +76,7 @@ def perform(data):
     try:
         with observe(sink,started), checkpoint(data.get('action')): reply = _perform(data)
     except Exception as error:
-        if not reports or reports[-1]['decision'] == 'PASS':
+        if data.get('action') != 'deploy' and (not reports or reports[-1]['decision'] == 'PASS'):
             reports.append(result('source', error))
         error.policy_results = reports
         raise
@@ -96,7 +96,7 @@ def main():
         code = str(error) if type(error).__name__ in types else "e_runtime_failed"
         if not re.fullmatch(r"[a-z_]{1,80}", code):
             code = "e_runtime_failed"
-        result = {"ok": False, "code": code, "policy_results": getattr(error, "policy_results", [])}
+        result = {"ok": False, "code": code, "policy_results": getattr(error, "policy_results", []), "rollback_verified": bool(getattr(error, "rollback_verified", False))}
     print(json.dumps(result))
     return 0 if result["ok"] else 1
 

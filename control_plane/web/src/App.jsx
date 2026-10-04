@@ -39,6 +39,12 @@ const DESTS = { onprem: "온프레미스", aws: "AWS", gcp: "GCP" };
 const remoteOf = (targets = []) => Object.keys(DESTS).filter((target) => targets.includes(target));
 
 /** 한 화면에서 레포·브랜치·배포 위치를 고르고 바로 배포한다. 같은 레포·브랜치면 같은 앱으로 이어진다. */
+export function supportedDestinations(runtime, supported) {
+  const supports = (target) => !supported || supported.includes(target);
+  return { onprem: runtime?.onprem_enabled && supports("onprem"), aws: runtime?.aws_enabled && supports("aws"),
+    gcp: runtime?.gcp_enabled && supports("gcp") };
+}
+
 function DeployBar({ runtime, project, running, versions, lastCommit, onDeploy }) {
   const [repo, setRepo] = useState(project?.repo_url ?? DEMO_REPO);
   const [branch, setBranch] = useState(project?.branch ?? "main");
@@ -47,12 +53,13 @@ function DeployBar({ runtime, project, running, versions, lastCommit, onDeploy }
   useEffect(() => {
     if (project) { setRepo(project.repo_url); setBranch(project.branch); setDest(null); setVersion(""); }
   }, [project?.project_id]);
-  const allowed = { onprem: runtime?.onprem_enabled, aws: runtime?.aws_enabled, gcp: runtime?.gcp_enabled };
+  const demo = versions.length > 0 && sameRepo(repo, DEMO_REPO);
+  const picked = version || versions.find((v) => v.commit_sha === lastCommit)?.id || versions[0]?.id;
+  const supported = demo ? versions.find((v) => v.id === picked)?.supported_targets : null;
+  const allowed = supportedDestinations(runtime, supported);
   const remembered = project && sameRepo(project.repo_url, repo) && project.branch === branch ? remoteOf(project.targets) : null;
   const current = (dest ?? remembered ?? ["gcp", "aws", "onprem"].filter((target) => allowed[target]).slice(0, 1))
     .filter((target) => allowed[target]);
-  const demo = versions.length > 0 && sameRepo(repo, DEMO_REPO);
-  const picked = version || versions.find((v) => v.commit_sha === lastCommit)?.id || versions[0]?.id;
   const submit = (e) => {
     e.preventDefault();
     onDeploy({ repo_url: repo.trim(), branch: branch.trim(), targets: ["local", ...current],
@@ -70,14 +77,14 @@ function DeployBar({ runtime, project, running, versions, lastCommit, onDeploy }
             <button type="button" key={k} role="checkbox" aria-checked={current.includes(k)} disabled={!allowed[k]}
                     className={`seg-btn sb-${k}${current.includes(k) ? " on" : ""}`}
                     onClick={() => setDest(current.includes(k) ? current.filter((target) => target !== k) : [...current, k])}
-                    title={allowed[k] ? undefined : "이 조종실에 연결 설정이 없습니다"}>{label}</button>
+                    title={allowed[k] ? undefined : supported?.length === 1 ? "이 체험 버전은 Local 전용입니다" : "이 조종실에 연결 설정이 없습니다"}>{label}</button>
           ))}
           {!current.length && <span className="dim">테스트만</span>}
         </div>
       </div>
       {demo && <label className="db-version" title={runtime?.mapper_mode === "github" ? "선택한 버전의 커밋을 GitHub에서 가져와 배포합니다" : "선택한 버전의 고정된 데모 소스로 배포합니다"}>
         테스트 버전{runtime?.mapper_mode === "github" ? " · GitHub" : ""} <select value={picked} onChange={(e) => setVersion(e.target.value)}>
-        {versions.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+        {versions.map((v) => <option key={v.id} value={v.id}>{v.label}{v.supported_targets?.length === 1 ? " · Local 전용" : ""}</option>)}
       </select></label>}
       <button type="submit" className="db-go" disabled={Boolean(running)}>
         {!running ? "배포" : running.status === "AWAITING_APPROVAL" ? "승인 대기 중" : "배포 중…"}
@@ -372,7 +379,7 @@ export default function App() {
           ))}
         </select>}
       </header>
-      <nav className="global-nav" aria-label="주요 메뉴"><a aria-current={!route.startsWith('/policy')?'page':undefined} href="#/deploy">배포</a><a aria-current={route.startsWith('/policy')?'page':undefined} href="#/policy/1.1.0/overview">정책</a></nav>
+      <nav className="global-nav" aria-label="주요 메뉴"><a aria-current={!route.startsWith('/policy')?'page':undefined} href="#/deploy">배포</a><a aria-current={route.startsWith('/policy')?'page':undefined} href={`#/policy/${runtime?.active_policy_version || "1.0.0"}/overview`}>정책</a></nav>
       {route.startsWith('/policy') && <PolicyWorkspace route={route}/>}
       <div hidden={route.startsWith('/policy')}>
       <div className={`shell${project ? " with-side" : ""}`}>

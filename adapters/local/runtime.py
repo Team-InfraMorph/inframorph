@@ -369,6 +369,14 @@ def deploy(
             emit(sink, deployment_id, "local", "health", "started")
             wait_for(lambda: request(url + web.health), timeout=120)
             record = smoke(url)
+            from analyzer.source_policy import board_profile
+            from .board_check import check_assets, check_worker
+            board = board_profile(plan.source_revision)
+            checks = {}
+            if board:
+                checks['assets'] = check_assets(url, board, request)
+                if board['id'] == 'v3':
+                    checks['worker'] = check_worker(execute, args, url, info['Id'], request)
             if previous:
                 smoke(url, record=previous["record"])
             emit(sink, deployment_id, "local", "health", "ok")
@@ -383,6 +391,7 @@ def deploy(
                 "url": url,
                 "public_url": public_url,
                 "record": record,
+                "checks": checks,
                 "plan": plan.model_dump(mode="json"),
             }
             if previous:
@@ -421,6 +430,7 @@ def deploy(
                     )
                     private_file(state / "current.next", json.dumps(previous, indent=2))
                     (state / "current.next").replace(current)
+                    exc.rollback_verified = True
                     emit(
                         sink,
                         deployment_id,

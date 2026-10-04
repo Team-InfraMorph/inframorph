@@ -57,7 +57,7 @@ class DemoVersionTests(unittest.TestCase):
     def test_version_catalog_is_operator_owned_and_invalid_requests_create_no_job(self):
         self.assertEqual(self.client.get("/api/runtime").json()["demo_versions"], DemoModules().versions())
         before = self.store.list_deployments(self.project["project_id"])
-        for body in ({"demo_version": "v3"}, {"demo_version": "../../v2"},
+        for body in ({"demo_version": "unregistered"}, {"demo_version": "../../v2"},
                      {"demo_version": "v2", "commit_sha": "a" * 40}):
             response = self.client.post(f"/api/projects/{self.project['project_id']}/deploy", json=body)
             self.assertEqual(response.status_code, 422)
