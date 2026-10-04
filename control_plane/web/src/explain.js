@@ -2,6 +2,12 @@
 // 오류 코드 출처: E policy_gate/gate.py, C analyzer·code_patch, A cloud adapters, 조종실 orchestrator.
 
 const CODES = {
+  board_worker_timeout: ["worker가 제한 시간 안에 검증 메모를 집계하지 못했습니다", "현재 worker의 실행 상태와 DB 연결을 확인하세요. 정책 위반과 별도인 실행 실패입니다."],
+  board_worker_not_running: ["현재 이미지로 실행 중인 worker를 확인하지 못했습니다", "worker 컨테이너와 이미지 식별값을 확인하세요."],
+  board_worker_restarted: ["검증 중 worker가 재시작됐습니다", "컨테이너 종료 원인을 확인하세요."],
+  board_worker_probe_missing: ["검증용 메모를 서버에서 다시 찾지 못했습니다", "현재 DB 연결과 메모 API를 확인하세요."],
+  board_asset_mismatch: ["실행 서버의 화면·이미지가 검토한 소스와 다릅니다", "검사한 이미지로 실행됐는지 확인하세요."],
+  board_asset_invalid: ["기본 이미지의 형식 또는 크기를 확인하지 못했습니다", "등록된 이미지 자료를 확인하세요."],
   aws_plan_destructive_change: ["승인 범위를 벗어난 리소스 삭제·교체가 있어 적용 전에 중단했습니다", "worker 제거는 해당 변경을 승인한 경우에만 허용됩니다. DB·S3·공용 인프라 삭제는 별도 작업이 필요합니다."],
   aws_plan_outside_app_module: ["이 앱의 배포 범위를 벗어난 인프라 변경이 감지됐습니다", "공용 인프라를 변경하지 않도록 배포 계획을 확인하세요."],
   aws_plan_unknown_action: ["지원하지 않는 인프라 변경 작업이 감지됐습니다", "배포 계획을 확인한 뒤 다시 시도하세요."],

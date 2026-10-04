@@ -186,8 +186,19 @@ async def deploy(context, store):
             store.mark_patch_applied(context.deployment_id, "initial")
             emit(context, "health", "ok", "initial_health_passed")
             emit(context, "smoke", "ok", "initial_smoke_passed", checked.url)
+            execution_checks = (connector.last_deployment or {}).get("checks", {})
+            if execution_checks:
+                execution_checks = {"image_id": connector.last_deployment["image_id"], **execution_checks}
+                send(DeployEvent(deployment_id=context.deployment_id, ts=datetime.now(timezone.utc),
+                    target="local", step="smoke", status="ok", detail=json.dumps(execution_checks)))
+                from .policy_lifecycle import diagnostic
+                diagnostic(store, context.deployment_id, None, json.dumps(execution_checks))
             finish_run(store, context.deployment_id, "succeeded")
             return 0
+        failure = getattr(connector, "last_execution_failure", None)
+        if failure:
+            send(DeployEvent(deployment_id=context.deployment_id, ts=datetime.now(timezone.utc),
+                target="local", step="smoke", status="fail", detail=json.dumps(failure)))
         retry_store = RetryStore(Path(context.output_dir) / "retry-state.sqlite")
         if repair_history(store, context.deployment_id):
             # Local health recovery regenerates a deterministic patch. It must

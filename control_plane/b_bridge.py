@@ -147,6 +147,7 @@ class BCommands:
 def reviewed_versions():
     """Operator-owned revision catalog; selecting one never supplies source data."""
     return [{"id": case, "label": label,
+                 "supported_targets": ["local", "aws", "gcp", "onprem"],
                  "commit_sha": RepoMap.model_validate_json(
                      (ROOT / f"tests/fixtures/analyzer/{case}/repo_map.json").read_text()).commit}
                 for case, label in (("v1", "V1 · 기본 웹 앱"), ("v2", "V2 · 노트 집계 worker 추가"))]
@@ -161,7 +162,8 @@ class GitHubModules(BCommands):
                          planner_command=[sys.executable, "-m", "planner"])
 
     def versions(self):
-        return reviewed_versions()
+        from analyzer.source_policy import board_profiles
+        return reviewed_versions() + [{k: p[k] for k in ("id", "label", "commit_sha", "supported_targets")} for p in board_profiles()]
 
 
 class DemoModules:

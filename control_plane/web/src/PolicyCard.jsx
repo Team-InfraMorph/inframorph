@@ -77,10 +77,10 @@ export default function PolicyCard({data,error,onRecheck,history,onReview,onFail
           </details>}
         </>}
       </>}
-    {impact && <aside className="policy-impact"><strong>현재 정책 변경 영향</strong><p>{impact.action==='evidence_confirmation_required'?(reviewContext?.mode==='operational_copy'?'근거 보완 권고 · 검증용 사본에서 재검사했습니다. 서비스의 현재 실행 상태는 확인하지 않습니다.':'근거 보완 권고 · 서비스 유지. 당시 판정과 새 근거 점검 결과는 별도로 보존합니다.'):impact.impact.reason==='target_scope_requires_review'?'온프레미스는 Local에서 검증한 이미지를 사용합니다. 대상별 정책 재검사 자료는 아직 연결되지 않았습니다.':impact.impact.reason==='current_policy'?'현재 활성 정책으로 검사한 배포입니다.':impact.impact.review?'새 정책으로 재검사하고 배포별 검토가 필요합니다.':'변경 영향을 확인하세요.'}</p><a href={`#/policy/${impact.active?.version||'1.1.0'}/impacts`}>배포 영향과 필요한 조치 ↗</a>
+    {impact && <aside className="policy-impact"><strong>현재 정책 변경 영향</strong><p>{impact.action==='evidence_confirmation_required'?(reviewContext?.mode==='operational_copy'?'근거 보완 권고 · 검증용 사본에서 재검사했습니다. 서비스의 현재 실행 상태는 확인하지 않습니다.':'근거 보완 권고 · 서비스 유지. 당시 판정과 새 근거 점검 결과는 별도로 보존합니다.'):impact.impact.reason==='target_scope_requires_review'?'온프레미스는 Local에서 검증한 이미지를 사용합니다. 대상별 정책 재검사 자료는 아직 연결되지 않았습니다.':impact.impact.reason==='current_policy'?'현재 활성 정책으로 검사한 배포입니다.':impact.impact.review?'새 정책으로 재검사하고 배포별 검토가 필요합니다.':'변경 영향을 확인하세요.'}</p><a href={`#/policy/${impact?.active?.version || row?.version || '1.1.0'}/impacts`}>배포 영향과 필요한 조치 ↗</a>
       {onRecheck&&<button className="secondary" disabled={pending||error} onClick={()=>act(()=>onRecheck(actualTarget))}>정책 재검사</button>}
       {job?.result && <p>최근 재검사: {labels[job.result.decision]||'재검사 불가'} · {job.result.reason_code}</p>}
-      {job?.result?.decision==='PASS'&&!job.reviewed&&<a href={`#/policy/${impact.active?.version||'1.1.0'}/impacts`}>변경 내용을 확인하고 검토하기</a>}
+      {job?.result?.decision==='PASS'&&!job.reviewed&&<a href={`#/policy/${impact?.active?.version || row?.version || '1.1.0'}/impacts`}>변경 내용을 확인하고 검토하기</a>}
     </aside>}
     <PolicyHistory key={deploymentId} results={rows} history={history} target={actualTarget} selectable={rows.map(r=>r.execution_id)} onSelect={id=>{const found=rows.find(r=>r.execution_id===id);if(found){setTarget(found.target);setSelected(id);}}}/>
     {actionError&&<p role="alert">{actionError}</p>}

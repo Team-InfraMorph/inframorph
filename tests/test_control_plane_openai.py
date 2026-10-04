@@ -117,7 +117,7 @@ class OpenAIRuntimeTests(unittest.TestCase):
         self.assertEqual(response.json()['mapper_mode'], 'github')
         self.assertEqual(response.json()['model'], 'gpt-6-luna')
         self.assertEqual(response.json()['reasoning_effort'], 'low')
-        self.assertEqual(len(response.json()['demo_versions']), 2)
+        self.assertEqual(len(response.json()['demo_versions']), 3)
         self.assertNotIn(KEY, response.text)
 
     def test_api_startup_rejects_missing_key_conflicting_backend_and_wrong_model(self):

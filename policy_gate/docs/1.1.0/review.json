@@ -153,5 +153,6 @@
     "source_commit": "b003fd9b6b0fd007eee90ebf01e2b3db518f8d41",
     "comparison_checker_commit": "cf987c3c8e87a856a3d3e46ead457ec3754df0bd"
   },
-  "verification_note": "Current results are recorded in the change PR and generated policy examples; inherited 1.0.0 counts are not 1.1.0 verification."
+  "verification_note": "Current results are recorded in the change PR and generated policy examples; inherited 1.0.0 counts are not 1.1.0 verification.",
+  "inherited_explanation_baseline": "1.0.0"
 }

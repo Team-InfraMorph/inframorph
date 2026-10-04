@@ -81,13 +81,13 @@ class ProjectIn(BaseModel):
 
 class DeployIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    demo_version: Literal["v1", "v2"] | None = None
+    demo_version: Literal["v1", "v2", "v3"] | None = None
     targets: list[Target] | None = Field(default=None, min_length=1)  # 이번 배포의 대상. 없으면 프로젝트 기본값
 
 
 class RepoDeployIn(ProjectIn):
     """한 화면에서 레포·브랜치·대상을 고르고 바로 배포. 같은 레포·브랜치면 같은 프로젝트(같은 앱)를 쓴다."""
-    demo_version: Literal["v1", "v2"] | None = None
+    demo_version: Literal["v1", "v2", "v3"] | None = None
 
 
 def _sse(event, data, seq=None):
@@ -288,7 +288,8 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
     def runtime_info():
         from analyzer.config import REASONING_EFFORT
         backend = getattr(runtime, "analysis_backend", "module")
-        return {"analysis_backend": backend,
+        from policy_gate.catalog import release
+        return {"active_policy_version": release()["version"], "analysis_backend": backend,
                 "aws_enabled": getattr(runtime, "aws_config", None) is not None,
                 "gcp_enabled": getattr(runtime, "gcp_config", None) is not None,
                 "onprem_enabled": getattr(runtime, "onprem_config", None) is not None,
@@ -326,6 +327,12 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
         repo_key = webhook.normalize_repo_url(body.repo_url)
         found = store.find_projects(repo_key, body.branch)
         targets = [t.value for t in body.targets]
+        validate = getattr(runtime, "validate_demo_selection", None)
+        if body.demo_version is not None and validate:
+            try:
+                validate({"repo_url": body.repo_url, "targets": targets}, body.demo_version, targets)
+            except ValueError:
+                raise HTTPException(409, "selected demo version or target is unavailable") from None
         project_id = found[0] if found else store.create_project(body.repo_url, body.branch, targets, repo_key)["project_id"]
         return start_deploy(store.get_project(project_id), background, body.demo_version, targets) | {"project_id": project_id}
 
@@ -337,7 +344,8 @@ def create_app(db_path=None, deployer_cmd=module_deployer_cmd, analyzer=fixture_
             if resolve is None:
                 raise HTTPException(409, "demo version selection requires the explicit demo runtime")
             try:
-                revision = resolve(project, demo_version)
+                validate = getattr(runtime, "validate_demo_selection", None)
+                revision = validate(project, demo_version, targets) if validate else resolve(project, demo_version)
             except ValueError:
                 raise HTTPException(409, "selected demo version is unavailable for this project") from None
         try:

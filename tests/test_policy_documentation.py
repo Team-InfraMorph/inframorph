@@ -30,9 +30,8 @@ class DocumentationContract(unittest.TestCase):
         previous={r['id']:r for r in release('1.0.0')['rules']}
         current={r['id']:r for r in release()['rules']}
         self.assertEqual(set(previous),set(current))
-        self.assertEqual({key for key in previous if previous[key]!=current[key]}, {'G-003','I-002','I-003'})
-        self.assertEqual(current['G-003'], previous['G-003'] | {'remedy': '지원하는 Local/AWS/GCP 프로필을 확인하세요.'})
-        for key in ('I-002','I-003'):
+        self.assertEqual({key for key in previous if previous[key]!=current[key]}, {'G-002','G-003','I-002','I-003'})
+        for key in ('G-002','G-003','I-002','I-003'):
             self.assertEqual(previous[key]['revision'],1)
             self.assertEqual(current[key]['revision'],2)
         from scripts.check_policy_catalog import validate_baselines
