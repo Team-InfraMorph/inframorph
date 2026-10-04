@@ -151,7 +151,9 @@ async def generate(args):
     good = json.loads((ROOT/'schemas/fixtures/v2/intent.json').read_text())
     db = copy.deepcopy(good); db['state'][0]['evidence']=['prisma/schema.prisma:7']
     worker = copy.deepcopy(good); worker['workloads'][1]['evidence']=['src/worker.js:1']
-    store = Store(output/'control_plane.db')
+    # Validation runs retain their full ledger separately from the viewer's
+    # operational records. Serving examples must not populate operator statistics.
+    store = Store(output/'checks.db')
     items, summary = [], []
     try:
         with tempfile.TemporaryDirectory(prefix='inframorph-policy-baseline-') as directory:
@@ -232,7 +234,16 @@ async def generate(args):
             summary.append(dict(case=name,after=latest['decision'],reason=latest['reason_code'],
                                 attempts=len(repaired['policy_data'].get('repairs',[])),backend=repaired['ai_backend'],
                                 stop_reason=repaired['stop_reason']))
+        viewer = Store(output/'control_plane.db')
+        try:
+            with viewer._lock,viewer._conn:
+                viewer._conn.executemany('INSERT OR IGNORE INTO policy_releases VALUES (?,?,?)',
+                    [(r['digest'],r['payload'],r['created_at'])
+                     for r in store._all('SELECT digest,payload,created_at FROM policy_releases',())])
+        finally:
+            viewer.close()
         value = dict(schema_version=1,generated_at=now(),baseline_commit=BASELINE_COMMIT,
+                     record_stores=dict(validation='checks.db',viewer='control_plane.db'),
                      baseline_declared_source_commit=baseline['source_commit'],
                      baseline_policy_digest=baseline['identity']['policy_digest'],active=identity(),
                      live_ai='performed' if args.openai else 'not_run',

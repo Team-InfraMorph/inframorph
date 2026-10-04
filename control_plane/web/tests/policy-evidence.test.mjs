@@ -9,7 +9,7 @@ async function load(name){
  const bundle=await build({entryPoints:[fileURLToPath(new URL(`../src/${name}`,import.meta.url))],bundle:true,write:false,platform:'node',format:'cjs',jsx:'automatic',external:['react','react/jsx-runtime']});
  const mod={exports:{}};new Function('module','exports','require',bundle.outputFiles[0].text)(mod,mod.exports,createRequire(import.meta.url));return mod.exports;
 }
-const {PolicyChange,PolicyImpactSummary}=await load('PolicyChanges.jsx');
+const {PolicyChange,PolicyImpactSummary,PolicyReviewContext,PolicyImpactActions}=await load('PolicyChanges.jsx');
 const {EvidenceRequirements,RepairHistory}=await load('PolicyCard.jsx');
 const render=(Component,props)=>renderToStaticMarkup(React.createElement(Component,props));
 const change={id:'db',title:'DB 직접 근거',before_condition:'datasource 범위 인용',after_condition:'provider 토큰 인용',reason:'분석 재현',applies:'DB 사용 배포',actions:['직접 인용 보완'],rule_ids:['I-003'],recheck:true,review:false,redeploy:false,examples:[{id:'url',before_decision:'PASS',after_decision:'BLOCK',description:'URL만 인용'}]};
@@ -55,4 +55,23 @@ test('comparison request preserves the exact historical digest and default opera
  try{await api.policyCompare('1.1.0','1.1.0','old/digest?');await api.policyImpacts({dataset:'operational',project:'',offset:0});}
  finally{global.fetch=saved;}
  assert.equal(paths[0],'/api/policies/1.1.0/compare?base=1.1.0&base_policy_digest=old%2Fdigest%3F');assert.match(paths[1],/dataset=operational/);
+});
+
+const reviewContext={mode:'operational_copy',copied_at:'2026-10-04T08:00:00Z'};
+test('operational copy banner states isolation and snapshot time explicitly',()=>{
+ const html=render(PolicyReviewContext,{context:reviewContext});
+ for(const text of ['검증용 사본','재검사는 이 사본에만 기록','실시간 접속 상태를 확인하지 않습니다','새 배포·재배포를 실행할 수 없습니다','2026-10-04T08:00:00Z'])assert.ok(html.includes(text),text);
+ assert.equal(render(PolicyReviewContext,{context:null}),'');
+});
+test('copied live status never implies current service availability',()=>{
+ const html=render(PolicyImpactSummary,{item,reviewContext});
+ assert.match(html,/>LIVE</);assert.match(html,/복사 당시 기록 · 현재 실행 미확인/);assert.doesNotMatch(html,/서비스 유지/);
+});
+test('operational copy allows recheck but offers no redeployment action',()=>{
+ const copied=render(PolicyImpactActions,{item:{...item,action:'verified'},dataset:'operational',reviewContext});
+ assert.match(copied,/정책 재검사/);assert.doesNotMatch(copied,/같은 소스로 재배포/);
+ const ordinary=render(PolicyImpactActions,{item:{...item,action:'verified'},dataset:'operational'});
+ assert.match(ordinary,/같은 소스로 재배포/);
+ assert.equal(render(PolicyImpactActions,{item,dataset:'examples',reviewContext}),'');
+ assert.equal(render(PolicyImpactActions,{item:{...item,read_only:true},dataset:'operational'}),'');
 });

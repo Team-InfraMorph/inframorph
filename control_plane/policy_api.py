@@ -86,7 +86,8 @@ def install(app,store,execute,runtime):
     def impacts(offset:int=Query(0,ge=0),limit:int=Query(50,ge=1,le=100),project:str|None=None,target:str|None=None,action:str|None=None,policy_version:str|None=None,reason:str|None=None,dataset:Literal['operational','examples']='operational'):
         items=example_items(app) if dataset=='examples' else lifecycle.impacts(store)
         items=[r for r in items if (not project or r['project_id']==project) and (not target or r['target']==target) and (not action or r['action']==action) and (not policy_version or r['policy']['family']+'/'+r['policy']['version']==policy_version) and (not reason or reason in r['reason_codes'])]
-        return dict(items=items[offset:offset+limit],total=len(items),dataset=dataset,read_only=dataset=='examples')
+        return dict(items=items[offset:offset+limit],total=len(items),dataset=dataset,read_only=dataset=='examples',
+                    review_context=getattr(app.state,'policy_review_context',None))
 
     @router.get('/policies/statistics')
     def statistics():return dict(items=lifecycle.statistics(store))
@@ -154,6 +155,9 @@ def install(app,store,execute,runtime):
             raise
 
     async def worker():
+        # An isolated operator preview runs only explicitly requested rechecks.
+        # It must not consume copied queues before the user inspects the state.
+        if getattr(app.state,'policy_review_context',None):return
         while True:
             try:
                 await background_call(lifecycle.schedule)

@@ -1,0 +1,64 @@
+{
+  "scope": "Isolated interactive deployment-impact inspection",
+  "review_context": {
+    "mode": "operational_copy",
+    "copied_at": "2026-10-04T00:49:46.696003+00:00",
+    "manual_rechecks": true
+  },
+  "observed_flow": [
+    "evidence_recheck_recommended",
+    "running",
+    "review_required",
+    "verified"
+  ],
+  "source_deployment_id": "d-443059a46985",
+  "historical_policy": "1.0.0",
+  "active_policy": "1.1.0",
+  "active_digest": "b2afa19707731dbf80b434793ba7085c5d1e3635e31f39248bb222f9ce92404a",
+  "original_decision": "PASS",
+  "current_result": {
+    "decision": "PASS",
+    "executions": [
+      "b8e9f5d5-bc6f-4d5a-a0e3-ccb8c29e3b83",
+      "42b24c8f-f1cf-4d2a-9a21-fab420f8e8b0",
+      "4b73daa0-f611-43e5-a57a-858d9974bfce",
+      "2a51c7db-0156-4b4f-8137-29efaac6af42",
+      "77b896bb-a0b2-4ea4-8d97-cfa828314826",
+      "86a0b955-ba19-4ab1-bb96-c04a323fa28f"
+    ],
+    "live_drift_checked": false,
+    "reason_code": "passed"
+  },
+  "applicability": {
+    "db": "applicable",
+    "worker": "not_applicable"
+  },
+  "source_database": {
+    "recheck_jobs": 6,
+    "reviews": 0,
+    "mutated_by_preview": false
+  },
+  "review_copy": {
+    "recheck_jobs": 7,
+    "reviews": 1,
+    "action": "verified"
+  },
+  "checks": {
+    "python_regression_passed": 523,
+    "web_regression_passed": 49,
+    "web_build": "passed",
+    "catalog": "passed",
+    "mobile_viewport": 390,
+    "horizontal_overflow": false,
+    "example_deep_link": "passed"
+  },
+  "limits": [
+    "Service state is copied historical state; no live container, database or endpoint probe.",
+    "No model call, build, deploy or redeploy performed.",
+    "Validation examples are excluded from operational DB and statistics."
+  ],
+  "commands": [
+    "python -m unittest tests.test_policy_impact_preview tests.test_policy_evidence_examples tests.test_policy_evidence_lifecycle tests.test_policy_lifecycle",
+    "python scripts/preview_policy_impacts.py --source-db <existing-db> --output-dir <fresh-local-folder> --examples <generated-examples.json> --port 8878"
+  ]
+}

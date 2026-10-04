@@ -470,11 +470,13 @@ export default function App() {
 
           {selected && (
             <Section n="4" title="코드 변경 · 정책 검사">
+              <div className="policy-patch-stack">
               <PolicyCard data={policy} error={policyError} history={policyHistory} deploymentId={selected.id}
                 onRecheck={target=>api.policyRecheck(selected.id,target).then(()=>api.policyHistory(selected.id)).then(setPolicyHistory)}
                 onReview={(job,digest)=>api.policyReview(selected.id,job,digest).then(()=>api.policyHistory(selected.id)).then(setPolicyHistory)}
                 onFailureReview={(execution,body)=>api.policyFailureReview(selected.id,execution,body).then(()=>api.policyHistory(selected.id)).then(setPolicyHistory)} />
               <PatchCard patch={patch} loading={patchLoading} error={patchError} />
+              </div>
             </Section>
           )}
 

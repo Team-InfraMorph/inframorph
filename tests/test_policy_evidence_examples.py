@@ -11,6 +11,8 @@ import unittest
 from unittest.mock import patch
 
 from scripts.verify_policy_evidence import generate
+from control_plane.db import Store
+from control_plane.policy_lifecycle import comparison, impacts, statistics
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,8 +49,23 @@ class EvidenceExampleTests(unittest.TestCase):
                 row = items['policy-example-' + suffix]
                 self.assertEqual(row['latest_recheck']['decision'], 'PASS')
                 self.assertTrue(all(s['decision'] == 'NOT_RUN' for s in row['policy_data']['summaries']))
-            with sqlite3.connect(output / 'control_plane.db') as connection:
+            self.assertEqual(data['record_stores'], {'validation': 'checks.db', 'viewer': 'control_plane.db'})
+            with sqlite3.connect(output / 'checks.db') as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM deployment_targets WHERE status='LIVE'").fetchone()[0], 0)
+                self.assertGreater(connection.execute('SELECT COUNT(*) FROM policy_results').fetchone()[0], 0)
+                self.assertGreater(connection.execute('SELECT COUNT(*) FROM policy_events').fetchone()[0], 0)
+            viewer = Store(output / 'control_plane.db')
+            try:
+                self.assertEqual(statistics(viewer), [])
+                self.assertEqual(impacts(viewer), [])
+                self.assertEqual(viewer._all('SELECT * FROM projects', ()), [])
+                self.assertEqual(viewer._all('SELECT * FROM policy_results', ()), [])
+                self.assertEqual(viewer._all('SELECT * FROM policy_events', ()), [])
+                compared = comparison(viewer, '1.0.0', '1.1.0', baseline['identity']['policy_digest'])
+                self.assertEqual(compared['history_status'], 'known')
+                self.assertEqual({c['impact_scope'] for c in compared['changes'] if c.get('impact_scope')}, {'db', 'worker'})
+            finally:
+                viewer.close()
             # A second run cannot silently overwrite its own provenance or DB.
             with self.assertRaises(FileExistsError):
                 asyncio.run(generate(args))

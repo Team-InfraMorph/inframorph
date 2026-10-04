@@ -19,18 +19,37 @@ export function PolicyChange({change,version='1.1.0'}) {
   </article>;
 }
 
-export function PolicyImpactSummary({item}) {
+export function PolicyReviewContext({context}) {
+  if(context?.mode!=='operational_copy')return null;
+  return <aside className="policy-warning policy-review-context" aria-label="검증용 사본 안내">
+    <strong>기존 배포 기록의 검증용 사본</strong>
+    <p>재검사는 이 사본에만 기록됩니다. 서비스 상태는 복사 당시 기록이며 실시간 접속 상태를 확인하지 않습니다. 이 환경에서는 새 배포·재배포를 실행할 수 없습니다.</p>
+    {context.copied_at&&<small className="policy-review-meta"><span>복사 시각</span><time dateTime={context.copied_at}>{new Date(context.copied_at).toLocaleString()}</time></small>}
+  </aside>;
+}
+
+export function PolicyImpactActions({item,dataset,reviewContext,busy,error,onRecheck,onReview,onRedeploy}) {
+  if(dataset==='examples'||item.read_only||item.record_type==='validation_example')return null;
+  return <div className="row policy-impact-actions">
+    <button className="secondary" disabled={busy||!!error||item.action==='running'} onClick={onRecheck}>정책 재검사</button>
+    {item.action==='review_required'&&<button disabled={busy} onClick={onReview}>검토 내용 확인</button>}
+    {reviewContext?.mode!=='operational_copy'&&<button className="secondary" disabled={busy||!!error||!['current','verified','redeploy_required'].includes(item.action)} onClick={onRedeploy}>같은 소스로 재배포</button>}
+  </div>;
+}
+
+export function PolicyImpactSummary({item,reviewContext}) {
   const historical = item.policy?.decision || item.original_decision;
   const recheck = item.latest_recheck || item.recheck_result || item.job?.result;
   const example = item.read_only || item.record_type==='validation_example';
+  const copied = reviewContext?.mode==='operational_copy';
   const advisory = item.action==='evidence_confirmation_required'||(item.impact?.advisory&&recheck?.decision==='BLOCK'&&['db_provider_evidence_missing','worker_command_evidence_missing','worker_start_evidence_missing'].includes(recheck.reason_code));
   return <>
     <div className="policy-impact-states">
       <div><span>배포 당시 판정</span><strong>{decision(historical)}</strong><small>정책 {item.policy?.version||'미보존'} · 원래 기록 유지</small></div>
       <div><span>현재 근거 점검</span><strong>{advisory?'근거 보완 권고':recheck?decision(recheck.decision):'재검사 결과 확인 필요'}</strong><small>{recheck?.reason_code||item.impact?.reason||'세부 사유 미보존'}</small></div>
-      <div><span>서비스 상태</span><strong>{example?'서비스 실행 미확인':item.status||'미보존'}</strong><small>{example?'정책 검증 예시':'정책 변경만으로 중단·재배포하지 않음'}</small></div>
+      <div><span>서비스 상태</span><strong>{example?'서비스 실행 미확인':item.status||'미보존'}</strong><small>{example?'정책 검증 예시':copied?'복사 당시 기록 · 현재 실행 미확인':'정책 변경만으로 중단·재배포하지 않음'}</small></div>
     </div>
-    {advisory&&<p className="policy-warning">{example?'근거 보완 권고 · 서비스 실행 미확인.':'근거 보완 권고 · 서비스 유지.'} 새 기준의 판정은 당시 기록과 별도로 보존합니다.</p>}
+    {advisory&&<p className="policy-warning">{example||copied?'근거 보완 권고 · 서비스 실행 미확인.':'근거 보완 권고 · 서비스 유지.'} 새 기준의 판정은 당시 기록과 별도로 보존합니다.</p>}
     <p>배포 당시 정책 {item.policy?.version||'미보존'} → 현재 활성 정책 {item.active?.version||'확인 필요'}</p>
     {item.policy?.policy_digest&&<a href={`#/policy/${item.active?.version||'1.1.0'}/compare?base=${encodeURIComponent(item.policy.version)}&base_policy_digest=${encodeURIComponent(item.policy.policy_digest)}`}>당시 검사에서 달라진 조건 보기 ↗</a>}
   </>;

@@ -325,6 +325,8 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .sec-head h2 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
 .sec-head p { margin: 2px 0 0; font-size: 13px; color: var(--dim); }
 .sec .card { margin-bottom: 0; }
+.policy-patch-stack { display: grid; gap: 20px; min-width: 0; }
+.policy-patch-stack > .card { min-width: 0; }
 .sec .targets { margin: 0; }
 
 /* 결과 카드: 주소 줄 */
@@ -380,7 +382,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .tree-box summary { cursor: pointer; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 
 /* ── 코드 변경 내역: 파일 카드 ──────────────── */
-.patch2 .patch-head { margin-bottom: 14px; }
+.patch2 .patch-head { gap: 10px 12px; margin-bottom: 16px; }
 .patch-note { margin-left: auto; font-size: 12px; }
 .s-add { color: var(--ok); font-weight: 700; }
 .s-del { color: var(--fail); font-weight: 700; }
@@ -650,8 +652,20 @@ dialog.policy-modal>.card {width:auto;margin:0;}
 .policy-impact-states strong { margin:8px 0;font-size:16px; }
 .policy-change-example { border-left:3px solid var(--accent);padding:8px 12px;background:var(--muted-bg); }
 .policy-rule-link { display:inline-block;margin:0 16px 8px 0; }
-.policy-dataset { display:flex;gap:8px;flex-wrap:wrap; }
+.policy-dataset { display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px; }
 .policy-dataset [aria-pressed=true] { border-color:var(--accent);color:var(--accent); }
+.policy-review-context { display:grid;gap:12px;padding:16px 18px;margin-bottom:20px;line-height:1.7; }
+.policy-review-context>p { margin:0; }
+.policy-review-meta { display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;font-size:12px;line-height:1.6; }
+.policy-review-meta>span { white-space:nowrap; }
+.policy-review-meta time { font-variant-numeric:tabular-nums; }
+.policy-impacts>h2 { margin-bottom:16px; }
+.policy-impacts>p { margin:0 0 20px;line-height:1.75; }
+.policy-impacts>.policy-filters { gap:14px 16px;margin:20px 0; }
+.policy-deployment[open]>summary { margin-bottom:16px; }
+.policy-deployment>a { display:inline-flex;max-width:100%;margin:8px 0 12px; }
+.policy-impact-actions { gap:10px;margin:4px 0 16px; }
+@media(max-width:600px){.policy-review-context{padding:14px;gap:10px}.policy-review-meta{gap:4px 8px}}
 .policy-evidence { padding:14px;border:1px solid var(--line);border-radius:8px;margin:14px 0; }
 .policy-evidence-dl { display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px;margin:12px 0; }
 .policy-evidence-dl dt { color:var(--dim); }.policy-evidence-dl dd { margin:0;overflow-wrap:anywhere; }.policy-evidence code { overflow-wrap:anywhere; }
