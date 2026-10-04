@@ -117,6 +117,8 @@ def verify(corpus):
                     subprocess.run(
                         [
                             "git",
+                            "-c",
+                            "core.autocrlf=false",
                             "apply",
                             "--whitespace=nowarn",
                             str((bundle / "patch.diff").resolve()),
@@ -162,10 +164,20 @@ def verify(corpus):
                         "status": "patched" if changes else "unchanged",
                     }
                     (bundle / "manifest.json").write_text(json.dumps(report))
+                    # Only the reviewed DB cases request a provider conversion.
+                    # Other cases isolate storage, JavaScript, or host boundaries.
+                    db_cases = {
+                        "patch-db-control",
+                        "patch-prisma-field-delete",
+                        "patch-prisma-default-change",
+                    }
+                    case_plan = dict(plan)
+                    if case["id"] not in db_cases:
+                        case_plan["db"] = None
                     validate_patch(
                         original,
                         bundle,
-                        plan,
+                        case_plan,
                         allowed_paths=manifest["test_profile"]["allowed_patch_paths"], profile="corpus",
                     )
                 decision = "allow"

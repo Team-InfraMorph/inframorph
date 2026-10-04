@@ -2,6 +2,7 @@
 import json
 import re
 import subprocess
+import hashlib
 from pathlib import Path
 
 
@@ -48,11 +49,22 @@ def prisma_structure(data):
         raise PolicyError('prisma_structure_unsupported')
     _, start, end = ds[0]
     indices = [i for i in range(start+1, end-2) if values[i:i+2] == ['provider', '=']]
-    if len(indices) != 1 or values[indices[0]+2] not in {'"sqlite"', '"postgresql"'}:
-        raise PolicyError('prisma_structure_unsupported')
-    i = indices[0]+2
-    provider = json.loads(values[i])
-    normalized = values[:]; normalized[i] = '"<provider>"'
+    if len(indices) != 1:
+        raise PolicyError("prisma_structure_unsupported")
+    i = indices[0] + 2
+    try:
+        provider = json.loads(values[i])
+    except json.JSONDecodeError:
+        raise PolicyError("prisma_structure_unsupported") from None
+
+    if (
+        not isinstance(provider, str)
+        or re.fullmatch(r"[a-z][a-z0-9_+-]*", provider) is None
+    ):
+        raise PolicyError("prisma_structure_unsupported")
+
+    normalized = values.copy()
+    normalized[i] = '"<provider>"'
     return provider, normalized, (tokens[start][1], tokens[end][2])
 
 
@@ -146,3 +158,15 @@ def json_value_lines(data, path):
     except (ValueError, IndexError, RecursionError):
         raise PolicyError('package_invalid') from None
     return sorted(set(found))
+
+
+def prisma_shape_digest(data: bytes) -> str:
+    _, normalized, _ = prisma_structure(data)
+
+    encoded = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    return hashlib.sha256(encoded).hexdigest()

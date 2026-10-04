@@ -1,7 +1,7 @@
 from typing import Literal
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
-from .common import SCHEMA_VERSION, ContractModel, EnvName, Name, RelativePath, Revision, Target, WorkloadKind
+from .common import SCHEMA_VERSION, ContractModel, EnvName, Name, RelativePath, Revision, Target, WorkloadKind, DbEngine
 
 class ServiceSpec(ContractModel):
     name: Name
@@ -27,12 +27,58 @@ class ServiceSpec(ContractModel):
 
 class DbPlan(ContractModel):
     type: Literal["postgres_container", "rds_postgres"]
-    patch: Literal["sqlite_to_postgres"]
+    patch: Literal[
+        "sqlite_to_postgres",
+        "none",
+        "prisma_to_postgres",
+    ]
+
+    source_engine: DbEngine | None = None
+    target_engine: Literal["postgresql"] = "postgresql"
+    orm: Literal["prisma"] | None = None
+
+    @model_validator(mode="after")
+    def check_conversion(self):
+        if self.patch == "sqlite_to_postgres":
+            if self.source_engine not in (None, "sqlite"):
+                raise ValueError("inconsistent_db_conversion")
+
+            if self.orm not in (None, "prisma"):
+                raise ValueError("inconsistent_db_conversion")
+
+            self.source_engine = "sqlite"
+            self.orm = "prisma"
+            return self
+        if self.source_engine is None or self.orm is None:
+            raise ValueError("database_source_required")
+
+        expected = (
+            "none"
+            if self.source_engine == self.target_engine
+            else "prisma_to_postgres"
+        )
+
+        if self.patch != expected:
+            raise ValueError("inconsistent_db_conversion")
+
+        return self
+
+    @model_serializer(mode="wrap", when_used="json")
+    def serialize_database(self, handler):
+        data = handler(self)
+
+        # 기존 demo-app의 JSON 계약을 유지한다.
+        if self.patch == "sqlite_to_postgres":
+            for key in ("source_engine", "target_engine", "orm"):
+                data.pop(key, None)
+
+        return data
 
 class StoragePlan(ContractModel):
     type: Literal["volume", "s3"]
     patch: Literal["fs_to_storage"]
     path: RelativePath
+
 
 class Plan(ContractModel):
     schema_version: Literal["1.0.0"] = SCHEMA_VERSION
@@ -52,27 +98,39 @@ class Plan(ContractModel):
     @model_validator(mode="after")
     def check_plan(self):
         if self.image_tag != f"app:{self.source_revision}":
-            raise ValueError("image_tag는 app:<source_revision>이어야 합니다")
+            raise ValueError(
+                "image_tag는 app:<source_revision>이어야 합니다"
+            )
 
         names = [service.name for service in self.services]
         if len(names) != len(set(names)):
             raise ValueError("service 이름이 중복되었습니다")
 
         public_http = [
-            service for service in self.services
+            service
+            for service in self.services
             if service.kind == WorkloadKind.HTTP and service.public
         ]
         if len(public_http) != 1:
-            raise ValueError("이번 MVP는 공개 http service 하나가 필요합니다")
+            raise ValueError(
+                "이번 MVP는 공개 http service 하나가 필요합니다"
+            )
 
         if self.db is not None and "DATABASE_URL" not in self.secrets:
-            raise ValueError("DB를 쓰는 Plan에는 DATABASE_URL 이름이 필요합니다")
+            raise ValueError(
+                "DB를 쓰는 Plan에는 DATABASE_URL 이름이 필요합니다"
+            )
 
-        if self.target in (Target.LOCAL, Target.ONPREM):  # 사내 서버도 같은 Docker 구성
+        if self.target in (Target.LOCAL, Target.ONPREM):
             if self.logs != "docker":
                 raise ValueError("Local 로그는 docker입니다")
-            if self.db is not None and self.db.type != "postgres_container":
+
+            if (
+                self.db is not None
+                and self.db.type != "postgres_container"
+            ):
                 raise ValueError("Local DB는 postgres_container입니다")
+
             if self.storage is not None:
                 if self.storage.type != "volume":
                     raise ValueError("Local 저장소는 volume입니다")
@@ -81,11 +139,14 @@ class Plan(ContractModel):
         else:
             if self.logs != "cloudwatch":
                 raise ValueError("AWS 로그는 cloudwatch입니다")
+
             if self.db is not None and self.db.type != "rds_postgres":
                 raise ValueError("AWS DB는 rds_postgres입니다")
+
             if self.storage is not None:
                 if self.storage.type != "s3":
                     raise ValueError("AWS 저장소는 s3입니다")
                 if self.config.get("STORAGE_DRIVER") != "s3":
                     raise ValueError("AWS STORAGE_DRIVER는 s3입니다")
+
         return self

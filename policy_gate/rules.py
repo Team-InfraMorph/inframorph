@@ -153,6 +153,20 @@ def intent_rules(intent, files):
 
 
 def plan_rules(intent, plan):
+    databases = [
+        state
+        for state in intent.state
+        if state.kind == "relational_db"
+    ]
+    if plan.db is not None:
+        if len(databases) != 1:
+            fail("plan_state_mismatch")
+        source = databases[0]
+        if (
+            plan.db.source_engine != source.engine
+            or plan.db.orm != source.orm
+        ):
+            fail("plan_state_mismatch")
     config_check(plan.config, plan.secrets)
     if plan.source_revision != intent.source_revision or plan.app != intent.app: fail('plan_intent_mismatch')
     fields = lambda x: (x.name, x.kind.value, x.public, x.port, x.health, x.command)
@@ -173,15 +187,34 @@ def plan_rules(intent, plan):
 
 
 def patch_rules(original, patched, plan, changed, js, *, profile="reviewed"):
-    with rule('P-003', applies='prisma/schema.prisma' in changed, reason='schema_unchanged') as evidence:
-        name = 'prisma/schema.prisma'
-        if name in changed:
-            if name not in original or not plan.db: fail('prisma_transform_unsupported', name)
-            old, structure, _ = prisma_structure(original[name])
+    name = 'prisma/schema.prisma'
+    with rule('P-003', applies=plan.db is not None or name in changed, reason="database_not_requested",) as evidence:
+        if plan.db is not None:
+            if name not in original or name not in patched:
+                fail("prisma_transform_unsupported", name)
+
+            old, before, _ = prisma_structure(original[name])
             new, after, _ = prisma_structure(patched[name])
-            evidence.update(path=name,before=old,after=new)
-            if structure != after: fail('prisma_structure_changed', name)
-            if new != 'postgresql': fail('prisma_provider_invalid', name)
+
+            evidence.update(path=name, before=old, after=new)
+
+            if old != plan.db.source_engine:
+                fail("prisma_transform_unsupported", name)
+
+            if new != plan.db.target_engine:
+                fail("prisma_provider_invalid", name)
+
+            if before != after:
+                fail("prisma_structure_changed", name)
+
+            if (
+                plan.db.patch == "none"
+                and original[name] != patched[name]
+            ):
+                fail("prisma_transform_unsupported", name)
+        elif name in changed:
+            fail("prisma_transform_unsupported", name)
+
     with rule('P-004', applies=any(n.endswith(('.js','.cjs','.mjs')) for n in changed), reason='javascript_unchanged') as evidence:
         evidence.update(changed_paths=[n for n in changed if n.endswith(('.js','.cjs','.mjs'))])
         before_js = inspect_js({k: original[k] for k in changed if k in original})

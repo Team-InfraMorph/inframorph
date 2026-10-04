@@ -1,0 +1,6 @@
+* text=auto eol=lf
+/tests/fixtures/analyzer/**/snapshot/** text eol=lf
+/code_patch/templates/** text eol=lf
+/builder/templates/** text eol=lf
+/policy_gate/docs/** text eol=lf
+/policy_gate/baselines/** text eol=lf

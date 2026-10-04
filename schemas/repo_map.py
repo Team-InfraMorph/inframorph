@@ -1,7 +1,7 @@
 from typing import Literal
 from pydantic import Field
 
-from .common import SCHEMA_VERSION, ContractModel, Evidence, Revision
+from .common import SCHEMA_VERSION, ContractModel, Evidence, Revision, DbEngine
 
 class Hint(ContractModel):
     type: Literal["file_write", "env", "process"]
@@ -10,7 +10,7 @@ class Hint(ContractModel):
 
 class DbInfo(ContractModel):
     orm: Literal["prisma"] | None = None
-    provider: Literal["sqlite", "postgresql"] | None = None
+    provider: DbEngine | None = None
 
 class RepoMap(ContractModel):
     schema_version: Literal["1.0.0"] = SCHEMA_VERSION
