@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .errors import ContractError
+from schemas.plan import DbPlan as SharedDbPlan
 
 
 SCHEMA_VERSION = "1.0.0"
@@ -181,6 +182,9 @@ class ServiceSpec:
 class DbPlan:
     type: str
     patch: str
+    source_engine: str
+    target_engine: str
+    orm: str
 
 
 @dataclass(frozen=True)
@@ -240,14 +244,32 @@ class Plan:
 
         db = None
         raw_db = value.get("db")
+
         if raw_db is not None:
             if not isinstance(raw_db, dict):
-                raise ContractError("plan.db must be an object or null")
-            _keys(raw_db, "plan.db", {"type", "patch"}, set())
-            if raw_db["type"] != "rds_postgres" or raw_db["patch"] != "sqlite_to_postgres":
-                raise ContractError("AWS database must be rds_postgres with sqlite_to_postgres patch")
-            db = DbPlan(raw_db["type"], raw_db["patch"])
+                raise ContractError(
+                    "plan.db must be an object or null"
+                )
 
+            try:
+                checked = SharedDbPlan.model_validate(raw_db)
+            except ValueError:
+                raise ContractError(
+                    "invalid database plan"
+                ) from None
+
+            if checked.type != "rds_postgres":
+                raise ContractError(
+                    "AWS database must be rds_postgres"
+                )
+
+            db = DbPlan(
+                type=checked.type,
+                patch=checked.patch,
+                source_engine=checked.source_engine,
+                target_engine=checked.target_engine,
+                orm=checked.orm,
+            )
         storage = None
         raw_storage = value.get("storage")
         if raw_storage is not None:

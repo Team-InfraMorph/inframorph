@@ -342,7 +342,7 @@ def validate_patch(snapshot, bundle, plan, *, allowed_paths=DEFAULT_PATHS, profi
                 )
                 if patch:
                     result = subprocess.run(
-                        ["git", "apply", "--whitespace=nowarn", str(patch_file)],
+                        ["git", "-c", "core.autocrlf=false", "apply", "--whitespace=nowarn", str(patch_file),],
                         cwd=source,
                         capture_output=True,
                         timeout=15,

@@ -4,7 +4,7 @@
       "1804feff4814858f128b5b89ea0da32602f572a0eca910f8ab55b800310731e4"
     ],
     "prisma/schema.prisma": [
-      "eaf50f27b33e838a559239fef9a16eaeffdd08081a02d615e03d343f0dc5656c"
+      "c22938994c2d8b39ddf673840fea3660118b3065444e2e3ea3633897bce1f953"
     ]
   },
   "server": [
@@ -16,5 +16,5 @@
     "dotenv": "16.6.1",
     "express": "4.22.3"
   },
-  "scope": "Reviewed demo-app v1/v2 runtime bytes; no automatic approval for arbitrary apps"
+  "scope": "Reviewed demo-app v1/v2 JavaScript bytes and Prisma token structure. Prisma provider, whitespace, and comments are excluded from the structure hash. Database conversion still requires source/plan consistency checks and PostgreSQL validation. Arbitrary applications and model changes are not approved."
 }
