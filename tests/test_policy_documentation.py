@@ -1,4 +1,4 @@
-"""Executable evidence for current documentation; no changes to gate semantics."""
+"""Documentation contracts for the frozen baseline and current policy."""
 import ast
 import copy
 import hashlib
@@ -21,11 +21,21 @@ from builder.runtime import check_build_profile
 ROOT=Path(__file__).resolve().parents[1]
 ACTIVE_VERSION=json.loads((ROOT/'policy_gate/active.json').read_text())['version']
 DOCS=ROOT/'policy_gate/docs'/ACTIVE_VERSION
+BASELINE_DOCS=ROOT/'policy_gate/docs/1.0.0'
 
 class DocumentationContract(unittest.TestCase):
-    def test_one_document_set_and_unchanged_rule_contract(self):
-        baseline=json.loads((DOCS/'review.json').read_text())['baseline']
+    def test_one_document_set_preserves_baseline_and_declares_rule_changes(self):
+        baseline=json.loads((BASELINE_DOCS/'review.json').read_text())['baseline']
         self.assertEqual(fingerprint(release('1.0.0')['rules']),baseline['rules_digest'])
+        previous={r['id']:r for r in release('1.0.0')['rules']}
+        current={r['id']:r for r in release()['rules']}
+        self.assertEqual(set(previous),set(current))
+        self.assertEqual({key for key in previous if previous[key]!=current[key]}, {'G-002','G-003','I-002','I-003'})
+        for key in ('G-002','G-003','I-002','I-003'):
+            self.assertEqual(previous[key]['revision'],1)
+            self.assertEqual(current[key]['revision'],2)
+        from scripts.check_policy_catalog import validate_baselines
+        validate_baselines()
         self.assertFalse((DOCS/'revisions').exists())
         self.assertNotIn('document_revision',identity())
         self.assertNotIn('document_revisions',release())
@@ -58,6 +68,27 @@ class DocumentationContract(unittest.TestCase):
                 if href.startswith('https://'):continue
                 part,_,section=href.partition('#');target=(path.parent/part).resolve() if part else path
                 self.assertTrue(target.is_relative_to(DOCS),href)
+                self.assertTrue(target.is_file(),(path,href))
+                if section:self.assertIn('{#'+section+'}',target.read_text(),href)
+
+    def test_hardened_documentation_links_sections_and_test_references(self):
+        docs=ROOT/'policy_gate/docs/1.1.0'
+        review=json.loads((docs/'review.json').read_text())
+        self.assertEqual(review['policy_version'],'1.1.0')
+        for rule in release()['rules']:
+            body=(docs/f"rules/{rule['id']}.md").read_text()
+            for section in review['required_sections']:self.assertIn('{#'+section+'}',body)
+            for ref in review['tests'][rule['id']]:
+                module,cls,method=ref.rsplit('.',2)
+                self.assertTrue(callable(getattr(getattr(importlib.import_module(module),cls),method)),ref)
+                self.assertIn(ref,body)
+        for path in docs.rglob('*.md'):
+            body=path.read_text();ids=re.findall(r'^## .+ \{#([a-z0-9-]+)\}$',body,re.M)
+            self.assertEqual(len(ids),len(set(ids)),path)
+            for href in re.findall(r'\[[^\]]+\]\(([^)]+)\)',body):
+                if href.startswith('https://'):continue
+                part,_,section=href.partition('#');target=(path.parent/part).resolve() if part else path
+                self.assertTrue(target.is_relative_to(docs),href)
                 self.assertTrue(target.is_file(),(path,href))
                 if section:self.assertIn('{#'+section+'}',target.read_text(),href)
 

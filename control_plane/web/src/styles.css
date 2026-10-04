@@ -328,6 +328,8 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .sec-head h2 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
 .sec-head p { margin: 2px 0 0; font-size: 13px; color: var(--dim); }
 .sec .card { margin-bottom: 0; }
+.policy-patch-stack { display: grid; gap: 20px; min-width: 0; }
+.policy-patch-stack > .card { min-width: 0; }
 .sec .targets { margin: 0; }
 
 /* 결과 카드: 주소 줄 */
@@ -385,7 +387,7 @@ h3 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); font-weight: 500; }
 .tree-box summary { cursor: pointer; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 
 /* ── 코드 변경 내역: 파일 카드 ──────────────── */
-.patch2 .patch-head { margin-bottom: 14px; }
+.patch2 .patch-head { gap: 10px 12px; margin-bottom: 16px; }
 .patch-note { margin-left: auto; font-size: 12px; }
 .s-add { color: var(--ok); font-weight: 700; }
 .s-del { color: var(--fail); font-weight: 700; }
@@ -650,3 +652,32 @@ dialog.policy-modal>.card {width:auto;margin:0;}
 }
 
 .policy-card a,.policy-workspace a { color:var(--accent);text-underline-offset:3px; }
+.policy-condition-comparison,.policy-impact-states { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0; }
+.policy-condition-comparison>div,.policy-impact-states>div { padding:16px;border:1px solid var(--line);border-radius:8px;min-width:0; }
+.policy-condition-comparison p { margin-bottom:0;line-height:1.7; }
+.policy-impact-states { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.policy-impact-states span,.policy-impact-states strong,.policy-impact-states small { display:block;overflow-wrap:anywhere; }
+.policy-impact-states span,.policy-impact-states small { color:var(--dim);font-size:12px; }
+.policy-impact-states strong { margin:8px 0;font-size:16px; }
+.policy-change-example { border-left:3px solid var(--accent);padding:8px 12px;background:var(--muted-bg); }
+.policy-rule-link { display:inline-block;margin:0 16px 8px 0; }
+.policy-dataset { display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px; }
+.policy-dataset [aria-pressed=true] { border-color:var(--accent);color:var(--accent); }
+.policy-review-context { display:grid;gap:12px;padding:16px 18px;margin-bottom:20px;line-height:1.7; }
+.policy-review-context>p { margin:0; }
+.policy-review-meta { display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;font-size:12px;line-height:1.6; }
+.policy-review-meta>span { white-space:nowrap; }
+.policy-review-meta time { font-variant-numeric:tabular-nums; }
+.policy-impacts>h2 { margin-bottom:16px; }
+.policy-impacts>p { margin:0 0 20px;line-height:1.75; }
+.policy-impacts>.policy-filters { gap:14px 16px;margin:20px 0; }
+.policy-deployment[open]>summary { margin-bottom:16px; }
+.policy-deployment>a { display:inline-flex;max-width:100%;margin:8px 0 12px; }
+.policy-impact-actions { gap:10px;margin:4px 0 16px; }
+@media(max-width:600px){.policy-review-context{padding:14px;gap:10px}.policy-review-meta{gap:4px 8px}}
+.policy-evidence { padding:14px;border:1px solid var(--line);border-radius:8px;margin:14px 0; }
+.policy-evidence-dl { display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px;margin:12px 0; }
+.policy-evidence-dl dt { color:var(--dim); }.policy-evidence-dl dd { margin:0;overflow-wrap:anywhere; }.policy-evidence code { overflow-wrap:anywhere; }
+.policy-change details { margin-top:14px;overflow-wrap:anywhere; }
+.policy-workspace button:focus-visible,.policy-card button:focus-visible,.policy-workspace select:focus-visible,.policy-card select:focus-visible { outline:2px solid var(--accent);outline-offset:3px; }
+@media(max-width:700px){.policy-condition-comparison,.policy-impact-states { grid-template-columns:1fr; }.policy-evidence-dl { grid-template-columns:1fr;gap:5px; }.policy-evidence-dl dd { margin-bottom:8px; }}

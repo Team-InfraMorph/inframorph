@@ -38,9 +38,10 @@
       "tests.test_e_runtime.GateTests.test_missing_evidence"
     ],
     "I-003": [
-      "tests.test_policy_hardening.RuleTests.test_db_claim_and_evidence_are_related",
-      "tests.test_policy_hardening.RuleTests.test_omitted_db_is_blocked",
-      "tests.test_policy_documentation.DocumentedScenarios.test_db_failure_stops_following_rules"
+      "tests.test_policy_evidence_hardening.EvidenceRuleTests.test_datasource_url_and_closing_brace_are_not_provider_evidence",
+      "tests.test_policy_evidence_hardening.EvidenceRuleTests.test_old_unrelated_evidence_errors_remain_distinct",
+      "tests.test_policy_evidence_hardening.EvidenceParserTests.test_provider_anchor_uses_tokens_not_multiline_span_or_other_blocks",
+      "tests.test_policy_evidence_hardening.EvidenceRuleTests.test_approved_evidence_continues_through_patch_and_build_input"
     ],
     "P-004": [
       "tests.test_policy_hardening.RuleTests.test_arbitrary_behavior_inside_allowed_file_is_blocked",
@@ -71,8 +72,11 @@
       "tests.test_policy_documentation.DocumentedScenarios.test_storage_evidence_branches"
     ],
     "I-002": [
-      "tests.test_policy_documentation.DocumentedScenarios.test_worker_omission",
-      "tests.test_e_runtime.LocalTests.test_worker_no_shell_or_port"
+      "tests.test_policy_evidence_hardening.EvidenceRuleTests.test_worker_needs_registered_command_and_start_anchor",
+      "tests.test_policy_evidence_hardening.EvidenceRuleTests.test_direct_tick_and_timer_are_alternative_start_anchors",
+      "tests.test_policy_evidence_hardening.EvidenceRuleTests.test_no_worker_path_remains_valid",
+      "tests.test_policy_evidence_hardening.EvidenceParserTests.test_worker_start_excludes_nested_calls_strings_comments_and_shadowing",
+      "tests.test_policy_evidence_hardening.EvidenceParserTests.test_command_anchor_uses_exact_json_path_and_value_token"
     ],
     "L-001": [
       "tests.test_e_runtime.GateTests.test_excess_public",
@@ -116,17 +120,6 @@
       "tests.test_policy_documentation.DocumentedScenarios.test_build_profile_boundaries"
     ]
   },
-  "baseline": {
-    "rules_digest": "e8243f118e1710d183f0a6d7f4c0af7130e14c6605d54211a09ecb661e945129",
-    "behavior_files": {
-      "policy_gate/gate.py": "37daa2a0117928fa09911eb8b037ec68874ee45d9c2d9b7d9f5c3a2b584b7aaf",
-      "policy_gate/rules.py": "ceaf7846660ce0f4e0d076dc52bb61e30586a26467cabaae4a148d992f78ffd5",
-      "policy_gate/structure.py": "42db8a200d7606598eb5c015a4cd07ac25dde913a2c2498c3310ff45d148c027",
-      "analyzer/source_policy.py": "f518367108998b32eef7ca36b3e523e82120854fa9e39a1c7336f1c0492a2099",
-      "builder/runtime.py": "857fd196253c2996a740a46610e8a660dd751a2cd8c2b1e4e7926a6387bc7791"
-    },
-    "previous_commit": "b003fd9b6b0fd007eee90ebf01e2b3db518f8d41"
-  },
   "implementation_references": {
     "I-001": "policy_gate/gate.py · validate_intent",
     "I-003": "policy_gate/rules.py · intent_rules / config_check",
@@ -147,21 +140,6 @@
     "P-005": "policy_gate/rules.py · patch_rules; policy_gate/structure.py · inspect_js / prisma_structure",
     "X-001": "builder/runtime.py · check_build_profile"
   },
-  "verified_on": "2026-10-03",
-  "verification": {
-    "status": "passed",
-    "python_tests": 467,
-    "focused_tests_included": 69,
-    "aws_mock_tests": 43,
-    "ui_tests": 34,
-    "redteam_cases_included": 39,
-    "redteam_commit": "488833528c3c9a389d0af05606c9bb1cdeaa1c99",
-    "ui_build": "passed",
-    "catalog_rules": 18,
-    "browser": "version_selection_and_legacy_links_checked",
-    "remote_deployment": "not_run",
-    "integrated_main": "d49ebee289e51fbb652bc7a64ff47a2f6da37a8c"
-  },
   "walkthrough_tests": [
     "tests.test_policy_documentation_baseline.WalkthroughTests.test_missing_evidence_then_repair",
     "tests.test_policy_documentation_baseline.WalkthroughTests.test_db_analysis_then_approved_transform",
@@ -169,5 +147,12 @@
     "tests.test_policy_documentation_baseline.ExecutionFlowTests.test_local_failure_prevents_remote_commands",
     "tests.test_policy_documentation_contracts.VersionContractTests.test_record_walkthrough"
   ],
+  "baseline_reference": {
+    "version": "1.0.0",
+    "path": "policy_gate/baselines/1.0.0.json",
+    "source_commit": "b003fd9b6b0fd007eee90ebf01e2b3db518f8d41",
+    "comparison_checker_commit": "cf987c3c8e87a856a3d3e46ead457ec3754df0bd"
+  },
+  "verification_note": "Current results are recorded in the change PR and generated policy examples; inherited 1.0.0 counts are not 1.1.0 verification.",
   "inherited_explanation_baseline": "1.0.0"
 }

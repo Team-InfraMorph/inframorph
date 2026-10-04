@@ -29,3 +29,28 @@ Policy 수정 이후 Local 실행 테스트가 실패하면 자동 배포를 중
 ## 재현 검증 {#tests}
 
 tests/test_policy_auto_repair.py는 3번째 성공, 3회 소진, 단계 간 제한 공유, 재시작, 비용/사용량 제한, 실제 Gate를 통한 패치 복구·악성 결과 차단, Local 검증본의 AWS 전달을 확인합니다. scripts/verify_policy_auto_repair.py는 별도 테스트 상태에서 실행하며 기본 응답 재생과 명시적 OpenAI 모드를 구분합니다. 실제 AWS 리소스는 생성하지 않습니다.
+
+
+## 직접 근거만 보완하는 수정 {#evidence-only}
+
+새 사유 db_provider_evidence_missing, worker_command_evidence_missing, worker_start_evidence_missing에서는 실패한 DB 또는 worker 항목의 evidence만 변경합니다. 최초 근거 보완을 시작한 Intent를 기준으로 계속 비교하므로 반복 제안으로 범위가 넓어지지 않습니다. engine·command·public·reason·다른 항목·config·secrets·source_revision의 변경은 evidence_repair_scope_violation으로 종료합니다. 다른 기존 오류의 수정 계약을 일괄 바꾸지 않습니다.
+
+AI에 전달하는 자료는 호스트가 계산한 규칙·부족한 역할·필요한 선언 위치, 해당 소스 문맥, 기존 Intent가 인용한 줄입니다. 실제 전달한 줄만 읽은 근거로 등록합니다. 화면·이미지 자료·문서·lockfile을 새 요구사항 근거로 추가하지 않습니다. 입력 제한을 넘으면 중단하며 조용히 잘라 통과시키지 않습니다.
+
+```text
+원래 근거 부족 BLOCK 보존
+→ 공유 회차 예약
+→ 허용 evidence 위치와 소스 문맥 전달
+→ 후보 수신
+→ 최초 Intent 대비 수정 범위와 소스·정책 동일성 확인
+→ G-002와 전체 Intent 재검사
+→ 통과 후 다음 단계 또는 제한 내 재시도·최종 종료
+```
+
+모델 대기 중 소스나 정책이 바뀌면 후보를 폐기합니다. 같은 답, JSON 오류, 취소도 회차를 돌려주지 않습니다. 시간 초과·거부·사용량 확인 불가 등 모델 문제는 원래 앱의 정책 실패와 구분합니다. 예를 들어 ‘DB 근거 부족으로 차단 / AI 보완은 시간 초과로 종료’이며 시간 초과를 새 DB 위반으로 기록하지 않습니다.
+
+## 실패부터 해결까지 읽기 {#repair-trace}
+
+원래 실패 검사 ID·정책 식별값 → 수정 회차와 허용 범위 → 마스킹된 후보 diff → 마지막 재검사 ID·결과 → 수정 종료 사유를 순서대로 확인합니다. 과거 기록에 없는 필드는 미보존으로 표시합니다. 후보 응답 수신이나 diff 생성은 재검사 PASS가 아닙니다.
+
+수정이 끝나도 원래 실패는 유지합니다. Intent 수정 실패 시 Planner·Builder는 시작하지 않습니다. 이미 Plan·패치 단계에 도달한 실패는 해당 단계 이후 실행을 중단합니다. 과거 배포의 보존 자료 재검사에는 이 자동 수정 경로를 사용하지 않습니다.

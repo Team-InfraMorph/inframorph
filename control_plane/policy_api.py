@@ -1,6 +1,8 @@
 """Operator-local policy documents and lifecycle endpoints."""
 import asyncio
 import json
+import os
+from pathlib import Path
 from contextlib import suppress,asynccontextmanager
 from fastapi import APIRouter,BackgroundTasks,HTTPException,Query
 from pydantic import BaseModel,ConfigDict,Field
@@ -36,10 +38,34 @@ class FailureReview(BaseModel):
     resolved_execution_id:str=Field(default='',max_length=64)
 
 
+def example_items(app):
+    """Read server-configured validation artifacts, never import them as deployments."""
+    configured=getattr(app.state,'policy_examples_path',None) or os.environ.get('INFRAMORPH_POLICY_EXAMPLES')
+    if not configured:return []
+    try:
+        path=Path(configured)
+        if not path.is_file() or path.stat().st_size>4_000_000:raise ValueError()
+        data=json.loads(path.read_text())
+        if not isinstance(data,dict) or data.get('schema_version')!=1 or not isinstance(data.get('items'),list) or len(data['items'])>100:raise ValueError()
+        answer=[];seen=set()
+        for row in data['items']:
+            if not isinstance(row,dict) or not isinstance(row.get('id'),str) or not row['id'].startswith('policy-example-'):raise ValueError()
+            if row['id'] in seen:raise ValueError()
+            seen.add(row['id'])
+            if any(key not in row for key in ('project_id','target','policy','active','impact','action','reason_codes')):raise ValueError()
+            if (not isinstance(row['policy'],dict) or not {'family','version'}<=row['policy'].keys()
+                    or not isinstance(row['active'],dict) or not isinstance(row['impact'],dict)
+                    or not isinstance(row['reason_codes'],list)):raise ValueError()
+            answer.append(row | dict(record_type='validation_example',read_only=True,service_verified=False))
+        return answer
+    except (ValueError,OSError,TypeError):raise HTTPException(409,'policy_examples_unavailable') from None
+
+
 def install(app,store,execute,runtime):
     router=APIRouter(prefix='/api')
     lifecycle.activate(store)
     def deployment(did):
+        if did.startswith('policy-example-'):raise HTTPException(409,'policy_example_read_only')
         value=store.get_deployment(did)
         if value is None:raise HTTPException(404,'deployment not found')
         return value
@@ -57,10 +83,11 @@ def install(app,store,execute,runtime):
                     legacy=dict(family='legacy',version='2.2.0',status='historical_summary'))
 
     @router.get('/policies/impacts')
-    def impacts(offset:int=Query(0,ge=0),limit:int=Query(50,ge=1,le=100),project:str|None=None,target:str|None=None,action:str|None=None,policy_version:str|None=None,reason:str|None=None):
-        items=lifecycle.impacts(store)
+    def impacts(offset:int=Query(0,ge=0),limit:int=Query(50,ge=1,le=100),project:str|None=None,target:str|None=None,action:str|None=None,policy_version:str|None=None,reason:str|None=None,dataset:Literal['operational','examples']='operational'):
+        items=example_items(app) if dataset=='examples' else lifecycle.impacts(store)
         items=[r for r in items if (not project or r['project_id']==project) and (not target or r['target']==target) and (not action or r['action']==action) and (not policy_version or r['policy']['family']+'/'+r['policy']['version']==policy_version) and (not reason or reason in r['reason_codes'])]
-        return dict(items=items[offset:offset+limit],total=len(items))
+        return dict(items=items[offset:offset+limit],total=len(items),dataset=dataset,read_only=dataset=='examples',
+                    review_context=getattr(app.state,'policy_review_context',None))
 
     @router.get('/policies/statistics')
     def statistics():return dict(items=lifecycle.statistics(store))
@@ -70,7 +97,8 @@ def install(app,store,execute,runtime):
         return checked(lambda:dict(release=release(version),documents=index(version)))
 
     @router.get('/policies/{version}/compare')
-    def comparison(version:str,base:str):return checked(lambda:compare(base,version))
+    def comparison(version:str,base:str,base_policy_digest:str|None=Query(None,pattern='^[0-9a-f]{64}$')):
+        return checked(lambda:lifecycle.comparison(store,base,version,base_policy_digest))
 
     @router.get('/policies/{version}/documents/{slug:path}')
     def docs(version:str,slug:str):return checked(lambda:document(version,slug))
@@ -127,6 +155,9 @@ def install(app,store,execute,runtime):
             raise
 
     async def worker():
+        # An isolated operator preview runs only explicitly requested rechecks.
+        # It must not consume copied queues before the user inspects the state.
+        if getattr(app.state,'policy_review_context',None):return
         while True:
             try:
                 await background_call(lifecycle.schedule)

@@ -26,8 +26,18 @@ InfraMorph는 AI가 읽은 앱 요구를 배포 설계와 코드 변환으로 �
 
 ## AI 자동 수정 {#auto-repair}
 
-복구 대상과 제한은 [자동 수정](auto-repair.md)을 참고하세요. 1.0.0의 규칙과 지원 프로필을 유지하며, 실패 후보를 수정한 뒤 같은 검사를 다시 실행합니다.
+복구 대상과 제한은 [자동 수정](auto-repair.md)을 참고하세요. 검토된 소스 프로필을 기준으로 검사합니다. I-003은 DB provider의 직접 인용을, I-002는 worker 명령과 시작점의 인용을 요구합니다. 이 근거가 부족한 새 배포의 후보는 해당 evidence만 수정한 뒤 같은 정책으로 다시 검사합니다. 과거 배포는 당시 결과와 현재 보완 권고를 나누어 확인합니다.
+
+
+## 1.1.0에서 달라진 판단 {#evidence-hardening}
+
+| 질문 | 이전 조건 | 1.1.0의 강화 조건 |
+|---|---|---|
+| 이 DB 종류를 어디에서 확인했나요? | datasource 블록과 겹치는 인용 | provider 키 또는 값이 있는 줄의 직접 인용 |
+| 이 worker는 무엇으로 시작되나요? | 진입 파일의 줄 또는 실행 명령 인용 | scripts.worker 명령과 그 진입 파일의 검토된 시작 호출을 모두 인용 |
+
+결론이 맞아도 근거가 부족하면 새 배포는 중단합니다. 이 검사는 DB 접속이나 worker 실행 성공을 보장하지 않습니다. [DB 규칙](rules/I-003.md#procedure), [worker 규칙](rules/I-002.md#procedure), [과거 배포 영향](upgrade.md#evidence-hardening)을 함께 확인하세요.
 
 ## 체험 보드 지원 {#board-support}
 
-검토된 V3 체험 보드는 Local에서 지원합니다. [체험 보드 계약](board.md#scope)에서 파일 검사와 실행 확인 범위를 확인하세요. 기존 [자동 복구](auto-repair.md) 흐름은 유지됩니다.
+검토된 V3 체험 보드는 Local에서 지원합니다. [체험 보드 계약](board.md#scope)에서 파일 검사와 실행 확인 범위를 확인하세요. V3 분석에도 DB·worker 직접 근거 검사와 제한된 [자동 수정](auto-repair.md)을 적용합니다.

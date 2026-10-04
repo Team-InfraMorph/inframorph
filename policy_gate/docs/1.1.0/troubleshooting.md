@@ -17,6 +17,9 @@
 | invalid_source_evidence | [G-002 · 인용 줄 확인](rules/G-002.md#invalid-source-evidence) | 같은 snapshot의 실제 줄 수와 빈 줄 여부. 다른 commit의 줄 번호를 가져오지 않음 |
 | evidence_file_missing / evidence_line_missing | [I-001](rules/I-001.md#remedy) | 실제 수집 파일·줄과 source_revision |
 | db_provider_mismatch / db_requirement_missing / db_evidence_unrelated | [I-003](rules/I-003.md#decisions) | Prisma datasource와 Intent.state |
+| db_provider_evidence_missing | [I-003](rules/I-003.md#remedy) | source_revision, 제출 인용과 datasource provider의 필요한 토큰 줄 |
+| worker_command_evidence_missing / worker_start_evidence_missing | [I-002](rules/I-002.md#remedy) | scripts.worker 명령 값과 진입 파일의 최상위 시작점 |
+| evidence_repair_scope_violation | [자동 수정 제한](auto-repair.md#evidence-only) | 최초 Intent와 후보 diff; 근거 외 필드 변경 여부. 자동 재시도하지 않음 |
 | storage_evidence_unrelated / storage_evidence_unsupported | [I-004](rules/I-004.md#decisions) | 검토된 저장 코드·uploads·인용 |
 | worker_requirement_missing / worker_command_unsupported | [I-002](rules/I-002.md#decisions) | scripts.worker와 worker 명령 |
 | config_overrides_secret / config_not_supported | [I-006](rules/I-006.md#decisions) | config 이름과 secrets 이름 |

@@ -3,15 +3,47 @@ import json
 import re
 import shlex
 from pathlib import Path
-from .structure import inspect_js, prisma_structure
+from .structure import inspect_js, prisma_structure, prisma_provider_lines, json_value_lines
 from .reporting import rule
 
 
-def fail(code, path=None, line=None):
+def fail(code, path=None, line=None, *, diagnostics=None):
     from .gate import PolicyError
     error = PolicyError(code)
     error.path, error.line = path, line
+    if diagnostics is not None:
+        error.diagnostics = diagnostics
     raise error
+
+
+def anchor(role, path, lines):
+    lines = sorted(set(lines))
+    return dict(role=role, path=path, start_line=min(lines) if lines else None,
+                end_line=max(lines) if lines else None, lines=lines)
+
+
+def cited(references, required):
+    from schemas.common import parse_evidence
+    return any(name == required['path'] and line in required['lines']
+               for name, line in map(parse_evidence, references))
+
+
+def evidence_contract(rule_id, references, anchors, allowed_path, *, claimed, observed):
+    """Host-built, source-text-free diagnostics used for narrowly scoped repairs."""
+    return dict(rule_id=rule_id, claimed=claimed, observed=observed,
+                submitted_references=list(references), required_anchors=anchors,
+                missing_roles=[a['role'] for a in anchors if not cited(references, a)],
+                allowed_evidence_paths=[allowed_path])
+
+
+def package_scripts(files):
+    try:
+        package = json.loads(files.get('package.json', b'{}'))
+    except (ValueError, UnicodeError):
+        fail('package_invalid')
+    if not isinstance(package, dict) or not isinstance(package.get('scripts', {}), dict):
+        fail('package_invalid')
+    return package.get('scripts', {})
 
 
 def config_check(config, secrets):
@@ -36,15 +68,22 @@ def intent_rules(intent, files):
             provider, _, span = prisma_structure(schema)
             evidence.update(path='prisma/schema.prisma', observed=provider, claimed=[d.engine for d in dbs])
             if not dbs: fail('db_requirement_missing', 'prisma/schema.prisma')
-            for db in dbs:
+            for index, db in enumerate(intent.state):
+                if db.kind != 'relational_db': continue
                 if db.engine != provider: fail('db_provider_mismatch', 'prisma/schema.prisma')
+                details = evidence_contract('I-003', db.evidence,
+                    [anchor('db_provider', 'prisma/schema.prisma', prisma_provider_lines(schema))],
+                    f'/state/{index}/evidence', claimed=[db.engine], observed=provider)
+                evidence.update(details)
                 valid = False
                 for ev in db.evidence:
                     name, line = parse_evidence(ev)
                     if name == 'prisma/schema.prisma':
                         offset = sum(len(row) for row in schema.decode().splitlines(True)[:line-1])
                         valid |= span[0] <= offset + len(schema.decode().splitlines()[line-1]) and offset <= span[1]
-                if not valid: fail('db_evidence_unrelated', 'prisma/schema.prisma')
+                if not valid: fail('db_evidence_unrelated', 'prisma/schema.prisma', diagnostics=details)
+                if details['missing_roles']:
+                    fail('db_provider_evidence_missing', 'prisma/schema.prisma', diagnostics=details)
         elif dbs: fail('db_schema_missing', 'prisma/schema.prisma')
     with rule('I-004', applies=any(s.kind == 'persistent_files' for s in intent.state), reason='no_persistent_files') as evidence:
         storage = [item for item in intent.state if item.kind == 'persistent_files']
@@ -71,7 +110,7 @@ def intent_rules(intent, files):
                 if not related: fail('storage_evidence_unrelated', name)
     with rule('I-002') as evidence:
         evidence.update(services=[w.name for w in intent.workloads if w.kind.value=='worker'])
-        for w in intent.workloads:
+        for index, w in enumerate(intent.workloads):
             if w.kind.value != 'worker': continue
             try: parts = shlex.split(w.command)
             except ValueError: fail('worker_command_unsupported')
@@ -79,18 +118,35 @@ def intent_rules(intent, files):
                 fail('worker_command_unsupported')
             name = parts[1]
             if name not in files: fail('worker_entry_missing', name)
+            parsed = inspect_js({name: files[name]})[name]
+            if parsed.get('error'): fail(parsed['error'], name)
+            # The reviewed demo worker's entry function is tick. A generic helper
+            # call in the same file is not evidence of that worker starting.
+            starts = [item for item in parsed.get('worker_starts', []) if item['function'] == 'tick']
+            start_lines = sorted({line for item in starts for line in item['lines']})
             script_match = False
-            try: scripts = json.loads(files.get('package.json', b'{}')).get('scripts', {})
-            except ValueError: fail('package_invalid')
+            scripts = package_scripts(files)
+            command_lines = json_value_lines(files.get('package.json', b'{}'), ('scripts', 'worker'))
+            if scripts.get('worker') != w.command: command_lines = []
+            details = evidence_contract('I-002', w.evidence,
+                [anchor('worker_command', 'package.json', command_lines),
+                 anchor('worker_start', name, start_lines)],
+                f'/workloads/{index}/evidence', claimed={'command': w.command},
+                observed={'command': w.command if command_lines else None,
+                          'start_count': len(starts)})
+            evidence.update(details)
             for ev in w.evidence:
                 file, line = parse_evidence(ev)
                 if file == name and files[file].decode().splitlines()[line-1].strip(): script_match = True
                 if file == 'package.json' and any(v == w.command for v in scripts.values()):
                     row = files[file].decode().splitlines()[line-1]
                     script_match |= w.command in row
-            if not script_match: fail('worker_evidence_unrelated', name)
-        try: scripts = json.loads(files.get('package.json', b'{}')).get('scripts', {})
-        except ValueError: fail('package_invalid')
+            if not script_match: fail('worker_evidence_unrelated', name, diagnostics=details)
+            if 'worker_command' in details['missing_roles']:
+                fail('worker_command_evidence_missing', 'package.json', diagnostics=details)
+            if 'worker_start' in details['missing_roles']:
+                fail('worker_start_evidence_missing', name, diagnostics=details)
+        scripts = package_scripts(files)
         worker_cmd = scripts.get('worker')
         if worker_cmd and worker_cmd not in [w.command for w in intent.workloads if w.kind.value == 'worker']:
             fail('worker_requirement_missing', 'package.json')

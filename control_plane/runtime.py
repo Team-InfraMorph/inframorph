@@ -39,6 +39,8 @@ from .module_commands import build_cmds, deployer_cmd, fake_deployer_cmd  # noqa
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_PLAN_ERRORS = frozenset({"plan_config_mismatch", "plan_intent_mismatch", "plan_workload_mismatch",
                                 "plan_state_mismatch", "plan_secret_mismatch", "plan_resource_unsupported"})
+PUBLIC_POLICY_ERRORS = PUBLIC_PLAN_ERRORS | {
+    'db_provider_evidence_missing', 'worker_command_evidence_missing', 'worker_start_evidence_missing'}
 
 
 class LocalContext(ContractModel):
@@ -267,9 +269,13 @@ class LocalRuntime:
                         validate=validate, session=lambda: analysis_session(self.analysis_backend, self.analysis_model, replay),
                         limits=analysis_limits(self.analysis_backend), initial_metrics=stats,
                         intent=intent if kind == 'plan' else None))
-                except RepairStopped:
+                except RepairStopped as stopped:
                     # Preserve the actionable original rule/fields. The repair
                     # ledger separately records exhaustion/provider errors.
+                    from .policy_lifecycle import audit
+                    with store._lock, store._conn:
+                        audit(store, 'policy_repair_stopped', deployment['id'], target,
+                              stage=kind, original_failure=str(error), stop_reason=str(stopped))
                     raise error from None
 
             def check_intent(value, attempt=0):
@@ -340,7 +346,7 @@ class LocalRuntime:
                                  step="plan" if stage == "plan_policy" else "analyze") from None
         except PolicyError as error:
             # Only reviewed fixed codes may cross the public API boundary.
-            code = str(error) if str(error) in PUBLIC_PLAN_ERRORS else "policy_gate_failed"
+            code = str(error) if str(error) in PUBLIC_POLICY_ERRORS else "policy_gate_failed"
             raise AnalysisFailed(code, stats | {"blocked_stage": stage},
                                  step="plan" if stage == "plan_policy" else "policy") from None
         except Exception:

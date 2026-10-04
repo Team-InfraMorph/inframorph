@@ -32,9 +32,9 @@ class BoardTests(unittest.TestCase):
 
     def test_policy_history_is_additive(self):
         delta=compare('1.0.0','1.1.0')
-        self.assertEqual(delta['changed'], ['G-002','G-003'])
+        self.assertEqual(delta['changed'], ['G-002','G-003','I-002','I-003'])
         self.assertFalse(delta['major'])
-        self.assertEqual({c['id'] for c in delta['changes']}, {'bounded-policy-repair', 'reviewed-demo-board'})
+        self.assertEqual({c['id'] for c in delta['changes']}, {'bounded-policy-repair', 'reviewed-demo-board', 'db-direct-provider-evidence', 'worker-connected-evidence'})
         board_change=next(c for c in delta['changes'] if c['id']=='reviewed-demo-board')
         self.assertFalse(board_change['recheck'] or board_change['redeploy'])
         self.assertTrue(next(c for c in delta['changes'] if c['id']=='bounded-policy-repair')['recheck'])
