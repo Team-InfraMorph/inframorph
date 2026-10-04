@@ -1,5 +1,8 @@
 from schemas import Intent, Plan
-from .pricing import estimate_aws_monthly_krw, estimate_gcp_monthly_krw
+
+from .pricing import estimate_aws_monthly_krw
+from .database import make_db_plan
+
 
 def make_plan(raw_intent, target):
     intent = Intent.model_validate(raw_intent)
@@ -42,12 +45,11 @@ def make_plan(raw_intent, target):
 
     db = states["relational_db"]
     storage = states["persistent_files"]
-    if (
-        db.engine,
-        db.orm,
-        storage.path.rstrip("/"),
-    ) != ("sqlite", "prisma", "uploads"):
-        raise ValueError("unsupported_state")
+
+    if storage.path.rstrip("/") != "uploads":
+        raise ValueError("unsupported_storage")
+
+    db_plan = make_db_plan(db, target)
 
     if intent.secrets != ["DATABASE_URL"] or intent.config not in (
         {}, {"PORT": "3000"}
@@ -75,11 +77,9 @@ def make_plan(raw_intent, target):
         "app": intent.app,
         "image_tag": f"app:{intent.source_revision}",
         "services": services,
-        "db": {
-            "type": {"local": "postgres_container", "aws": "rds_postgres",
-                     "gcp": "cloudsql_postgres"}[target],
-            "patch": "sqlite_to_postgres",
-        },
+
+        "db": db_plan,
+
         "storage": {
             "type": {"local": "volume", "aws": "s3", "gcp": "gcs"}[target],
             "patch": "fs_to_storage",

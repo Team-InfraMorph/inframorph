@@ -12,6 +12,7 @@ from schemas import Intent, Plan
 from policy_gate.reporting import checked, rule
 from schemas.common import parse_evidence
 from code_patch.runner import read_snapshot
+from policy_gate.structure import prisma_shape_digest, prisma_structure
 
 
 POLICY_CODES = frozenset({"unreviewed_runtime_source", "intent_source_mismatch",
@@ -40,7 +41,19 @@ def validate_demo_intent(value, source, mapping):
         if worker:
             required["src/worker.js"] = [profile["worker"]]
         for name, hashes in required.items():
-            if name not in files or hashlib.sha256(files[name]).hexdigest() not in hashes:
+            if name not in files:
+                raise SourcePolicyError("unreviewed_runtime_source")
+            try:
+                actual_hash = (
+                    prisma_shape_digest(files[name])
+                    if name == "prisma/schema.prisma"
+                    else hashlib.sha256(files[name]).hexdigest()
+                )
+            except (ValueError, UnicodeError):
+                raise SourcePolicyError(
+                    "unreviewed_runtime_source"
+                ) from None
+            if actual_hash not in hashes:
                 raise SourcePolicyError("unreviewed_runtime_source")
         # Every executable/build input must be reviewed, even if the model never reads it.
         allowed = set(required) | {"package.json", "package-lock.json"}
@@ -66,8 +79,13 @@ def validate_demo_intent(value, source, mapping):
             workloads.append(("worker", "worker", None, None, False, "node src/worker.js"))
         actual = [(w.name, w.kind.value, w.port, w.health, w.public, w.command) for w in intent.workloads]
         states = sorted((s.kind, s.engine, s.orm, s.path.rstrip("/") if s.path else None) for s in intent.state)
-        expected_states = sorted([("relational_db", "sqlite", "prisma", None),
-                                  ("persistent_files", None, None, "uploads")])
+        provider, _, _ = prisma_structure(
+            files["prisma/schema.prisma"]
+        )
+        expected_states = sorted([
+            ("relational_db", provider, "prisma", None),
+            ("persistent_files", None, None, "uploads"),
+        ])
         mismatches = {
             "source_revision": intent.source_revision != mapping.commit,
             "app": intent.app != package["name"],

@@ -2,7 +2,7 @@ import re
 from enum import Enum
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 SCHEMA_VERSION = "1.0.0"
 
@@ -61,3 +61,4 @@ Name = Annotated[str, AfterValidator(check_name)]
 EnvName = Annotated[str, AfterValidator(check_env_name)]
 RelativePath = Annotated[str, AfterValidator(check_relative_path)]
 Evidence = Annotated[str, AfterValidator(check_evidence)]
+DbEngine = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_+-]*$",)]

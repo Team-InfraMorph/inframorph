@@ -15,6 +15,8 @@ from analyzer.redaction import Redactor
 from analyzer.snapshot import _read_at, eligible
 from schemas import Plan, RepoMap
 from schemas.common import check_relative_path
+from policy_gate.structure import TOKEN, prisma_structure, prisma_shape_digest
+from schemas.plan import DbPlan
 
 
 TEMPLATES = Path(__file__).with_name("templates")
@@ -25,6 +27,7 @@ BASE_PRISMA = "eaf50f27b33e838a559239fef9a16eaeffdd08081a02d615e03d343f0dc5656c"
 BASE_DEPENDENCIES = {"@prisma/client": "6.19.3", "dotenv": "16.6.1", "express": "4.22.3"}
 ALLOWED_PATHS = frozenset({"prisma/schema.prisma", "src/images.js", "src/storage.js",
                            "package.json", "package-lock.json"})
+REVIEWED_PRISMA_SHAPE = ("c22938994c2d8b39ddf673840fea3660118b3065444e2e3ea3633897bce1f953")
 
 
 class PatchError(ValueError):
@@ -82,18 +85,29 @@ def read_snapshot(root: Path, mapping: RepoMap) -> tuple[dict[str, bytes], list[
         os.close(fd)
     return files, excluded
 
-
-def transform(original: dict[str, bytes], plan: Plan) -> dict[str, bytes]:
+def transform(
+    original: dict[str, bytes],
+    plan: Plan,
+) -> dict[str, bytes]:
     patched = dict(original)
-    if plan.db:
+
+    if plan.db is not None:
         schema = original.get("prisma/schema.prisma", b"")
-        # Accept the exact original demo schema or our own previous conversion.
-        normalized = schema.replace(b'provider = "postgresql"', b'provider = "sqlite"')
-        if sha(normalized) != BASE_PRISMA:
+        try:
+            shape = prisma_shape_digest(schema)
+        except (ValueError, UnicodeError):
+            raise PatchError("unsupported_prisma_schema") from None
+        if shape != REVIEWED_PRISMA_SHAPE:
             raise PatchError("unsupported_prisma_schema")
-        if any(name.startswith("prisma/migrations/") for name in original):
+        if any(
+            name.startswith("prisma/migrations/")
+            for name in original
+        ):
             raise PatchError("existing_migrations_unsupported")
-        patched["prisma/schema.prisma"] = normalized.replace(b'provider = "sqlite"', b'provider = "postgresql"')
+        patched["prisma/schema.prisma"] = postgres_schema_candidate(
+            schema,
+            plan.db,
+        )
     if plan.storage:
         if plan.storage.path.rstrip("/") != "uploads":
             raise PatchError("unsupported_storage_path")
@@ -148,7 +162,6 @@ def make_diff(original: dict[str, bytes], patched: dict[str, bytes]) -> tuple[st
         for line in lines:
             chunks.append(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n")
     return "".join(chunks), changes
-
 
 def patch_snapshot(snapshot_dir: Path, repo_map: RepoMap | dict, plan: Plan | dict, output_dir: Path,
                    *, replacements: dict[str, bytes] | None = None) -> dict:
@@ -214,3 +227,47 @@ def patch_snapshot(snapshot_dir: Path, repo_map: RepoMap | dict, plan: Plan | di
         raise
     except (OSError, ValueError, TypeError):
         raise PatchError("invalid_or_unsupported_patch_input") from None
+
+def postgres_schema_candidate(
+        schema: bytes,
+        db: DbPlan,
+    ) -> bytes:
+        observed, _, (start, end) = prisma_structure(schema)
+
+        if observed == db.target_engine:
+            return schema
+
+        if observed != db.source_engine or db.patch == "none":
+            raise PatchError("database_source_mismatch")
+
+        text = schema.decode("utf-8")
+        block = text[start:end]
+
+        tokens = [
+            token
+            for token in TOKEN.finditer(block)
+            if not token.group().isspace()
+            and not token.group().startswith(("//", "/*"))
+        ]
+
+        positions = [
+            index
+            for index in range(len(tokens) - 2)
+            if tokens[index].group() == "provider"
+            and tokens[index + 1].group() == "="
+        ]
+
+        if len(positions) != 1:
+            raise PatchError("ambiguous_database_provider")
+
+        value_token = tokens[positions[0] + 2]
+        value_start = start + value_token.start()
+        value_end = start + value_token.end()
+
+        result = (
+            text[:value_start]
+            + '"postgresql"'
+            + text[value_end:]
+        )
+
+        return result.encode("utf-8")

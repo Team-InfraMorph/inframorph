@@ -29,10 +29,12 @@ ROOT = Path(__file__).resolve().parents[1]
 REV = "a" * 40
 
 
-def plan():
+def plan(*, with_database=True):
     p = json.loads((ROOT / "schemas/fixtures/v1/plan.local.json").read_text())
     p["source_revision"] = REV
     p["image_tag"] = "app:" + REV
+    if not with_database:
+        p["db"] = None
     return p
 
 
@@ -123,7 +125,7 @@ class GateTests(unittest.TestCase):
         report["schema_version"] = "2.0.0"
         (self.bundle / "manifest.json").write_text(json.dumps(report))
         with self.assertRaisesRegex(PolicyError, "manifest_version"):
-            validate_patch(self.original, self.bundle, plan())
+            validate_patch(self.original, self.bundle, plan(with_database=False))
 
     def test_intent_valid(self):
         self.assertEqual(
@@ -153,8 +155,12 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(PolicyError):
             validate_intent(x, self.original, REV)
 
+    def test_database_plan_requires_schema_even_when_patch_only_changes_js(self):
+        with self.assertRaisesRegex(PolicyError, "^prisma_transform_unsupported$"):
+            validate_patch(self.original, self.bundle, plan())
+
     def test_patch_valid_and_immutable(self):
-        result = validate_patch(self.original, self.bundle, plan())
+        result = validate_patch(self.original, self.bundle, plan(with_database=False))
         (self.bundle / "source/src/storage.js").write_text("eval('1')\n")
         self.assertIn(b"version", result.files["src/storage.js"])
         with self.assertRaises(TypeError):
@@ -163,7 +169,7 @@ class GateTests(unittest.TestCase):
     def test_tampered_content(self):
         (self.bundle / "source/src/storage.js").write_text("unexpected\n")
         with self.assertRaisesRegex(PolicyError, "digest"):
-            validate_patch(self.original, self.bundle, plan())
+            validate_patch(self.original, self.bundle, plan(with_database=False))
 
     def test_manifest_and_diff_must_agree_with_source(self):
         report = json.loads((self.bundle / "manifest.json").read_text())
@@ -171,7 +177,7 @@ class GateTests(unittest.TestCase):
         (self.bundle / "patch.diff").write_bytes(b"")
         (self.bundle / "manifest.json").write_text(json.dumps(report))
         with self.assertRaisesRegex(PolicyError, "diff_source"):
-            validate_patch(self.original, self.bundle, plan())
+            validate_patch(self.original, self.bundle, plan(with_database=False))
 
     def test_added_deleted_and_renamed_paths(self):
         for files in [
@@ -180,10 +186,10 @@ class GateTests(unittest.TestCase):
         ]:
             self.make_bundle(files)
             with self.assertRaisesRegex(PolicyError, "allowlist"):
-                validate_patch(self.original, self.bundle, plan())
+                validate_patch(self.original, self.bundle, plan(with_database=False))
         self.make_bundle({})
         with self.assertRaises(PolicyError):
-            validate_patch(self.original, self.bundle, plan())
+            validate_patch(self.original, self.bundle, plan(with_database=False))
 
     def test_forbidden_and_syntax(self):
         for source, code in [
@@ -193,25 +199,25 @@ class GateTests(unittest.TestCase):
         ]:
             self.make_bundle({"src/storage.js": source})
             with self.subTest(source=source), self.assertRaisesRegex(PolicyError, code):
-                validate_patch(self.original, self.bundle, plan())
+                validate_patch(self.original, self.bundle, plan(with_database=False))
 
     def test_symlink_and_hardlink(self):
         p = self.bundle / "source/src/storage.js"
         p.unlink()
         p.symlink_to("/etc/hosts")
         with self.assertRaises(PolicyError):
-            validate_patch(self.original, self.bundle, plan())
+            validate_patch(self.original, self.bundle, plan(with_database=False))
         p.unlink()
         os.link(self.original / "src/storage.js", p)
         with self.assertRaises(PolicyError):
-            validate_patch(self.original, self.bundle, plan())
+            validate_patch(self.original, self.bundle, plan(with_database=False))
 
     def test_sensitive_file_not_built(self):
         self.make_bundle(
             {"src/storage.js": b"module.exports={}\n", ".env": b"TOKEN=notreal\n"}
         )
         with self.assertRaises(PolicyError):
-            validate_patch(self.original, self.bundle, plan())
+            validate_patch(self.original, self.bundle, plan(with_database=False))
 
     def test_rejected_gate_never_invokes_docker(self):
         calls = []
@@ -220,7 +226,7 @@ class GateTests(unittest.TestCase):
             build(
                 self.original,
                 self.bundle,
-                plan(),
+                plan(with_database=False),
                 execute=lambda *a, **k: calls.append(a),
             )
         self.assertEqual(calls, [])
@@ -242,7 +248,7 @@ class GateTests(unittest.TestCase):
             patch("builder.runtime.check_build_profile"),
             self.assertRaisesRegex(PolicyError, "collision"),
         ):
-            build(self.original, self.bundle, plan(), execute=execute)
+            build(self.original, self.bundle, plan(with_database=False), execute=execute)
         self.assertFalse(any("buildx" in c for c in calls))
 
 

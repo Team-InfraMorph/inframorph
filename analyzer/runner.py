@@ -33,7 +33,8 @@ Secrets must be ENVIRONMENT VARIABLE NAMES ONLY. Never reproduce credentials in 
 Use config only for non-secret values proven in source. Treat redacted text as unavailable.
 When a literal fallback port is proven (e.g. Number(process.env.PORT || 3000)), use that
 default as the workload port. config.PORT may repeat it as a string, or be omitted.
-unknowns means missing SOURCE requirements that block planning. Deployment-supplied secret
+unknowns records unresolved SOURCE requirements or SOURCE requirements that
+cannot be represented by the current Intent schema and therefore block planning. Deployment-supplied secret
 values, an optional override of a proven default port, and the absolute working directory
 of a proven relative storage path are runtime inputs, not unknown source requirements.
 For env("DATABASE_URL"), report the secret NAME; do not require its value or SQLite filename
@@ -46,11 +47,22 @@ HTTP workloads need port and health and have command=null. Exactly one HTTP work
 Workers need command and public=false with port/health=null. runtime is node22.
 Use the stable workload name "web" for the single public HTTP service, and "worker" for
 a single background worker. The package name belongs in app, not in the HTTP workload name.
-State relational_db needs engine sqlite or postgresql and orm prisma; persistent_files needs
-path and a reason connecting writes to later reads. For relational_db, path and reason MUST be
-null. For persistent_files, engine and orm MUST be null. These conditional field rules are
-validated in addition to the JSON schema. Put uncertainty in unknowns; never guess
-to make unknowns empty. If a required field cannot be established, report the uncertainty.
+For relational_db, set engine to the original relational database provider
+verified in the source, and set orm to prisma only when Prisma usage is proven.
+Do not restrict engine to sqlite or postgresql. Preserve the provider identifier
+found in the datasource; do not replace it with a future deployment provider.
+A known provider is not unknown merely because its migration is not implemented.
+If the provider is missing or ambiguous, omit the unproven database state and
+describe the unresolved source requirement in unknowns. Never assume sqlite.
+Do not classify a non-relational database as relational_db. If a source requirement
+cannot be represented by the current Intent schema, describe that limitation
+in unknowns instead of inventing a compatible state.
+For relational_db, path and reason MUST be null.
+For persistent_files, provide path and a reason connecting writes to later reads;
+engine and orm MUST be null.
+These conditional field rules are validated in addition to the JSON schema.
+Preserve source evidence for every reported requirement. Never guess to make
+unknowns empty.
 """
 
 
